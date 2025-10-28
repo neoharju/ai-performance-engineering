@@ -1,12 +1,12 @@
 #!/bin/bash
 # Comprehensive test runner for all Blackwell B200 optimizations
-# Tests all examples on 2x B200 hardware
+# Tests all examples on B200 hardware
 
 set -e
 
 echo "================================================================================"
 echo "AI Performance Engineering - Complete Test Suite"
-echo "Hardware: 2x NVIDIA B200 (SM 10.0, 178 GB HBM3e, 148 SMs)"
+echo "Hardware: NVIDIA B200 (SM 10.0, 180 GB HBM3e, 148 SMs)"
 echo "================================================================================"
 echo ""
 
@@ -119,7 +119,7 @@ AI Performance Engineering - Test Summary
 ==========================================
 
 Date: $(date)
-Hardware: 2x NVIDIA B200
+Hardware: NVIDIA B200
 Software: PyTorch 2.9, CUDA 13, Triton 3.5
 
 Test Results:

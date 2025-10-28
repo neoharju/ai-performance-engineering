@@ -10,14 +10,18 @@ NVCC_FLAGS = -O3 -std=c++17 -arch=$(ARCH) --expt-relaxed-constexpr -DCUDA_VERSIO
 TARGETS =
 
 ifeq ($(ARCH),sm_100)
-TARGETS += nvlink_c2c_p2p_blackwell
+TARGETS += nvlink_c2c_p2p_blackwell gb200_coherency
 endif
 
 all: $(TARGETS)
 	@echo "Building Chapter 2 targets with $(ARCH) (CUDA $(CUDA_VERSION))"
 	@echo "✓ Targeting Blackwell B200/B300 (Compute Capability 10.0)"
+	@echo "✓ GB200/GB300 Grace-Blackwell examples included"
 
 nvlink_c2c_p2p_blackwell: nvlink_c2c_p2p_blackwell.cu
+	$(NVCC) $(NVCC_FLAGS) -o $@ $<
+
+gb200_coherency: gb200_grace_blackwell_coherency.cu
 	$(NVCC) $(NVCC_FLAGS) -o $@ $<
 
 blackwell: ARCH=sm_100

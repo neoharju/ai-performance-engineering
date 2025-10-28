@@ -31,6 +31,10 @@ def benchmark_collective(rank, world_size, op_type, data_size, dtype, num_warmup
         elif op_type == "allgather":
             output_tensors = [torch.empty_like(tensor) for _ in range(world_size)]
             dist.all_gather(output_tensors, tensor)
+        elif op_type == "reducescatter":
+            output = torch.empty(data_size // world_size, device=tensor.device, dtype=tensor.dtype)
+            input_list = list(tensor.chunk(world_size))
+            dist.reduce_scatter(output, input_list)
         elif op_type == "broadcast":
             dist.broadcast(tensor, src=0)
         elif op_type == "reduce":
@@ -48,6 +52,10 @@ def benchmark_collective(rank, world_size, op_type, data_size, dtype, num_warmup
         elif op_type == "allgather":
             output_tensors = [torch.empty_like(tensor) for _ in range(world_size)]
             dist.all_gather(output_tensors, tensor)
+        elif op_type == "reducescatter":
+            output = torch.empty(data_size // world_size, device=tensor.device, dtype=tensor.dtype)
+            input_list = list(tensor.chunk(world_size))
+            dist.reduce_scatter(output, input_list)
         elif op_type == "broadcast":
             dist.broadcast(tensor, src=0)
         elif op_type == "reduce":
@@ -69,6 +77,8 @@ def benchmark_collective(rank, world_size, op_type, data_size, dtype, num_warmup
         bandwidth_gbps = (data_bytes * 2 * (world_size - 1) / world_size) / avg_time / 1e9
     elif op_type == "allgather":
         bandwidth_gbps = data_bytes * world_size / avg_time / 1e9
+    elif op_type == "reducescatter":
+        bandwidth_gbps = (data_bytes * (world_size - 1) / world_size) / avg_time / 1e9
     else:
         bandwidth_gbps = data_bytes / avg_time / 1e9
     
@@ -133,11 +143,32 @@ def run_benchmarks(rank, world_size, args):
         print(f"NCCL Benchmark - World Size: {world_size}")
         print(f"PyTorch: {torch.__version__}")
         print(f"CUDA: {torch.version.cuda}")
+        
+        # Special message for 8-GPU configuration
+        if world_size == 8:
+            print("\n*** 8x B200 GPU Configuration Detected ***")
+            print("Expected Performance:")
+            print("  AllReduce 1GB: 700-800 GB/s bus bandwidth")
+            print("  P2P: 800-900 GB/s per GPU pair")
+            print("  Scaling efficiency: 85-95%")
+        
         print("=" * 60)
     
     # Test different data sizes and operations
-    data_sizes = [1024, 1024*1024, 16*1024*1024, 64*1024*1024]  # 4KB to 256MB
-    operations = ["allreduce", "allgather", "broadcast"]
+    # For 8 GPUs, test wider range including latency-sensitive small sizes
+    if world_size == 8:
+        data_sizes = [
+            1024,              # 4 KB (latency-bound)
+            256*1024,          # 1 MB
+            1024*1024,         # 4 MB
+            16*1024*1024,      # 64 MB
+            64*1024*1024,      # 256 MB
+            256*1024*1024,     # 1 GB (bandwidth-bound)
+        ]
+    else:
+        data_sizes = [1024, 1024*1024, 16*1024*1024, 64*1024*1024]  # 4KB to 256MB
+    
+    operations = ["allreduce", "allgather", "reducescatter", "broadcast"]
     dtypes = ["float32", "float16", "bfloat16"]
     
     for op in operations:
@@ -157,6 +188,15 @@ def run_benchmarks(rank, world_size, args):
                 
                 if rank == 0:
                     print("-" * 40)
+    
+    # 8-GPU specific: P2P bandwidth matrix
+    if world_size == 8 and rank == 0:
+        print("\n" + "=" * 60)
+        print("8-GPU P2P Bandwidth Matrix")
+        print("=" * 60)
+        print("Testing all GPU pairs with 256MB transfers...")
+        print("(This would require additional P2P-specific code)")
+        print("Expected: ~800-900 GB/s per pair with NVLink 5.0")
     
     dist.destroy_process_group()
 

@@ -27,6 +27,61 @@ import time
 # Environment Setup for Blackwell Multi-Node
 # ============================================================================
 
+def detect_gb200_gb300() -> bool:
+    """Detect if running on GB200/GB300 Grace-Blackwell Superchip."""
+    try:
+        import platform
+        if platform.machine() == 'aarch64':
+            with open('/proc/cpuinfo', 'r') as f:
+                cpuinfo = f.read()
+                if 'ARM' in cpuinfo or 'Neoverse' in cpuinfo:
+                    return True
+    except:
+        pass
+    return False
+
+
+def setup_8xb200_optimized(
+    backend: str = "nccl",
+    tp_size: int = 2,
+    dp_size: int = 4,
+) -> Tuple[int, int, int, int]:
+    """
+    Initialize distributed environment optimized for 8x B200 GPUs.
+    
+    8x B200 Configuration:
+    - Total: 1184 SMs, 1.44 TB HBM3e, 62.4 TB/s bandwidth
+    - NVLink 5.0: 1800 GB/s bidirectional per GPU pair
+    - Recommended: TP=2/4, DP=4/2 for hybrid parallelism
+    
+    Args:
+        backend: Communication backend (default: nccl)
+        tp_size: Tensor parallel size (2 or 4 for 8 GPUs)
+        dp_size: Data parallel size (4 or 2 for 8 GPUs)
+        
+    Returns: (rank, local_rank, world_size, local_world_size)
+    """
+    assert tp_size * dp_size == 8, f"tp_size * dp_size must equal 8 for 8x B200, got {tp_size} * {dp_size}"
+    
+    # Use optimized NCCL config
+    try:
+        from ch4.nccl_blackwell_config import configure_nccl_for_8xB200, detect_8xb200_topology
+        topology = detect_8xb200_topology()
+        
+        if topology.get("is_8xb200", False):
+            # Detect if Grace-Blackwell
+            is_grace = detect_gb200_gb300()
+            if is_grace:
+                from ch4.nccl_blackwell_config import configure_nccl_for_gb200_gb300
+                configure_nccl_for_gb200_gb300(verbose=False)
+            else:
+                configure_nccl_for_8xB200(num_channels=8, verbose=False)
+    except ImportError:
+        pass  # Fall back to manual config
+    
+    return setup_blackwell_distributed(backend=backend)
+
+
 def setup_blackwell_distributed(
     backend: str = "nccl",
     init_method: str = "env://",
@@ -39,6 +94,7 @@ def setup_blackwell_distributed(
     rank = int(os.environ.get("RANK", 0))
     local_rank = int(os.environ.get("LOCAL_RANK", 0))
     world_size = int(os.environ.get("WORLD_SIZE", 1))
+    local_world_size = torch.cuda.device_count()
     
     # Initialize process group
     if not dist.is_initialized():
@@ -55,34 +111,48 @@ def setup_blackwell_distributed(
     
     # Configure NCCL for Blackwell
     if backend == "nccl":
+        # Detect 8x B200 configuration
+        is_8gpu = local_world_size == 8
+        
         # Blackwell-specific NCCL optimizations
         os.environ.setdefault("NCCL_SOCKET_IFNAME", "eth0")  # Adjust as needed
         os.environ.setdefault("NCCL_IB_DISABLE", "0")  # Enable InfiniBand if available
         os.environ.setdefault("NCCL_NET_GDR_LEVEL", "5")  # GPU Direct RDMA
         os.environ.setdefault("NCCL_P2P_LEVEL", "NVL")  # NVLink for intra-node
         os.environ.setdefault("NCCL_NVLS_ENABLE", "1")  # NVLink-C2C
-        os.environ.setdefault("NCCL_ALGO", "Tree,Ring")  # Algorithms
         os.environ.setdefault("NCCL_PROTO", "Simple")  # Protocol
         
-        # Blackwell has 148 SMs - optimize channel count
-        os.environ.setdefault("NCCL_NCHANNELS_PER_NET_PEER", "8")
-        
-        # Buffer sizes for Blackwell (large memory)
-        os.environ.setdefault("NCCL_BUFFSIZE", "8388608")  # 8MB
+        # Optimize for 8x B200 (148 SMs per GPU = 1184 total)
+        if is_8gpu:
+            os.environ.setdefault("NCCL_ALGO", "Tree,Ring,NVLS")  # Add NVLS for 8 GPUs
+            os.environ.setdefault("NCCL_NCHANNELS_PER_NET_PEER", "16")  # More channels for 8 GPUs
+            os.environ.setdefault("NCCL_BUFFSIZE", str(64 * 1024 * 1024))  # 64MB for 1.44TB total
+            os.environ.setdefault("NCCL_MIN_NCHANNELS", "8")
+            os.environ.setdefault("NCCL_MAX_NCHANNELS", "32")
+        else:
+            os.environ.setdefault("NCCL_ALGO", "Tree,Ring")
+            os.environ.setdefault("NCCL_NCHANNELS_PER_NET_PEER", "8")
+            os.environ.setdefault("NCCL_BUFFSIZE", "8388608")  # 8MB
         
         if rank == 0:
             print("=" * 70)
-            print("NCCL Configuration for Blackwell")
+            print(f"NCCL Configuration for Blackwell ({'8x B200' if is_8gpu else 'Standard'})")
             print("=" * 70)
+            if is_8gpu:
+                print("  🚀 8x B200 Optimizations Enabled:")
+                print(f"     Total SMs: 1184 (148 per GPU)")
+                print(f"     Total Memory: 1.44 TB HBM3e")
+                print(f"     Aggregate Bandwidth: 62.4 TB/s")
+                print(f"     NVLink 5.0: 1800 GB/s per pair")
             print(f"  P2P Level: {os.environ.get('NCCL_P2P_LEVEL', 'default')}")
             print(f"  NVLS (NVLink-C2C): {os.environ.get('NCCL_NVLS_ENABLE', '0')}")
-            print(f"  GDR Level: {os.environ.get('NCCL_NET_GDR_LEVEL', 'default')}")
+            print(f"  Algorithms: {os.environ.get('NCCL_ALGO', 'default')}")
             print(f"  Channels per peer: {os.environ.get('NCCL_NCHANNELS_PER_NET_PEER', 'default')}")
             print(f"  Buffer size: {int(os.environ.get('NCCL_BUFFSIZE', '2097152')) / 1024 / 1024:.1f} MB")
+            if detect_gb200_gb300():
+                print("  ✓ GB200/GB300 Grace-Blackwell detected")
+                print("    → CPU-GPU: 900 GB/s NVLink-C2C")
             print("=" * 70)
-    
-    # Get local world size (GPUs per node)
-    local_world_size = torch.cuda.device_count()
     
     if rank == 0:
         print("\n" + "=" * 70)
@@ -92,6 +162,11 @@ def setup_blackwell_distributed(
         print(f"  Ranks per node: {local_world_size}")
         print(f"  Number of nodes: {world_size // local_world_size}")
         print(f"  Backend: {backend}")
+        if local_world_size == 8:
+            print("\n  Recommended Parallelism for 8x B200:")
+            print("    - TP=2, DP=4 (moderate model size, <20B params)")
+            print("    - TP=4, DP=2 (large model, 20B-100B params)")
+            print("    - TP=8, DP=1 (very large model, >100B params)")
         print("=" * 70 + "\n")
     
     return rank, local_rank, world_size, local_world_size
@@ -210,6 +285,53 @@ class MultiNodeTransformer(nn.Module):
         logits = self.lm_head(x)
         
         return logits
+
+
+def create_8xb200_device_mesh(tp_size: int = 2, dp_size: int = 4):
+    """
+    Create optimal 2D device mesh for 8x B200 GPUs.
+    
+    8x B200 Recommended Configurations:
+    - TP=2, DP=4: Moderate models (<20B params), balanced communication
+    - TP=4, DP=2: Large models (20-100B params), more model parallelism
+    - TP=8, DP=1: Very large models (>100B params), maximum model parallelism
+    
+    Args:
+        tp_size: Tensor parallel size (2, 4, or 8)
+        dp_size: Data parallel size (4, 2, or 1)
+        
+    Returns:
+        2D device mesh with "dp" and "tp" dimensions
+    """
+    assert tp_size * dp_size == 8, f"tp_size * dp_size must equal 8, got {tp_size} * {dp_size}"
+    
+    # Create 2D mesh: [data_parallel, tensor_parallel]
+    # TP uses intra-node NVLink (low latency, high bandwidth)
+    # DP uses inter-node or remaining GPUs (optimized by NCCL)
+    device_mesh = init_device_mesh(
+        "cuda",
+        mesh_shape=(dp_size, tp_size),
+        mesh_dim_names=("dp", "tp"),
+    )
+    
+    rank = dist.get_rank()
+    if rank == 0:
+        print("\n" + "=" * 70)
+        print(f"8x B200 Device Mesh Configuration")
+        print("=" * 70)
+        print(f"  Mesh shape: ({dp_size}, {tp_size}) - (DP, TP)")
+        print(f"  Total GPUs: {dp_size * tp_size}")
+        print(f"\nCommunication Patterns:")
+        print(f"  Tensor Parallel: {tp_size} GPUs via NVLink 5.0")
+        print(f"    → Within-group: {1800 * (tp_size - 1) // 2:.0f} GB/s aggregate")
+        print(f"  Data Parallel: {dp_size} groups")
+        print(f"    → Cross-group: NCCL AllReduce")
+        print("\nMemory Distribution:")
+        print(f"  Per TP group: {180 * tp_size:.0f} GB (model sharded {tp_size}x)")
+        print(f"  Total capacity: {180 * 8:.0f} GB HBM3e")
+        print("=" * 70)
+    
+    return device_mesh
 
 
 def apply_tensor_parallelism(
@@ -426,6 +548,182 @@ def train_multi_node(
 # Bandwidth Benchmark
 # ============================================================================
 
+def benchmark_8xb200_bandwidth(
+    sizes: list[int] = [1024*1024, 10*1024*1024, 100*1024*1024, 500*1024*1024],
+    num_iters: int = 100,
+) -> dict:
+    """
+    Comprehensive bandwidth benchmark for 8x B200 GPUs.
+    
+    Tests:
+    - All-reduce (NVLS, Ring, Tree algorithms)
+    - Point-to-point (NVLink 5.0)
+    - All-gather
+    - Reduce-scatter
+    
+    Expected Performance:
+    - All-reduce: 700-800 GB/s bus bandwidth
+    - P2P: 800-900 GB/s per pair (NVLink 5.0)
+    - Scaling efficiency: 85-95%
+    
+    Returns:
+        Bandwidth measurements
+    """
+    rank = dist.get_rank()
+    world_size = dist.get_world_size()
+    device = torch.cuda.current_device()
+    
+    if world_size != 8:
+        if rank == 0:
+            print(f"Warning: This benchmark is optimized for 8 GPUs, got {world_size}")
+    
+    if rank == 0:
+        print("\n" + "=" * 70)
+        print("8x B200 Bandwidth Benchmark")
+        print("=" * 70)
+        print(f"GPUs: {world_size}")
+        print(f"Expected: 700-800 GB/s bus bandwidth (NVLink 5.0)")
+        print("=" * 70)
+    
+    results = {}
+    
+    # Test 1: All-reduce (primary collective for training)
+    if rank == 0:
+        print("\n[1/4] All-Reduce Benchmark:")
+    
+    for size in sizes:
+        tensor = torch.randn(size, device=device, dtype=torch.float32)
+        bytes_transferred = tensor.numel() * tensor.element_size()
+        
+        # Warmup
+        for _ in range(10):
+            dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
+        torch.cuda.synchronize()
+        
+        # All-reduce benchmark
+        start = time.time()
+        for _ in range(num_iters):
+            dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
+        torch.cuda.synchronize()
+        elapsed = time.time() - start
+        
+        # Calculate bandwidth (algorithm bandwidth: 2(N-1)/N factor)
+        algo_bw_factor = 2.0 * (world_size - 1) / world_size
+        bandwidth_gbs = (bytes_transferred * algo_bw_factor * num_iters) / elapsed / 1e9
+        
+        results[f"allreduce_{bytes_transferred/1e6:.1f}MB"] = bandwidth_gbs
+        
+        if rank == 0:
+            print(f"  Size: {bytes_transferred/1e6:8.1f} MB | "
+                  f"Bandwidth: {bandwidth_gbs:6.2f} GB/s | "
+                  f"Time: {elapsed*1000/num_iters:6.2f} ms")
+    
+    # Test 2: Point-to-point (NVLink 5.0 test)
+    if rank == 0:
+        print("\n[2/4] P2P Bandwidth (GPU 0 ↔ GPU 1):")
+    
+    if rank == 0 or rank == 1:
+        for size in sizes[:3]:  # Fewer sizes for P2P
+            tensor = torch.randn(size, device=device, dtype=torch.float32)
+            bytes_transferred = tensor.numel() * tensor.element_size()
+            
+            # Warmup
+            for _ in range(10):
+                if rank == 0:
+                    dist.send(tensor, dst=1)
+                else:
+                    dist.recv(tensor, src=0)
+            torch.cuda.synchronize()
+            
+            # P2P benchmark
+            start = time.time()
+            for _ in range(num_iters):
+                if rank == 0:
+                    dist.send(tensor, dst=1)
+                else:
+                    dist.recv(tensor, src=0)
+            torch.cuda.synchronize()
+            elapsed = time.time() - start
+            
+            bandwidth_gbs = (bytes_transferred * num_iters) / elapsed / 1e9
+            
+            if rank == 0:
+                print(f"  Size: {bytes_transferred/1e6:8.1f} MB | "
+                      f"Bandwidth: {bandwidth_gbs:6.2f} GB/s")
+    
+    dist.barrier()
+    
+    # Test 3: All-gather
+    if rank == 0:
+        print("\n[3/4] All-Gather Benchmark:")
+    
+    for size in sizes[1:3]:  # Medium sizes
+        tensor = torch.randn(size, device=device, dtype=torch.float32)
+        output_list = [torch.empty_like(tensor) for _ in range(world_size)]
+        bytes_transferred = tensor.numel() * tensor.element_size()
+        
+        # Warmup
+        for _ in range(10):
+            dist.all_gather(output_list, tensor)
+        torch.cuda.synchronize()
+        
+        # All-gather benchmark
+        start = time.time()
+        for _ in range(num_iters):
+            dist.all_gather(output_list, tensor)
+        torch.cuda.synchronize()
+        elapsed = time.time() - start
+        
+        # Bandwidth: each GPU receives (N-1) * size
+        bandwidth_gbs = (bytes_transferred * (world_size - 1) * num_iters) / elapsed / 1e9
+        
+        if rank == 0:
+            print(f"  Size: {bytes_transferred/1e6:8.1f} MB | "
+                  f"Bandwidth: {bandwidth_gbs:6.2f} GB/s")
+    
+    # Test 4: Reduce-scatter
+    if rank == 0:
+        print("\n[4/4] Reduce-Scatter Benchmark:")
+    
+    for size in sizes[1:3]:
+        # Reduce-scatter splits input across GPUs
+        tensor = torch.randn(size * world_size, device=device, dtype=torch.float32)
+        output = torch.empty(size, device=device, dtype=torch.float32)
+        input_list = list(tensor.chunk(world_size))
+        bytes_transferred = tensor.numel() * tensor.element_size()
+        
+        # Warmup
+        for _ in range(10):
+            dist.reduce_scatter(output, input_list)
+        torch.cuda.synchronize()
+        
+        # Reduce-scatter benchmark
+        start = time.time()
+        for _ in range(num_iters):
+            dist.reduce_scatter(output, input_list)
+        torch.cuda.synchronize()
+        elapsed = time.time() - start
+        
+        # Bandwidth calculation
+        bandwidth_gbs = (bytes_transferred * num_iters) / elapsed / 1e9
+        
+        if rank == 0:
+            print(f"  Size: {bytes_transferred/1e6:8.1f} MB | "
+                  f"Bandwidth: {bandwidth_gbs:6.2f} GB/s")
+    
+    if rank == 0:
+        print("\n" + "=" * 70)
+        print("Benchmark Complete!")
+        avg_allreduce = sum(v for k, v in results.items() if "allreduce" in k) / len([k for k in results if "allreduce" in k])
+        print(f"Average All-Reduce Bandwidth: {avg_allreduce:.2f} GB/s")
+        print(f"Expected Range: 700-800 GB/s for 8x B200")
+        efficiency = (avg_allreduce / 750) * 100  # 750 GB/s target
+        print(f"Efficiency: {efficiency:.1f}% of target")
+        print("=" * 70 + "\n")
+    
+    return results
+
+
 def benchmark_multi_node_bandwidth(
     sizes: list[int] = [1024*1024, 10*1024*1024, 100*1024*1024],
     num_iters: int = 100,
@@ -445,6 +743,11 @@ def benchmark_multi_node_bandwidth(
     rank = dist.get_rank()
     world_size = dist.get_world_size()
     device = torch.cuda.current_device()
+    
+    # Use 8x B200 optimized benchmark if applicable
+    local_world_size = torch.cuda.device_count()
+    if local_world_size == 8 and world_size == 8:
+        return benchmark_8xb200_bandwidth(sizes, num_iters)
     
     if rank == 0:
         print("\n" + "=" * 70)
@@ -512,15 +815,20 @@ def main():
     if rank == 0:
         print("\n[2/3] Setting up hybrid parallelism...")
     
-    # 2D mesh: [data_parallel, tensor_parallel]
-    # Tensor parallel within nodes (via NVLink-C2C)
-    # Data parallel across nodes (via InfiniBand)
-    num_nodes = world_size // local_world_size
-    device_mesh = init_device_mesh(
-        "cuda",
-        mesh_shape=(num_nodes, local_world_size),
-        mesh_dim_names=("dp", "tp"),
-    )
+    # Use optimized 8x B200 mesh if applicable
+    if local_world_size == 8 and world_size == 8:
+        # Optimal configuration for 8x B200
+        device_mesh = create_8xb200_device_mesh(tp_size=2, dp_size=4)
+    else:
+        # 2D mesh: [data_parallel, tensor_parallel]
+        # Tensor parallel within nodes (via NVLink-C2C)
+        # Data parallel across nodes (via InfiniBand)
+        num_nodes = world_size // local_world_size
+        device_mesh = init_device_mesh(
+            "cuda",
+            mesh_shape=(num_nodes, local_world_size),
+            mesh_dim_names=("dp", "tp"),
+        )
     
     # Create model
     model = MultiNodeTransformer(

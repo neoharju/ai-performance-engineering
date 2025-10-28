@@ -35,14 +35,12 @@ DEFAULT_TIMEOUT = 900  # seconds
 CUDA_BIN_DIRS = [
     "/usr/local/cuda-13.0/bin",
     "/usr/local/cuda-13/bin",
-    "/usr/local/cuda-12.9/bin",
     "/usr/local/cuda/bin",
 ]
 
 CUDA_LIB_DIRS = [
     "/usr/local/cuda-13.0/lib64",
     "/usr/local/cuda-13/lib64",
-    "/usr/local/cuda-12.9/lib64",
     "/usr/local/cuda/lib64",
 ]
 

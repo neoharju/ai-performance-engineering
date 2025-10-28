@@ -148,18 +148,18 @@ if dpkg -s python3-flatbuffers >/dev/null 2>&1; then
     apt remove -y python3-flatbuffers
 fi
 
-# Install CUDA 12.9 toolchain
+# Install CUDA 13.0 toolchain
 echo ""
-echo "🔧 Installing CUDA 12.9 toolchain..."
-apt install -y cuda-toolkit-12-9
+echo "🔧 Installing CUDA 13.0 toolchain..."
+apt install -y cuda-toolkit-13-0
 
 # Install CUDA sanitizers and debugging tools (compute-sanitizer, cuda-memcheck, etc.)
 echo ""
 echo "🛡️  Installing CUDA sanitizers and debugging tools..."
-if apt install -y cuda-command-line-tools-12-9; then
-    echo "✅ CUDA command-line tools 12.9 installed (compute-sanitizer, cuda-gdb, cuda-memcheck)"
+if apt install -y cuda-command-line-tools-13-0; then
+    echo "✅ CUDA command-line tools 13.0 installed (compute-sanitizer, cuda-gdb, cuda-memcheck)"
 else
-    echo "⚠️  Could not install cuda-command-line-tools-12-9, trying fallback packages..."
+    echo "⚠️  Could not install cuda-command-line-tools-13-0, trying fallback packages..."
     if apt install -y cuda-command-line-tools; then
         echo "✅ CUDA command-line tools (generic) installed"
     else
@@ -175,10 +175,10 @@ fi
 # Ensure compute-sanitizer is present; install sanitizer package directly if needed
 if ! command -v compute-sanitizer &> /dev/null; then
     echo "⚠️  compute-sanitizer not found after command-line tools install. Installing cuda-sanitizer package..."
-    if apt install -y cuda-sanitizer-12-9; then
-        echo "✅ cuda-sanitizer-12-9 installed"
+    if apt install -y cuda-sanitizer-13-0; then
+        echo "✅ cuda-sanitizer-13-0 installed"
     else
-        echo "⚠️  Could not install cuda-sanitizer-12-9, attempting generic cuda-sanitizer package..."
+        echo "⚠️  Could not install cuda-sanitizer-13-0, attempting generic cuda-sanitizer package..."
         if apt install -y cuda-sanitizer; then
             echo "✅ cuda-sanitizer package installed"
         else
@@ -279,10 +279,10 @@ apt install -y \
     htop \
     sysstat
 
-# Install PyTorch 2.9 nightly with CUDA 12.9
+# Install PyTorch 2.9 nightly with CUDA 13.0
 echo ""
-echo "🔥 Installing PyTorch 2.9 nightly with CUDA 12.9..."
-python3 -m pip install --index-url https://download.pytorch.org/whl/nightly/cu129 \
+echo "🔥 Installing PyTorch 2.9 nightly with CUDA 13.0..."
+python3 -m pip install --index-url https://download.pytorch.org/whl/nightly/cu130 \
     --no-cache-dir --upgrade --ignore-installed torch torchvision torchaudio
 
 # Install project dependencies
@@ -549,7 +549,7 @@ export TORCH_COMPILE_DEBUG=0
 export TORCH_LOGS="+dynamo"
 
 # CUDA paths
-export CUDA_HOME=/usr/local/cuda-12.9
+export CUDA_HOME=/usr/local/cuda-13.0
 export PATH=$CUDA_HOME/bin:$PATH
 export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
 EOF
@@ -706,8 +706,8 @@ echo "🎉 Setup Complete!"
 echo "=================="
 echo ""
 echo "✅ Installed:"
-echo "  • PyTorch 2.9 nightly with CUDA 12.9"
-echo "  • CUDA 12.9 toolchain and development tools"
+echo "  • PyTorch 2.9 nightly with CUDA 13.0"
+echo "  • CUDA 13.0 toolchain and development tools"
 echo "  • NVIDIA Nsight Systems (latest available)"
 echo "  • NVIDIA Nsight Compute (latest available)"
 echo "  • All project dependencies"

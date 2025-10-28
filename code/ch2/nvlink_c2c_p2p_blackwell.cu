@@ -55,10 +55,43 @@ struct SystemInfo {
     int num_gpus;
     size_t gpu_memory;
     int cpu_numa_nodes;
+    bool is_8xb200;
+    bool has_nvswitch;
 };
 
+// Detect if running on Grace CPU (ARM architecture)
+bool detect_grace_cpu() {
+    #ifdef __linux__
+    // Check for ARM architecture
+    FILE* f = popen("uname -m", "r");
+    if (f) {
+        char arch[64];
+        if (fgets(arch, sizeof(arch), f)) {
+            pclose(f);
+            if (strstr(arch, "aarch64") || strstr(arch, "arm64")) {
+                // Further verify it's Grace Neoverse
+                FILE* cpuinfo = fopen("/proc/cpuinfo", "r");
+                if (cpuinfo) {
+                    char line[256];
+                    while (fgets(line, sizeof(line), cpuinfo)) {
+                        if (strstr(line, "Neoverse") || strstr(line, "0xd40")) {
+                            fclose(cpuinfo);
+                            return true;
+                        }
+                    }
+                    fclose(cpuinfo);
+                }
+                return true;  // At least ARM
+            }
+        }
+        pclose(f);
+    }
+    #endif
+    return false;
+}
+
 SystemInfo detect_system_capabilities() {
-    SystemInfo info = {false, false, false, 0, 0, 0};
+    SystemInfo info = {false, false, false, 0, 0, 0, false, false};
     
     CUDA_CHECK(cudaGetDeviceCount(&info.num_gpus));
     
@@ -75,36 +108,76 @@ SystemInfo detect_system_capabilities() {
     printf("=== System Capabilities ===\n");
     printf("GPU: %s\n", prop.name);
     printf("Compute Capability: %d.%d\n", prop.major, prop.minor);
-    printf("GPU Memory: %.2f GB\n", info.gpu_memory / (1024.0 * 1024.0 * 1024.0));
+    printf("GPU Memory: %.2f GB per GPU\n", info.gpu_memory / (1024.0 * 1024.0 * 1024.0));
+    printf("Number of GPUs: %d\n", info.num_gpus);
+    
+    // Check for 8x B200 configuration
+    if (info.num_gpus == 8 && prop.major == 10 && prop.minor == 0) {
+        float mem_gb = info.gpu_memory / (1024.0 * 1024.0 * 1024.0);
+        if (mem_gb > 170.0 && mem_gb < 190.0) {
+            info.is_8xb200 = true;
+            printf("✓ 8x B200 GPU configuration detected\n");
+            printf("  Total memory: %.2f TB (%.0f GB per GPU)\n", 
+                   info.num_gpus * mem_gb / 1024.0, mem_gb);
+            printf("  Total SMs: %d (148 per GPU)\n", info.num_gpus * 148);
+            printf("  NVLink 5.0: 1800 GB/s per GPU pair (bidirectional)\n");
+        }
+    }
     
     // Check for Blackwell
     if (prop.major == 10 && prop.minor == 0) {
         printf("✓ Blackwell B200/B300 detected\n");
         
-        // Check for NVLink-C2C (Grace-Blackwell specific)
-        // On Grace-Blackwell, we can detect this via system topology
-        #ifdef __linux__
-        FILE* f = fopen("/proc/driver/nvidia/gpus/0000:01:00.0/information", "r");
-        if (f) {
-            char line[256];
-            while (fgets(line, sizeof(line), f)) {
-                if (strstr(line, "NVLink-C2C") || strstr(line, "Grace")) {
-                    info.has_nvlink_c2c = true;
-                    info.is_grace_blackwell = true;
-                    break;
-                }
-            }
-            fclose(f);
-        }
-        #endif
+        // Detect Grace CPU
+        bool has_grace_cpu = detect_grace_cpu();
         
-        if (info.has_nvlink_c2c) {
-            printf("✓ NVLink-C2C detected (Grace-Blackwell Superchip)\n");
-            printf("  Expected bandwidth: ~900 GB/s (CPU ↔ GPU)\n");
+        if (has_grace_cpu) {
+            info.has_nvlink_c2c = true;
+            info.is_grace_blackwell = true;
+            printf("✓ Grace CPU detected (ARM Neoverse)\n");
+            printf("✓ GB200/GB300 Grace-Blackwell Superchip\n");
+            printf("  NVLink-C2C: 900 GB/s coherent CPU ↔ GPU bandwidth\n");
+            printf("  Unified memory address space\n");
+            printf("  Grace: 72 ARM cores, 480GB-1TB LPDDR5X\n");
         } else {
-            printf("⚠ PCIe connection (no NVLink-C2C)\n");
-            printf("  Expected bandwidth: ~128 GB/s (PCIe 5.0)\n");
-            info.has_pcie_5 = true;
+            // Check for NVLink-C2C via NVIDIA driver
+            #ifdef __linux__
+            FILE* f = fopen("/proc/driver/nvidia/gpus/0000:01:00.0/information", "r");
+            if (f) {
+                char line[256];
+                while (fgets(line, sizeof(line), f)) {
+                    if (strstr(line, "NVLink-C2C")) {
+                        info.has_nvlink_c2c = true;
+                        break;
+                    }
+                }
+                fclose(f);
+            }
+            #endif
+            
+            if (info.has_nvlink_c2c) {
+                printf("✓ NVLink-C2C detected\n");
+                printf("  Expected bandwidth: ~900 GB/s (CPU ↔ GPU)\n");
+            } else {
+                printf("⚠ PCIe connection (no NVLink-C2C)\n");
+                printf("  Expected bandwidth: ~128 GB/s (PCIe 5.0)\n");
+                info.has_pcie_5 = true;
+            }
+        }
+        
+        // Check for NVSwitch (for 8-GPU configurations)
+        if (info.num_gpus >= 8) {
+            #ifdef __linux__
+            FILE* topo = popen("nvidia-smi topo -m 2>/dev/null | grep -i nvswitch", "r");
+            if (topo) {
+                char line[256];
+                if (fgets(line, sizeof(line), topo)) {
+                    info.has_nvswitch = true;
+                    printf("✓ NVSwitch detected (optimal for 8-GPU topology)\n");
+                }
+                pclose(topo);
+            }
+            #endif
         }
     } else {
         printf("⚠ Not a Blackwell GPU - NVLink-C2C not available\n");
@@ -253,6 +326,201 @@ void demonstrate_page_migration() {
 }
 
 // ============================================================================
+// 8-GPU P2P Bandwidth Benchmarks
+// ============================================================================
+
+void benchmark_8gpu_p2p_bandwidth(const SystemInfo& info) {
+    if (!info.is_8xb200) {
+        printf("\n⚠ 8-GPU P2P benchmark requires 8x B200 GPUs (found %d)\n", info.num_gpus);
+        return;
+    }
+    
+    printf("\n=== 8-GPU P2P Bandwidth Benchmark ===\n");
+    printf("Testing NVLink 5.0 bandwidth between all GPU pairs\n\n");
+    
+    const size_t transfer_size = 256 * 1024 * 1024;  // 256 MB
+    const int iterations = 100;
+    
+    // Enable P2P access between all GPU pairs
+    for (int i = 0; i < 8; i++) {
+        CUDA_CHECK(cudaSetDevice(i));
+        for (int j = 0; j < 8; j++) {
+            if (i != j) {
+                int can_access;
+                CUDA_CHECK(cudaDeviceCanAccessPeer(&can_access, i, j));
+                if (can_access) {
+                    cudaDeviceEnablePeerAccess(j, 0);
+                }
+            }
+        }
+    }
+    
+    // Allocate memory on each GPU
+    float* d_data[8];
+    for (int i = 0; i < 8; i++) {
+        CUDA_CHECK(cudaSetDevice(i));
+        CUDA_CHECK(cudaMalloc(&d_data[i], transfer_size));
+    }
+    
+    // Benchmark all pairs
+    printf("GPU Pair | Bandwidth (GB/s) | Latency (μs)\n");
+    printf("---------|------------------|-------------\n");
+    
+    double total_bandwidth = 0.0;
+    int pair_count = 0;
+    
+    for (int src = 0; src < 8; src++) {
+        for (int dst = src + 1; dst < 8; dst++) {
+            CUDA_CHECK(cudaSetDevice(src));
+            
+            // Warmup
+            CUDA_CHECK(cudaMemcpyPeer(d_data[dst], dst, d_data[src], src, transfer_size));
+            CUDA_CHECK(cudaDeviceSynchronize());
+            
+            // Benchmark
+            auto start = std::chrono::high_resolution_clock::now();
+            for (int i = 0; i < iterations; i++) {
+                CUDA_CHECK(cudaMemcpyPeer(d_data[dst], dst, d_data[src], src, transfer_size));
+            }
+            CUDA_CHECK(cudaDeviceSynchronize());
+            auto end = std::chrono::high_resolution_clock::now();
+            
+            auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
+            double avg_us = duration.count() / (double)iterations;
+            double bandwidth_gbs = (transfer_size / (avg_us / 1e6)) / (1024.0 * 1024.0 * 1024.0);
+            
+            printf("  %d ↔ %d  |     %7.2f      |   %7.2f\n", 
+                   src, dst, bandwidth_gbs, avg_us);
+            
+            total_bandwidth += bandwidth_gbs;
+            pair_count++;
+        }
+    }
+    
+    // Summary
+    printf("\n8-GPU P2P Summary:\n");
+    printf("  Average bandwidth: %.2f GB/s per pair\n", total_bandwidth / pair_count);
+    printf("  Total pairs: %d\n", pair_count);
+    
+    if (info.has_nvswitch) {
+        printf("  ✓ NVSwitch topology: Full mesh connectivity\n");
+        printf("  ✓ Expected: ~1800 GB/s bidirectional per pair (NVLink 5.0)\n");
+    } else {
+        printf("  ℹ Direct NVLink topology\n");
+        printf("  ℹ Some pairs may have lower bandwidth (multi-hop)\n");
+    }
+    
+    // Cleanup
+    for (int i = 0; i < 8; i++) {
+        CUDA_CHECK(cudaSetDevice(i));
+        CUDA_CHECK(cudaFree(d_data[i]));
+    }
+    
+    printf("\nRecommendations for 8x B200:\n");
+    printf("  - Use NCCL 2.28 with NVLS for optimal collectives\n");
+    printf("  - Tensor Parallel: Split across 2, 4, or 8 GPUs\n");
+    printf("  - Data Parallel: Remaining GPUs for batch parallelism\n");
+    printf("  - Monitor with: nvidia-smi dmon -s u -i 0,1,2,3,4,5,6,7\n");
+}
+
+// ============================================================================
+// GB200/GB300 Coherent Memory Examples
+// ============================================================================
+
+__global__ void coherent_memory_kernel(float* data, int size) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < size) {
+        // Read-modify-write on coherent memory
+        data[idx] = data[idx] * 2.0f + 1.0f;
+    }
+}
+
+void demonstrate_gb200_coherent_memory(const SystemInfo& info) {
+    if (!info.is_grace_blackwell) {
+        printf("\n⚠ GB200/GB300 coherent memory requires Grace-Blackwell Superchip\n");
+        printf("  Current system: Standard CPU-GPU connection\n");
+        return;
+    }
+    
+    printf("\n=== GB200/GB300 Coherent Memory Demo ===\n");
+    printf("NVLink-C2C enables coherent CPU-GPU memory access\n\n");
+    
+    const size_t size = 128 * 1024 * 1024;  // 128 MB
+    const int num_elements = size / sizeof(float);
+    
+    // Allocate managed memory (coherent on GB200/GB300)
+    float* coherent_data;
+    CUDA_CHECK(cudaMallocManaged(&coherent_data, size));
+    
+    // Initialize on CPU
+    printf("1. CPU: Initializing %.2f MB...\n", size / (1024.0 * 1024.0));
+    for (int i = 0; i < num_elements; i++) {
+        coherent_data[i] = (float)i;
+    }
+    
+    // CPU reads back first element
+    float cpu_value_before = coherent_data[0];
+    printf("   CPU value[0] before: %.2f\n", cpu_value_before);
+    
+    // GPU modifies the data (coherent access via NVLink-C2C)
+    printf("\n2. GPU: Modifying data via NVLink-C2C...\n");
+    
+    auto start = std::chrono::high_resolution_clock::now();
+    
+    // No explicit cudaMemPrefetchAsync needed - coherent!
+    int threads = 256;
+    int blocks = (num_elements + threads - 1) / threads;
+    coherent_memory_kernel<<<blocks, threads>>>(coherent_data, num_elements);
+    CUDA_CHECK(cudaDeviceSynchronize());
+    
+    auto end = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+    
+    printf("   GPU kernel completed in %ld ms\n", duration.count());
+    
+    // CPU reads back modified value (coherent read via NVLink-C2C)
+    printf("\n3. CPU: Reading modified data (coherent)...\n");
+    float cpu_value_after = coherent_data[0];
+    printf("   CPU value[0] after:  %.2f\n", cpu_value_after);
+    printf("   Expected: %.2f\n", cpu_value_before * 2.0f + 1.0f);
+    
+    if (fabs(cpu_value_after - (cpu_value_before * 2.0f + 1.0f)) < 0.01f) {
+        printf("   ✓ Coherent memory working correctly!\n");
+    }
+    
+    // Benchmark coherent access bandwidth
+    printf("\n4. Benchmark coherent memory bandwidth:\n");
+    
+    // CPU writes, GPU reads
+    start = std::chrono::high_resolution_clock::now();
+    for (int i = 0; i < num_elements; i++) {
+        coherent_data[i] = (float)i * 0.5f;
+    }
+    coherent_memory_kernel<<<blocks, threads>>>(coherent_data, num_elements);
+    CUDA_CHECK(cudaDeviceSynchronize());
+    end = std::chrono::high_resolution_clock::now();
+    
+    duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
+    double bandwidth_gbs = (2 * size / (duration.count() / 1e6)) / (1024.0 * 1024.0 * 1024.0);
+    printf("   CPU write + GPU read: %.2f GB/s\n", bandwidth_gbs);
+    
+    CUDA_CHECK(cudaFree(coherent_data));
+    
+    printf("\nGB200/GB300 Key Benefits:\n");
+    printf("  ✓ No explicit cudaMemcpy required\n");
+    printf("  ✓ Coherent view of memory from CPU and GPU\n");
+    printf("  ✓ ~900 GB/s bandwidth via NVLink-C2C\n");
+    printf("  ✓ Unified memory programming model\n");
+    printf("  ✓ Ideal for: CPU preprocessing + GPU compute\n");
+    
+    printf("\nUse Cases:\n");
+    printf("  1. CPU data loading → GPU training (seamless)\n");
+    printf("  2. Large KV cache in CPU memory (480GB-1TB)\n");
+    printf("  3. CPU-GPU pipeline without explicit transfers\n");
+    printf("  4. Optimizer state offloading to CPU\n");
+}
+
+// ============================================================================
 // Main Benchmark
 // ============================================================================
 
@@ -321,11 +589,21 @@ int main() {
     // Detect system
     SystemInfo info = detect_system_capabilities();
     
-    // Run benchmarks
+    // Run standard benchmarks
     run_transfer_benchmarks(info);
     
     // Demonstrate page migration
     demonstrate_page_migration();
+    
+    // NEW: 8-GPU P2P benchmarks
+    if (info.is_8xb200) {
+        benchmark_8gpu_p2p_bandwidth(info);
+    }
+    
+    // NEW: GB200/GB300 coherent memory
+    if (info.is_grace_blackwell) {
+        demonstrate_gb200_coherent_memory(info);
+    }
     
     // Summary
     printf("\n=== Summary ===\n");
@@ -336,15 +614,43 @@ int main() {
     printf("4. cudaMemAdvise optimizes migration for CUDA 13\n");
     printf("5. Prefer pinned memory for frequent transfers\n");
     
-    if (info.has_nvlink_c2c) {
-        printf("\n✓ Grace-Blackwell System Detected\n");
-        printf("  Recommendation: Use managed memory with cudaMemAdvise\n");
-        printf("  NVLink-C2C enables seamless CPU-GPU data sharing\n");
-    } else {
-        printf("\n⚠ PCIe Connection\n");
-        printf("  Recommendation: Minimize CPU-GPU transfers\n");
-        printf("  Use pinned memory when transfers are necessary\n");
+    if (info.is_8xb200) {
+        printf("\n✓ 8x B200 GPU Configuration Detected\n");
+        printf("  - Total memory: 1.44 TB (180 GB per GPU)\n");
+        printf("  - NVLink 5.0: 1800 GB/s per GPU pair\n");
+        printf("  - Recommendations:\n");
+        printf("    * Use NCCL 2.28 for collectives\n");
+        printf("    * Hybrid parallelism: TP=2/DP=4 or TP=4/DP=2\n");
+        printf("    * Monitor bandwidth: nvidia-smi dmon -s u\n");
     }
+    
+    if (info.is_grace_blackwell) {
+        printf("\n✓ GB200/GB300 Grace-Blackwell Superchip Detected\n");
+        printf("  - Grace CPU: 72 ARM cores, 480GB-1TB memory\n");
+        printf("  - NVLink-C2C: 900 GB/s coherent bandwidth\n");
+        printf("  - Recommendations:\n");
+        printf("    * Use managed memory with cudaMemAdvise\n");
+        printf("    * CPU preprocessing + GPU training pipeline\n");
+        printf("    * Offload optimizer states to CPU memory\n");
+        printf("    * Store large KV caches in CPU memory\n");
+    }
+    
+    if (!info.is_grace_blackwell && !info.is_8xb200) {
+        printf("\n⚠ Standard GPU Configuration\n");
+        if (info.has_pcie_5) {
+            printf("  Connection: PCIe 5.0 (~128 GB/s)\n");
+        }
+        printf("  Recommendations:\n");
+        printf("    * Minimize CPU-GPU transfers\n");
+        printf("    * Use pinned memory when necessary\n");
+        printf("    * Keep data on GPU when possible\n");
+    }
+    
+    printf("\n=== Hardware-Specific Optimizations ===\n");
+    printf("8x B200:       ch4/training_8xb200_pipeline.py\n");
+    printf("GB200/GB300:   ch4/gb200_grace_numa_optimization.py\n");
+    printf("NCCL Config:   ch4/nccl_blackwell_config.py\n");
+    printf("Inference:     ch16/inference_optimizations_blackwell.py\n");
     
     return 0;
 }

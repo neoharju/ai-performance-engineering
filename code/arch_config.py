@@ -137,10 +137,10 @@ class ArchitectureConfig:
         os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "max_split_size_mb:128,expandable_segments:True")
         
         # PyTorch 2.9: Enable TF32 for Blackwell (improves FP32 matmul performance)
-# NEW PyTorch 2.9 API (no warnings!)
-torch.set_float32_matmul_precision('high')
-torch.backends.cudnn.conv.fp32_precision = 'tf32'
-torch.backends.cuda.matmul.fp32_precision = 'high'
+        # NEW PyTorch 2.9 API (no warnings!)
+        torch.set_float32_matmul_precision('high')
+        torch.backends.cudnn.conv.fp32_precision = 'tf32'
+        torch.backends.cuda.matmul.fp32_precision = 'high'
 
     def print_info(self) -> None:
         cfg = self.config
