@@ -73,8 +73,8 @@ Triton 3.5 compiler crashes when using TMA tensor descriptors with aggressive pi
 **Files & Documentation:**
 - Production code: `ch14/triton_tma_blackwell.py:1-478` (uses conservative configs)
 - Reproducer: `ch14/triton_tma_reproducer.py` (standalone test case)
-- Bug report: `ch14/TRITON_ISSUE_SUBMISSION.md` (ready for GitHub submission)
-- Analysis: `ch14/README_TRITON_BUG.md` (complete investigation)
+- Bug report: `docs/triton_bug_reports/TRITON_ISSUE_SUBMISSION.md` (ready for GitHub submission)
+- Analysis: `docs/triton_bug_reports/README_TRITON_BUG.md` (complete investigation)
 - Benchmark: `ch14/benchmark_tma_configs.py` (quantifies performance loss)
 
 **Next Steps:**

@@ -245,7 +245,7 @@ The bug appears resolved, performance gains are significant (1.5-2x), and risk i
 
 - **Reproducer:** `ch14/triton_tma_reproducer.py`
 - **Benchmark:** `ch14/benchmark_tma_configs.py`
-- **Investigation:** `ch14/TRITON_BUG_INVESTIGATION.md`
+- **Investigation:** `docs/triton_bug_reports/TRITON_BUG_INVESTIGATION.md`
 - **Main File:** `ch14/triton_tma_blackwell.py`
 
 ---
@@ -253,4 +253,3 @@ The bug appears resolved, performance gains are significant (1.5-2x), and risk i
 **Prepared by:** AI Performance Engineering Analysis  
 **Date:** October 28, 2025  
 **Status:** Ready for implementation
-

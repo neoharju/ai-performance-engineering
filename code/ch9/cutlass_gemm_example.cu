@@ -11,6 +11,10 @@
 #include <random>
 #include <algorithm>
 
+#if defined(CUDART_VERSION) && (CUDART_VERSION >= 13000)
+#include "../common/cuda13_teasers.cuh"
+#endif
+
 namespace cg = cooperative_groups;
 
 // Simple GEMM kernel for demonstration
@@ -179,6 +183,13 @@ int main() {
     if (result) {
         std::cout << "\nTo profile with Nsight Compute roofline analysis:" << std::endl;
         std::cout << "ncu --section RooflineChart ./cutlass_gemm_example" << std::endl;
+#if defined(CUDART_VERSION) && (CUDART_VERSION >= 13000)
+        // CUDA 13 teasers for Blackwell readers.
+        cuda13_teasers::stream_ordered_teaser();
+        cuda13_teasers::tma_teaser();
+#else
+        std::cout << "CUDA 13 teasers require CUDA 13 headers; see later chapters for full demos.\n";
+#endif
         return 0;
     } else {
         return -1;
@@ -189,6 +200,7 @@ int main() {
 __global__ void stream_ordered_memory_example() {
     // Example of stream-ordered memory allocation
     // This is a placeholder for actual implementation
+    // See ch11/stream_ordered_allocator.cu for a full cudaMallocAsync demo.
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     // Your kernel code here
 }
@@ -197,6 +209,7 @@ __global__ void stream_ordered_memory_example() {
 __global__ void tma_example() {
     // Example of TMA usage for Blackwell B200/B300
     // This is a placeholder for actual implementation
+    // See ch7/async_prefetch_tma.cu or ch10/tma_2d_pipeline_blackwell.cu for real TMA usage.
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     // Your TMA code here
 }

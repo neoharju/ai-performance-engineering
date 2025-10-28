@@ -198,12 +198,19 @@ class DemoCausalLM(nn.Module):
         self,
         input_ids: torch.Tensor,
         past_kv: Optional[List[List[Tuple[torch.Tensor, torch.Tensor]]]] = None,
+        input_lengths: Optional[List[int]] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Return logits and per-layer KV tensors shaped for downstream sharded cache usage.
         """
         hidden = self.token_embed(input_ids)  # (batch, seq, d_model)
         batch_size = hidden.shape[0]
+        if input_lengths is None:
+            current_lengths = [input_ids.shape[1]] * batch_size
+        else:
+            if len(input_lengths) != batch_size:
+                raise ValueError("input_lengths size must match batch size")
+            current_lengths = input_lengths
 
         local_keys: List[torch.Tensor] = []
         local_values: List[torch.Tensor] = []
@@ -217,7 +224,7 @@ class DemoCausalLM(nn.Module):
                 if len(layer_cache) != batch_size:
                     raise ValueError("past_kv layer cache length must match batch size")
 
-            hidden, key_local, value_local = layer(hidden, layer_cache)
+            hidden, key_local, value_local = layer(hidden, layer_cache, input_lengths=current_lengths)
             local_keys.append(key_local)
             local_values.append(value_local)
 
@@ -254,9 +261,11 @@ class DemoTransformerLayer(nn.Module):
         self,
         hidden: torch.Tensor,
         kv_cache: Optional[List[Optional[Tuple[torch.Tensor, torch.Tensor]]]] = None,
+        *,
+        input_lengths: Optional[List[int]] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         attn_input = self.attn_norm(hidden)
-        attn_out, key_local, value_local = self.attn(attn_input, kv_cache=kv_cache)
+        attn_out, key_local, value_local = self.attn(attn_input, kv_cache=kv_cache, input_lengths=input_lengths)
         hidden = hidden + attn_out
 
         mlp_out = self.mlp(self.mlp_norm(hidden))
@@ -746,16 +755,16 @@ class TensorParallelAttention(nn.Module):
             self._attn_k_workspace is None
             or self._attn_k_workspace.device != device
             or self._attn_k_workspace.dtype != dtype
-            or self._attn_k_workspace.size(0) < self.max_batch_size
-            or self._attn_k_workspace.size(2) < self.max_seq_len
+            or self._attn_k_workspace.size(0) < batch_size
+            or self._attn_k_workspace.size(2) < total_k_len
         )
 
         if needs_refresh:
-            shape = (self.max_batch_size, self.heads_per_gpu, self.max_seq_len, self.head_dim)
+            shape = (batch_size, self.heads_per_gpu, total_k_len, self.head_dim)
             self._attn_k_workspace = torch.empty(shape, dtype=dtype, device=device)
             self._attn_v_workspace = torch.empty_like(self._attn_k_workspace)
             self._valid_mask_workspace = torch.empty(
-                (self.max_batch_size, self.max_seq_len),
+                (batch_size, total_k_len),
                 dtype=torch.bool,
                 device=device,
             )
@@ -1283,14 +1292,32 @@ class InferenceServer8GPU:
         if num_tokens != 1:
             raise NotImplementedError("Only single-token generation is supported in this demo")
 
-        batch_size = len(batch)
+        eligible: List[Tuple[int, RequestState]] = []
+        for idx, state in enumerate(batch):
+            if state.is_finished():
+                state.is_complete = True
+                continue
+            cache_len = self.kv_cache.slot_seq_len[state.kv_cache_slot]
+            if cache_len >= self.max_seq_len:
+                state.is_complete = True
+                continue
+            delta_len = len(state.request.prompt_tokens) if len(state.generated_tokens) == 0 else 1
+            if cache_len + delta_len > self.max_seq_len:
+                state.is_complete = True
+                continue
+            eligible.append((idx, state))
+
+        if not eligible:
+            return []
+
+        batch_size = len(eligible)
 
         temperatures = self._temperature_workspace[:batch_size]
         lengths = self._length_workspace[:batch_size]
         token_counts = [0] * batch_size
 
         # Materialise prompts/tokens into the reusable GPU workspace
-        for idx, state in enumerate(batch):
+        for pack_idx, (orig_idx, state) in enumerate(eligible):
             if len(state.generated_tokens) == 0:
                 token_source = state.request.prompt_tokens
             else:
@@ -1308,23 +1335,23 @@ class InferenceServer8GPU:
                     f"Sequence length {seq_len} exceeds configured max_seq_len={self.max_seq_len}"
                 )
 
-            lengths[idx] = seq_len
-            temperatures[idx] = state.request.temperature
-            token_counts[idx] = seq_len
+            lengths[pack_idx] = seq_len
+            temperatures[pack_idx] = state.request.temperature
+            token_counts[pack_idx] = seq_len
 
-            workspace_view = self._token_workspace[idx, :seq_len]
+            workspace_view = self._token_workspace[pack_idx, :seq_len]
             workspace_view.copy_(token_tensor)
-            prev_len = self._last_token_lengths[idx]
+            prev_len = self._last_token_lengths[pack_idx]
             if seq_len < prev_len:
-                self._token_workspace[idx, seq_len:prev_len].zero_()
-            self._last_token_lengths[idx] = seq_len
+                self._token_workspace[pack_idx, seq_len:prev_len].zero_()
+            self._last_token_lengths[pack_idx] = seq_len
 
         max_tokens = int(lengths[:batch_size].max().item())
         max_tokens = max(max_tokens, 1)
         input_ids = self._token_workspace[:batch_size, :max_tokens]
 
         needs_cache_fetch = any(
-            self.kv_cache.slot_seq_len[state.kv_cache_slot] > 0 for state in batch
+            self.kv_cache.slot_seq_len[state.kv_cache_slot] > 0 for _, state in eligible
         )
         past_kv: Optional[List[List[Tuple[torch.Tensor, torch.Tensor]]]] = None
 
@@ -1333,7 +1360,7 @@ class InferenceServer8GPU:
 
             def _gather_past_kv():
                 assert past_kv is not None
-                for state in batch:
+                for _, state in eligible:
                     slot = state.kv_cache_slot
                     for layer_idx in range(self.num_layers):
                         key_cache, value_cache = self.kv_cache.get_cache(slot, layer_idx)
@@ -1373,30 +1400,43 @@ class InferenceServer8GPU:
         temp = torch.clamp(temperatures[:batch_size], min=1e-4).to(logits.dtype)
         scaled_logits = logits / temp.unsqueeze(-1)
         probs = F.softmax(scaled_logits, dim=-1)
-        next_tokens = torch.multinomial(probs.float().cpu(), num_samples=1).squeeze(-1)
 
-        generated = next_tokens.tolist()
+        next_tokens_device = torch.empty(batch_size, dtype=torch.long, device=probs.device)
+        if self.world_size == 1 or not dist.is_initialized():
+            next_tokens_device.copy_(torch.multinomial(probs, num_samples=1).squeeze(-1))
+        else:
+            if self.rank == 0:
+                next_tokens_device.copy_(torch.multinomial(probs, num_samples=1).squeeze(-1))
+            dist.broadcast(next_tokens_device, src=0)
 
-        for state, token in zip(batch, generated):
+        generated = next_tokens_device.cpu().tolist()
+
+        for (pack_idx, (orig_idx, state)), token in zip(enumerate(eligible), generated):
+            remaining = self.max_seq_len - state.current_position
+            if remaining <= 0:
+                state.is_complete = True
+                continue
             state.generated_tokens.append(token)
             state.current_position += 1
 
             if token == 2:  # EOS token
                 state.is_complete = True
+            elif state.current_position >= self.max_seq_len:
+                state.is_complete = True
 
         head_slice = self._head_slice(attn_keys.shape[2])
 
         def _flush_to_cache():
-            for idx, state in enumerate(batch):
-                num_tokens = token_counts[idx]
+            for pack_idx, (orig_idx, state) in enumerate(eligible):
+                num_tokens = token_counts[pack_idx]
                 if num_tokens == 0:
                     continue
 
                 key_layers = []
                 value_layers = []
                 for layer_idx in range(self.num_layers):
-                    layer_keys = attn_keys[layer_idx, idx, head_slice, :num_tokens, :]
-                    layer_values = attn_values[layer_idx, idx, head_slice, :num_tokens, :]
+                    layer_keys = attn_keys[layer_idx, pack_idx, head_slice, :num_tokens, :]
+                    layer_values = attn_values[layer_idx, pack_idx, head_slice, :num_tokens, :]
                     key_layers.append(layer_keys)
                     value_layers.append(layer_values)
 

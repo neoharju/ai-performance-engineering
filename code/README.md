@@ -998,6 +998,11 @@ for _ in range(100):  # Warmup
     out = model(x)
 ```
 
+### Chapter 6-10: CUDA 13 teasers vs. full demos
+- Early CUDA C++ chapters now auto-run **small CUDA 13 “teaser” snippets** (stream-ordered alloc + TMA copy) when compiled with CUDA 13 on Blackwell.
+- Toolchains older than CUDA 13 simply print a pointer to the full walkthroughs so the examples still compile everywhere.
+- Full, production-ready versions live in **ch11/stream_ordered_allocator.cu** (cudaMallocAsync) and **ch7/async_prefetch_tma.cu / ch10/tma_2d_pipeline_blackwell.cu** (descriptor-backed TMA).
+
 ### Model Size Matters
 - **Small models (<50M):** 1.0-1.1x speedup
 - **Medium models (500M-1B):** 1.2-1.3x speedup  

@@ -126,6 +126,59 @@ fi
 
 echo ""
 echo "================================================================================"
+echo "Phase 6: Memory Profiling Critical Workloads"
+echo "================================================================================"
+echo ""
+
+# Create memory profiling subdirectory
+MEMORY_DIR="$RESULTS_DIR/memory_profiles"
+mkdir -p "$MEMORY_DIR"
+
+# Profile key workloads with memory tracking
+echo "Profiling memory usage for critical workloads..."
+
+# Profile torch.compile example
+if [ -f "ch14/torch_compiler_examples.py" ]; then
+    echo -n "  Memory profiling torch.compile... "
+    if timeout 300 python3 tools/memory_profiler.py ch14/torch_compiler_examples.py \
+        --trace "$MEMORY_DIR/torch_compile_memory.json" \
+        > "$MEMORY_DIR/torch_compile_memory.txt" 2>&1; then
+        echo -e "${GREEN}DONE${NC}"
+    else
+        echo -e "${YELLOW}SKIPPED${NC}"
+    fi
+fi
+
+# Profile FlexAttention
+if [ -f "ch18/flex_attention_native.py" ]; then
+    echo -n "  Memory profiling FlexAttention... "
+    if timeout 300 python3 tools/memory_profiler.py ch18/flex_attention_native.py \
+        --trace "$MEMORY_DIR/flex_attention_memory.json" \
+        > "$MEMORY_DIR/flex_attention_memory.txt" 2>&1; then
+        echo -e "${GREEN}DONE${NC}"
+    else
+        echo -e "${YELLOW}SKIPPED${NC}"
+    fi
+fi
+
+# Profile MoE benchmark
+if [ -f "ch16/synthetic_moe_inference_benchmark.py" ]; then
+    echo -n "  Memory profiling MoE... "
+    if timeout 300 MOE_BENCH_QUICK=1 python3 tools/memory_profiler.py \
+        ch16/synthetic_moe_inference_benchmark.py \
+        --trace "$MEMORY_DIR/moe_memory.json" \
+        > "$MEMORY_DIR/moe_memory.txt" 2>&1; then
+        echo -e "${GREEN}DONE${NC}"
+    else
+        echo -e "${YELLOW}SKIPPED${NC}"
+    fi
+fi
+
+echo ""
+echo "Memory profiles saved to: $MEMORY_DIR/"
+
+echo ""
+echo "================================================================================"
 echo "Quick Performance Analysis"
 echo "================================================================================"
 echo ""
@@ -151,6 +204,18 @@ if command -v python3 &> /dev/null; then
             echo "Nsight Systems Kernel Summary"
             echo "================================================================================"
             cat "$NSYS_SUMMARY_FILE"
+        fi
+    fi
+
+    # Analyze memory profiles if available
+    if [ -d "$MEMORY_DIR" ] && [ "$(ls -A $MEMORY_DIR/*.txt 2>/dev/null)" ]; then
+        echo ""
+        echo "================================================================================"
+        echo "Memory Profiling Summary"
+        echo "================================================================================"
+        python3 tools/memory_analyzer.py --input "$MEMORY_DIR" --output "$RESULTS_DIR/memory_summary.md" 2>/dev/null || true
+        if [ -f "$RESULTS_DIR/memory_summary.md" ]; then
+            cat "$RESULTS_DIR/memory_summary.md"
         fi
     fi
 else

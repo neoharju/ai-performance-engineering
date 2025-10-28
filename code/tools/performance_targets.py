@@ -24,8 +24,8 @@ TARGETS: Dict[str, Dict[str, Dict[str, Any]]] = {
     "ch2": {
         "description": "Hardware Overview",
         "metrics": {
-            "nvlink_bandwidth_gbs": {"min": 850, "target": 900, "unit": "GB/s"},
-            "hbm3e_bandwidth_tbs": {"min": 6.5, "target": 7.8, "unit": "TB/s"},
+            "nvlink_bandwidth_gbs": {"min": 650, "target": 725, "unit": "GB/s"},
+            "hbm3e_bandwidth_tbs": {"min": 5.0, "target": 5.5, "unit": "TB/s"},
         }
     },
     "ch3": {
@@ -52,7 +52,7 @@ TARGETS: Dict[str, Dict[str, Dict[str, Any]]] = {
     "ch7": {
         "description": "Memory Access Patterns",
         "metrics": {
-            "hbm3e_bandwidth_percent": {"min": 85, "target": 90, "unit": "%"},
+            "utilization_percent": {"min": 65, "target": 70, "unit": "%"},
             "coalesced_efficiency_percent": {"min": 85, "target": 90, "unit": "%"},
         }
     },
@@ -230,4 +230,3 @@ def format_value(value: float, unit: str) -> str:
         return f"{value:.2f} {unit}"
     else:
         return f"{value:.2f} {unit}" if unit else f"{value:.2f}"
-

@@ -6,6 +6,10 @@
 #include <cuda_runtime.h>
 #include <stdio.h>
 
+#if defined(CUDART_VERSION) && (CUDART_VERSION >= 13000)
+#include "../common/cuda13_teasers.cuh"
+#endif
+
 // Kernel with launch bounds annotation
 __global__ __launch_bounds__(256, 8)
 void myKernel(float* input, float* output, int N) {
@@ -105,6 +109,14 @@ int main() {
     cudaEventDestroy(start);
     cudaEventDestroy(stop);
     
+#if defined(CUDART_VERSION) && (CUDART_VERSION >= 13000)
+    // CUDA 13 teasers for Blackwell readers.
+    cuda13_teasers::stream_ordered_teaser();
+    cuda13_teasers::tma_teaser();
+#else
+    printf("CUDA 13 teasers require CUDA 13 headers; see later chapters for full demos.\n");
+#endif
+
     return 0;
 }
 
@@ -112,6 +124,7 @@ int main() {
 __global__ void stream_ordered_memory_example() {
     // Example of stream-ordered memory allocation
     // This is a placeholder for actual implementation
+    // See ch11/stream_ordered_allocator.cu for a full cudaMallocAsync demo.
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     // Your kernel code here
 }
@@ -120,6 +133,7 @@ __global__ void stream_ordered_memory_example() {
 __global__ void tma_example() {
     // Example of TMA usage for Blackwell B200/B300
     // This is a placeholder for actual implementation
+    // See ch7/async_prefetch_tma.cu or ch10/tma_2d_pipeline_blackwell.cu for real TMA usage.
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     // Your TMA code here
 }

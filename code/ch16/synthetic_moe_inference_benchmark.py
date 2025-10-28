@@ -428,6 +428,7 @@ def main():
     print("Creating synthetic MoE model...")
     model = SyntheticMoEModel(config, num_layers=selected_config['layers'])
     model = model.cuda().eval()
+    baseline_param_count = model.total_params
     
     print(f"Model parameters: {model.total_params / 1e9:.2f}B")
     print(f"(This is a synthetic model for benchmarking, NOT real GPT-OSS)")
@@ -483,6 +484,12 @@ def main():
 
         fp8_supported = getattr(torch, "float8_e4m3fn", None) is not None
         if fp8_supported:
+            # Free baseline and compiled models to make room for FP8 variants
+            del model_compiled
+            torch.cuda.empty_cache()
+            del model
+            torch.cuda.empty_cache()
+
             print("\n" + "=" * 80)
             print("BENCHMARK 3: FP8 Weights (Eager Mode)")
             print("=" * 80)
@@ -522,7 +529,7 @@ def main():
     print("\n" + "=" * 80)
     print("RESULTS")
     print("=" * 80)
-    print(f"Configuration: {selected_config['layers']} layers, {model.total_params / 1e9:.2f}B params")
+    print(f"Configuration: {selected_config['layers']} layers, {baseline_param_count / 1e9:.2f}B params")
     print(f"Sequence length: {seq_len} tokens")
     print()
     print(f"Eager Mode (BF16):      {eager_time:.2f} ms ({eager_throughput:.1f} tok/s)")
@@ -551,7 +558,7 @@ def main():
     print("PERFORMANCE ANALYSIS")
     print("=" * 80)
     print(f"Current configuration ({selected_config['layers']} layers): {compiled_throughput:.1f} tokens/sec")
-    print(f"Model size: {model.total_params / 1e9:.2f}B parameters")
+    print(f"Model size: {baseline_param_count / 1e9:.2f}B parameters")
     
     # Scale by layer count (rough approximation)
     projected_throughput = compiled_throughput
@@ -591,7 +598,7 @@ def main():
     results = {
         'model': 'Synthetic-MoE-Benchmark',
         'config': selected_config,
-        'parameters': model.total_params,
+        'parameters': baseline_param_count,
         'eager_time_ms': eager_time,
         'compiled_time_ms': compiled_time,
         'speedup': speedup,

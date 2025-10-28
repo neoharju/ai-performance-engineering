@@ -1,17 +1,18 @@
 # B200 Large-Model Benchmark Status
 
 ## Executive Summary
-- Ran the 39.5B parameter GPT benchmark with both `reduce-overhead` and `max-autotune`; the latter yields only ~0.6-1.0% gains even with six timed iterations.
-- Added tensor-parallel execution across two B200s; per-GPU memory shrank to ~41 GB, but latency increased because of NVLink transfers.
-- Prototyped FP8 weight-only linear layers (per-output scaling): model memory fell to ~55 GB, though per-iteration dequantization cut throughput by ~10-15%.
-- Installed CUTLASS sources plus NVIDIA Python bindings, yet TorchInductor still warns that `cutlass._mlir` is missing, so CUTLASS kernels remain disabled.
+- After installing the NVIDIA CUTLASS DSL wheel (`nvidia-cutlass-dsl==4.2.1`), max-autotune with `torch.compile` now delivers up to **1.03x** on shorter batches, but still hovers ~1.00x on 8K+ tokens.
+- Tensor-parallel execution across two B200s still halves per-GPU memory (~41 GB) at the cost of additional NVLink latency.
+- Fused FP8 weight-only linears (using `torch._scaled_mm`) hold throughput within 1-2% of FP16 while dropping peak memory to ~42 GB.
+- TorchInductor continues to log CUTLASS import failures (`cuda.bindings` during cleanup), so Triton kernels remain the fallback despite the new package.
 
 Raw measurements and metadata:
 - `test_results/large_gpt_benchmark_20251028_135159.json` (reduce-overhead, warmup 1 / iters 2)
 - `test_results/large_gpt_benchmark_max_autotune_20251028_140501.json` (max-autotune without CUTLASS, warmup 3 / iters 6)
-- `test_results/large_gpt_benchmark_max_autotune_cutlass_20251028_150143.json` (max-autotune with CUTLASS packages installed - still falls back to Triton/ATen)
+- `test_results/large_gpt_benchmark_max_autotune_cutlass_20251028_161008.json` (max-autotune with CUTLASS DSL 4.2.1, warmup 3 / iters 6, `attention=sdpa`)
 - `test_results/large_gpt_tp2_20251028_143806.json` (tensor-parallel eager prototype)
-- `test_results/large_gpt_fp8_weights_20251028_151819.json` (FP8 weight-only eager prototype)
+- `test_results/large_gpt_fp8_weights_20251028_151819.json` (legacy FP8 weight-only eager prototype)
+- `test_results/large_gpt_fp8_fused_20251028_171215.json` (FP8 weight-only fused via `_scaled_mm`, eager)
 
 ## Benchmark Configuration
 - Architecture: 48 layers, `d_model=8192`, `n_heads=64`, `d_ff=32768`
@@ -46,17 +47,34 @@ Notes:
 - Max-autotune removes regressions but gains stay within measurement noise (~0.6% at 4K tokens).
 - Even with CUTLASS sources/bindings and `TORCHINDUCTOR_CUTLASS_DIR` set, Inductor logs `ModuleNotFoundError: cutlass._mlir` and skips CUTLASS backends.
 
-### FP8 weight-only prototype (no torch.compile, warmup 1, iters 3)
-| Configuration        | Latency (ms) | Throughput (tok/s) | Peak Memory (GB) |
-|---------------------|-------------:|--------------------:|-----------------:|
-| Batch=4, Seq=2048   | 613.12       | 13,361              | 54.9             |
-| Batch=2, Seq=4096   | 635.99       | 12,881              | 54.9             |
-| Batch=1, Seq=8192   | 677.96       | 12,083              | 54.9             |
+### torch.compile mode = `max-autotune` (CUTLASS DSL 4.2.1, warmup 3, iters 6, attention=sdpa)
+| Configuration        | Eager (ms) | Compiled (ms) | Speedup | Eager Throughput (tok/s) | Compiled Throughput (tok/s) | Peak Memory (GB) |
+|---------------------|-----------:|--------------:|--------:|-------------------------:|-----------------------------:|-----------------:|
+| Batch=8, Seq=1024   | 513.36     | 496.57        | 1.03x   | 15,958                   | 16,497                      | 80.6 -> 80.2     |
+| Batch=4, Seq=2048   | 507.20     | 510.93        | 0.99x   | 16,151                   | 16,034                      | 80.6 -> 80.5     |
+| Batch=2, Seq=4096   | 725.54     | 743.31        | 0.98x   | 11,291                   | 11,021                      | 80.6 -> 80.3     |
+| Batch=2, Seq=8192   | 2,352.52   | 2,338.95      | 1.01x   | 6,964                    | 7,005                       | 82.2 -> 80.9     |
+| Batch=1, Seq=12K    | 1,841.68   | 1,824.08      | 1.01x   | 6,672                    | 6,737                       | 81.4 -> 81.7     |
+| Batch=1, Seq=16K    | 2,536.88   | 2,521.58      | 1.01x   | 6,458                    | 6,498                       | 82.2 -> 81.3     |
 
 Notes:
-- MLP feed-forward layers and the output head now store weights as FP8 with per-output scaling buffers; activations remain FP16.
-- Peak memory drops ~31% compared with FP16 weights (80.6 GB -> 54.9 GB).
-- Throughput falls 10-15% because dequantization currently happens outside the matmul; fused FP8 kernels are still required for speedups.
+- CUTLASS kernels still emit repeated `Failed to import CUTLASS lib` warnings (cleanup path cannot load `cuda.bindings`), but the shorter workloads now show a measurable 3% gain.
+- Longer sequences remain memory-bound; the compile path tracks eager within ~1%.
+
+### FP8 weight-only (fused via `_scaled_mm`, no torch.compile, warmup 1, iters 3)
+| Configuration        | Latency (ms) | Throughput (tok/s) | Peak Memory (GB) |
+|---------------------|-------------:|--------------------:|-----------------:|
+| Batch=8, Seq=1024   | 516.13       | 15,872              | 41.8             |
+| Batch=4, Seq=2048   | 519.41       | 15,772              | 41.8             |
+| Batch=2, Seq=4096   | 530.51       | 15,442              | 41.8             |
+| Batch=2, Seq=8192   | 1,100.84     | 14,883              | 43.7             |
+| Batch=1, Seq=12K    | 856.39       | 14,349              | 42.7             |
+| Batch=1, Seq=16K    | 1,184.14     | 13,836              | 43.7             |
+
+Notes:
+- Linear weights are stored in FP8 with per-output scaling; activations are quantised row-wise to FP8 on the fly and multiplied via `torch._scaled_mm` to avoid re-materialising FP16 weights.
+- Peak memory drops by ~35% relative to FP16 weights (80.6 GB -> 41.8 GB for 2-4K token runs) while staying within ~1-2% of FP16 throughput up to 4K tokens.
+- Longer contexts still trend memory-bound; further fusion (FlashAttention, pipeline overlap) will be needed to maintain the gap beyond 8K tokens.
 
 ### Tensor-parallel eager prototype (2 GPUs, warmup 0, iters 1)
 | Configuration        | Latency (ms) | Throughput (tok/s) | Peak Memory / GPU (GB) |
@@ -73,10 +91,10 @@ Notes:
 - Long contexts keep the workload memory-bound; `torch.compile` fusion alone does not overcome the HBM ceiling.
 - Max-autotune slightly improves runtime but sits within ~1% of eager; meaningful gains likely require CUTLASS kernels or deeper fusion.
 - Two-way tensor parallelism doubles available memory headroom, yet added NVLink latency negates speedups without overlap strategies.
-- FP8 weight-only storage cuts ~25 GB of HBM at the cost of lower throughput; integrating quantization into the matmul is the next logical step.
+- Fused FP8 weight-only storage frees >35% of HBM while nearly matching FP16 throughput on 2-4K contexts; remaining work is to extend the benefit to 8K+ tokens.
 
 ## Recommendations & Next Experiments
-1. Resolve the missing `cutlass._mlir` dependency so TorchInductor can actually emit CUTLASS kernels; re-run max-autotune afterward.
-2. Fuse the FP8 weight-only path with CUTLASS or Triton kernels so dequantization happens inside the GEMM rather than materializing FP16 weights.
+1. Debug the remaining CUTLASS import failure (`cuda.bindings` during `move_cutlass_compiled_cache`) so Inductor can retain CUTLASS kernels without warnings.
+2. Push the fused FP8 weight-only path to 8K+ tokens (larger tiles, fused activation quantization) and benchmark under `torch.compile`.
 3. Extend the tensor-parallel prototype with scatter/gather overlap or pipeline parallelism to hide NVLink delays.
 4. Profile with Nsight Compute or PyTorch Profiler to pinpoint the dominant memory-bound kernels (FlashAttention vs. MLP) before writing custom kernels.

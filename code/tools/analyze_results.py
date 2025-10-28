@@ -146,6 +146,9 @@ Examples:
   
   # Write to specific output file
   python tools/analyze_results.py --output docs/analysis_latest.md
+  
+  # Analyze power efficiency
+  python tools/analyze_results.py --power-file power.json --throughput-file results.json
         """
     )
     
@@ -179,10 +182,39 @@ Examples:
         help="Print detailed extraction information"
     )
     
+    parser.add_argument(
+        "--power-file",
+        type=Path,
+        help="Power monitoring JSON file for efficiency analysis"
+    )
+    
+    parser.add_argument(
+        "--throughput-file",
+        type=Path,
+        help="Throughput JSON file for efficiency analysis"
+    )
+    
     args = parser.parse_args()
     
     # Determine code root
     code_root = Path(__file__).resolve().parents[1]
+    
+    # Handle power efficiency analysis if requested
+    if args.power_file and args.throughput_file:
+        try:
+            # Import power efficiency analyzer
+            import subprocess
+            result = subprocess.run([
+                sys.executable,
+                str(code_root / "tools" / "power_efficiency_analyzer.py"),
+                "--power-file", str(args.power_file),
+                "--throughput-file", str(args.throughput_file),
+                "--output", str(args.output) if args.output else "-",
+            ], check=True)
+            return result.returncode
+        except subprocess.CalledProcessError as e:
+            print(f"Power efficiency analysis failed: {e}", file=sys.stderr)
+            return 1
     
     if args.all:
         # Analyze all result directories

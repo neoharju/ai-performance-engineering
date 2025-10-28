@@ -109,6 +109,8 @@ def run_load_test(
             new_requests = []
             for _ in range(num_requests):
                 prompt_len = int(rng.integers(min_prompt_len, max_prompt_len + 1))
+                if prompt_len >= server.max_seq_len:
+                    continue
                 prompt_tokens = list(range(prompt_len))
                 request_id = f"req_{generated_counter}"
                 generated_counter += 1

@@ -114,7 +114,7 @@ class FP8Linear(nn.Module):
         )
         self.register_buffer(
             "weight_scale",
-            torch.zeros(out_features, 1, dtype=dtype, device=device),
+            torch.zeros(out_features, 1, dtype=torch.float32, device=device),
         )
         if bias:
             self.bias = nn.Parameter(torch.zeros(out_features, dtype=dtype, device=device), requires_grad=False)
@@ -141,14 +141,40 @@ class FP8Linear(nn.Module):
         )
         fp8_weight, scale = cls._quantize_weight(linear.weight.detach().to(dtype))
         module.weight_fp8.copy_(fp8_weight)
-        module.weight_scale.copy_(scale.to(dtype))
+        module.weight_scale.copy_(scale.to(torch.float32))
         if linear.bias is not None and module.bias is not None:
             module.bias.data.copy_(linear.bias.detach().to(dtype))
         return module
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        weight = self.weight_fp8.to(x.dtype) * self.weight_scale
-        return torch.nn.functional.linear(x, weight, self.bias)
+        original_shape = x.shape
+        x2d = x.reshape(-1, self.in_features).contiguous()
+
+        # Row-wise activation scaling
+        act_abs = x2d.abs().amax(dim=1, keepdim=True)
+        act_scale = (act_abs / 448.0).clamp_(min=1e-6).to(torch.float32)
+        x_fp8 = (x2d / act_scale.to(x.dtype)).clamp_(-448, 448).to(torch.float8_e4m3fn)
+
+        # Column-wise weight scaling (already stored)
+        weight_scale = self.weight_scale.transpose(0, 1).contiguous()  # shape (1, out_features)
+        mat2 = self.weight_fp8.transpose(0, 1)  # shape (in_features, out_features)
+
+        bias = None
+        if self.bias is not None:
+            bias = self.bias.to(torch.bfloat16)
+
+        out = torch._scaled_mm(
+            x_fp8,
+            mat2,
+            act_scale.contiguous(),
+            weight_scale,
+            bias=bias,
+            out_dtype=torch.bfloat16,
+            use_fast_accum=False,
+        )
+        if out.dtype != x.dtype:
+            out = out.to(x.dtype)
+        return out.reshape(*original_shape[:-1], self.out_features)
 
 
 def convert_linear_layers_to_fp8(module: nn.Module, *, dtype: torch.dtype) -> int:

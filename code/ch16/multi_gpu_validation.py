@@ -8,8 +8,13 @@ Example:
 from __future__ import annotations
 
 import argparse
+import sys
+from pathlib import Path
 
 import torch
+
+# Add parent directory to path
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from ch16.test_gpt_large_optimized import (
     GPTConfig,

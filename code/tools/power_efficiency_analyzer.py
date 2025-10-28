@@ -17,9 +17,20 @@ def load_power_metrics(power_file: Path) -> Dict[str, Any]:
     with open(power_file) as f:
         data = json.load(f)
     
-    if "samples" in data:
+    # Check if it's the aggregate format from power_monitor.py
+    if "total_power" in data and "energy_joules" in data:
+        total_power = data["total_power"]
+        return {
+            "avg_power_w": total_power["avg_watts"],
+            "max_power_w": total_power["max_watts"],
+            "min_power_w": total_power["min_watts"],
+            "duration_s": data["duration"],
+            "total_energy_j": data["energy_joules"],
+        }
+    elif "samples" in data and isinstance(data["samples"], list):
+        # Detailed samples format
         samples = data["samples"]
-        power_watts = [s["power_watts"] for s in samples]
+        power_watts = [s["power_watts"] if "power_watts" in s else s.get("total_watts", 0) for s in samples]
         timestamps = [s["timestamp"] for s in samples]
         
         return {
@@ -28,7 +39,6 @@ def load_power_metrics(power_file: Path) -> Dict[str, Any]:
             "min_power_w": np.min(power_watts),
             "duration_s": timestamps[-1] - timestamps[0] if len(timestamps) > 1 else 0,
             "total_energy_j": np.trapz(power_watts, timestamps) if len(timestamps) > 1 else 0,
-            "samples": samples,
         }
     else:
         # Legacy format
@@ -47,6 +57,10 @@ def load_throughput_metrics(throughput_file: Path) -> Dict[str, Any]:
         metrics["tokens_per_second"] = data["tokens_per_second"]
     elif "throughput_tokens_per_sec" in data:
         metrics["tokens_per_second"] = data["throughput_tokens_per_sec"]
+    elif "throughput_tok_s" in data:
+        metrics["tokens_per_second"] = data["throughput_tok_s"]
+    elif "throughput" in data:
+        metrics["tokens_per_second"] = data["throughput"]
     
     if "total_tokens" in data:
         metrics["total_tokens"] = data["total_tokens"]
@@ -58,9 +72,13 @@ def load_throughput_metrics(throughput_file: Path) -> Dict[str, Any]:
     
     if "batch_size" in data:
         metrics["batch_size"] = data["batch_size"]
+    elif "config" in data and "batch_size" in data["config"]:
+        metrics["batch_size"] = data["config"]["batch_size"]
     
     if "sequence_length" in data:
         metrics["sequence_length"] = data["sequence_length"]
+    elif "config" in data and "seq_len" in data["config"]:
+        metrics["sequence_length"] = data["config"]["seq_len"]
     
     return metrics
 

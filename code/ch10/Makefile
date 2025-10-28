@@ -48,7 +48,7 @@ cluster_group_blackwell: cluster_group_blackwell.cu
 	$(NVCC) $(NVCC_FLAGS) -o $@ $<
 
 tcgen05_blackwell: tcgen05_blackwell.cu
-	$(NVCC) $(NVCC_FLAGS) -o $@ $<
+	$(NVCC) $(NVCC_FLAGS) -o $@ $< -lcublas
 
 # Architecture-specific targets
 blackwell: ARCH=sm_100

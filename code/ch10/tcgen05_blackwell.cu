@@ -32,6 +32,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cmath>
+#include <cublas_v2.h>
 
 // Include CUTLASS headers if available
 #ifdef USE_CUTLASS
@@ -40,6 +41,27 @@
 #include <cutlass/gemm/device/gemm.h>
 #include <cutlass/numeric_types.h>
 #endif
+
+// Simple error handling helpers
+#define CUDA_CHECK(call)                                                                 \
+    do {                                                                                 \
+        cudaError_t _status = (call);                                                    \
+        if (_status != cudaSuccess) {                                                    \
+            std::fprintf(stderr, "CUDA error %s:%d: %s\n", __FILE__, __LINE__,           \
+                         cudaGetErrorString(_status));                                   \
+            std::exit(EXIT_FAILURE);                                                     \
+        }                                                                                \
+    } while (0)
+
+#define CUBLAS_CHECK(call)                                                               \
+    do {                                                                                 \
+        cublasStatus_t _status = (call);                                                 \
+        if (_status != CUBLAS_STATUS_SUCCESS) {                                          \
+            std::fprintf(stderr, "cuBLAS error %s:%d: status=%d\n", __FILE__, __LINE__,  \
+                         static_cast<int>(_status));                                     \
+            std::exit(EXIT_FAILURE);                                                     \
+        }                                                                                \
+    } while (0)
 
 // ============================================================================
 // Simple Blackwell Tensor Core Example (without CUTLASS)
@@ -357,6 +379,112 @@ void benchmark_gemm(int M, int N, int K, int iterations = 100) {
     cudaEventDestroy(stop);
 }
 
+float benchmark_cublas_fp16_tensor_core(int M, int N, int K, int iterations = 20) {
+    printf("\n=== cuBLAS FP16 Tensor Core GEMM (tcgen05) ===\n");
+    printf("Matrix size: %dx%d @ %dx%d\n", M, K, K, N);
+    printf("Iterations (excluding warmup): %d\n", iterations);
+
+    __half* d_A = nullptr;
+    __half* d_B = nullptr;
+    float* d_C = nullptr;
+
+    size_t bytes_A = static_cast<size_t>(M) * K * sizeof(__half);
+    size_t bytes_B = static_cast<size_t>(K) * N * sizeof(__half);
+    size_t bytes_C = static_cast<size_t>(M) * N * sizeof(float);
+
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_A), bytes_A));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_B), bytes_B));
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void**>(&d_C), bytes_C));
+
+    CUDA_CHECK(cudaMemset(d_A, 0, bytes_A));
+    CUDA_CHECK(cudaMemset(d_B, 0, bytes_B));
+    CUDA_CHECK(cudaMemset(d_C, 0, bytes_C));
+
+    cublasHandle_t handle;
+    CUBLAS_CHECK(cublasCreate(&handle));
+#if CUBLAS_VERSION >= 11600
+    CUBLAS_CHECK(cublasSetMathMode(handle, CUBLAS_TENSOR_OP_MATH));
+#endif
+
+    const __half alpha = __float2half(1.0f);
+    const __half beta = __float2half(0.0f);
+
+    for (int i = 0; i < 5; ++i) {
+        CUBLAS_CHECK(cublasGemmEx(
+            handle,
+            CUBLAS_OP_N,
+            CUBLAS_OP_N,
+            N,
+            M,
+            K,
+            &alpha,
+            d_B,
+            CUDA_R_16F,
+            N,
+            d_A,
+            CUDA_R_16F,
+            K,
+            &beta,
+            d_C,
+            CUDA_R_32F,
+            N,
+            CUDA_R_32F,
+            CUBLAS_GEMM_DEFAULT_TENSOR_OP));
+    }
+    CUDA_CHECK(cudaDeviceSynchronize());
+
+    cudaEvent_t start, stop;
+    CUDA_CHECK(cudaEventCreate(&start));
+    CUDA_CHECK(cudaEventCreate(&stop));
+
+    CUDA_CHECK(cudaEventRecord(start));
+    for (int i = 0; i < iterations; ++i) {
+        CUBLAS_CHECK(cublasGemmEx(
+            handle,
+            CUBLAS_OP_N,
+            CUBLAS_OP_N,
+            N,
+            M,
+            K,
+            &alpha,
+            d_B,
+            CUDA_R_16F,
+            N,
+            d_A,
+            CUDA_R_16F,
+            K,
+            &beta,
+            d_C,
+            CUDA_R_32F,
+            N,
+            CUDA_R_32F,
+            CUBLAS_GEMM_DEFAULT_TENSOR_OP));
+    }
+    CUDA_CHECK(cudaEventRecord(stop));
+    CUDA_CHECK(cudaEventSynchronize(stop));
+
+    float elapsed_ms = 0.0f;
+    CUDA_CHECK(cudaEventElapsedTime(&elapsed_ms, start, stop));
+    float avg_ms = elapsed_ms / iterations;
+
+    double flops = 2.0 * static_cast<double>(M) * N * K;
+    double tflops = flops / (avg_ms * 1.0e-3) / 1.0e12;
+
+    printf("cuBLAS Tensor Core GEMM:\n");
+    printf("  Time: %.3f ms/iteration\n", avg_ms);
+    printf("  Performance: %.1f TFLOPS\n", tflops);
+    printf("  (cuBLAS 13.x automatically issues tcgen05.mma on Blackwell)\n");
+
+    CUDA_CHECK(cudaEventDestroy(start));
+    CUDA_CHECK(cudaEventDestroy(stop));
+    CUBLAS_CHECK(cublasDestroy(handle));
+    CUDA_CHECK(cudaFree(d_A));
+    CUDA_CHECK(cudaFree(d_B));
+    CUDA_CHECK(cudaFree(d_C));
+
+    return static_cast<float>(tflops);
+}
+
 int main() {
     // Check GPU architecture
     cudaDeviceProp prop;
@@ -377,12 +505,13 @@ int main() {
     
     // Run benchmarks
     benchmark_gemm(4096, 4096, 4096);
+    float cublas_tflops = benchmark_cublas_fp16_tensor_core(8192, 8192, 8192, 20);
     
     printf("\n=== Summary ===\n");
     printf("1. Blackwell uses tcgen05.mma (NOT WGMMA from Hopper)\n");
     printf("2. Use CUTLASS 3.5+ for production (handles tcgen05 automatically)\n");
     printf("3. PyTorch 2.9 torch.compile auto-selects tcgen05 on Blackwell\n");
-    printf("4. cuBLAS 13.x also uses tcgen05 internally\n");
+    printf("4. cuBLAS 13.x delivered %.1f TFLOPS on this run\n", cublas_tflops);
     printf("5. Manual PTX programming possible but not recommended\n");
     
     return 0;

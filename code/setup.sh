@@ -487,7 +487,7 @@ if [ -f "$REQUIREMENTS_FILE" ]; then
         echo "Installing core packages individually..."
         python3 -m pip install --no-input --upgrade --ignore-installed \
             blinker==1.9.0 \
-            nvidia-ml-py==12.560.30 psutil==7.1.0 GPUtil==1.4.0 py-cpuinfo==9.0.0 \
+            nvidia-ml-py3 nvidia-ml-py==12.560.30 psutil==7.1.0 GPUtil==1.4.0 py-cpuinfo==9.0.0 \
             numpy==2.1.2 pandas==2.3.2 scikit-learn==1.7.2 pillow==11.3.0 \
             matplotlib==3.10.6 seaborn==0.13.2 tensorboard==2.20.0 wandb==0.22.0 plotly==6.3.0 bokeh==3.8.0 dash==3.2.0 \
             jupyter==1.1.1 ipykernel==6.30.1 black==25.9.0 flake8==7.3.0 mypy==1.18.2 pytest==8.3.4 \
@@ -501,7 +501,7 @@ else
     echo "⚠️  Requirements file not found at $REQUIREMENTS_FILE. Installing core packages directly..."
     python3 -m pip install --no-input --upgrade --ignore-installed \
         blinker==1.9.0 \
-        nvidia-ml-py==12.560.30 psutil==7.1.0 GPUtil==1.4.0 py-cpuinfo==9.0.0 \
+        nvidia-ml-py3 nvidia-ml-py==12.560.30 psutil==7.1.0 GPUtil==1.4.0 py-cpuinfo==9.0.0 \
         numpy==2.1.2 pandas==2.3.2 scikit-learn==1.7.2 pillow==11.3.0 \
         matplotlib==3.10.6 seaborn==0.13.2 tensorboard==2.20.0 wandb==0.22.0 plotly==6.3.0 bokeh==3.8.0 dash==3.2.0 \
         jupyter==1.1.1 ipykernel==6.30.1 black==25.9.0 flake8==7.3.0 mypy==1.18.2 pytest==8.3.4 \
