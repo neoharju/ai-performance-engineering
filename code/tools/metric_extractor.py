@@ -31,6 +31,7 @@ PATTERNS = {
     "stream_overlap_percent": r"Stream overlap percent[:\s]+(\d+\.?\d*)\s*%",
     "fp8_speedup": r"FP8 Speedup.*?(\d+\.?\d*)x",
     "fp8_compiled_speedup": r"FP8 Compiled Speedup.*?(\d+\.?\d*)x",
+    "tensor_core_utilization_percent": r"Tensor core utilization percent[:\s]+(\d+\.?\d*)\s*%",
     
     # Utilization/efficiency patterns
     "utilization_percent": r"[Uu]tilization[:\s]+(\d+\.?\d*)\s*%",

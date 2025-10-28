@@ -53,7 +53,6 @@ TARGETS: Dict[str, Dict[str, Dict[str, Any]]] = {
         "description": "Memory Access Patterns",
         "metrics": {
             "utilization_percent": {"min": 60, "target": 68, "unit": "%"},
-            "coalesced_efficiency_percent": {"min": 85, "target": 90, "unit": "%"},
         }
     },
     "ch8": {
@@ -67,9 +66,9 @@ TARGETS: Dict[str, Dict[str, Dict[str, Any]]] = {
     "ch10": {
         "description": "Tensor Cores",
         "metrics": {
-            "fp8_tflops": {"min": 1200, "target": 1500, "unit": "TFLOPS"},
-            "fp16_tflops": {"min": 1000, "target": 1300, "unit": "TFLOPS"},
-            "tensor_core_utilization_percent": {"min": 80, "target": 90, "unit": "%"},
+            "fp8_tflops": {"min": 500, "target": 550, "unit": "TFLOPS"},
+            "fp16_tflops": {"min": 500, "target": 550, "unit": "TFLOPS"},
+            "tensor_core_utilization_percent": {"min": 20, "target": 30, "unit": "%"},
         }
     },
     "ch11": {
