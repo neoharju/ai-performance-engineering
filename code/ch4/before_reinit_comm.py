@@ -39,11 +39,11 @@ def _launch_config() -> tuple[int, int, torch.device]:
 
 def main() -> None:
     rank, world_size, device = _launch_config()
+    setup_single_gpu_env()  # Auto-setup for single-GPU mode
 
     for iteration in range(5):
         t0 = time.time()
-        setup_single_gpu_env()  # Auto-setup for single-GPU mode
-    dist.init_process_group(
+        dist.init_process_group(
             backend="nccl",
             init_method="env://",
             world_size=world_size,

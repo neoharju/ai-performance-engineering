@@ -47,7 +47,7 @@ def setup_distributed():
         local_rank = int(os.environ.get("LOCAL_RANK", rank))
         
         # Use NCCL backend for GPU communication with timeout
-        setup_single_gpu_env()  # Auto-setup for single-GPU mode
+    setup_single_gpu_env()  # Auto-setup for single-GPU mode
     dist.init_process_group(
             backend="nccl",
             init_method="env://",
@@ -55,7 +55,7 @@ def setup_distributed():
             rank=rank,
             timeout=torch.distributed.timedelta(seconds=30)  # 30 second timeout
         )
-        torch.cuda.set_device(local_rank)
+    torch.cuda.set_device(local_rank)
     
     return dist.get_rank(), dist.get_world_size()
 
@@ -100,7 +100,7 @@ def enable_nvlink_c2c_optimizations() -> None:
     
     # 1. Enable peer access between all GPU pairs
     for i in range(num_gpus):
-        torch.cuda.set_device(i)
+    torch.cuda.set_device(i)
         for j in range(num_gpus):
             if i != j:
                 try:

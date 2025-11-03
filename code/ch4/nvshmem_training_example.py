@@ -83,19 +83,22 @@ def nvshmem_available() -> bool:
 
 def init_process_group() -> Tuple[int, int, torch.device]:
     """Initialize distributed process group with CUDA fallback to Gloo."""
+    setup_single_gpu_env()  # Auto-setup for single-GPU mode
+    
     if not dist.is_initialized():
         rank = int(os.environ.get("RANK", 0))
         world_size = int(os.environ.get("WORLD_SIZE", max(1, torch.cuda.device_count())))
         local_rank = int(os.environ.get("LOCAL_RANK", rank))
         backend = "nccl" if torch.cuda.is_available() else "gloo"
-        setup_single_gpu_env()  # Auto-setup for single-GPU mode
-    dist.init_process_group(
+        
+        dist.init_process_group(
             backend=backend,
             init_method="env://",
             rank=rank,
             world_size=world_size,
             timeout=datetime.timedelta(seconds=60),
         )
+        
         if torch.cuda.is_available():
             torch.cuda.set_device(local_rank)
             device = torch.device(f"cuda:{local_rank}")

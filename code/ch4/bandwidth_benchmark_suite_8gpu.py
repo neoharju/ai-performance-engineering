@@ -68,9 +68,9 @@ def setup_distributed():
         world_size = int(os.environ.get("WORLD_SIZE", 1))
         local_rank = int(os.environ.get("LOCAL_RANK", rank))
         
-        setup_single_gpu_env()  # Auto-setup for single-GPU mode
+    setup_single_gpu_env()  # Auto-setup for single-GPU mode
     dist.init_process_group(backend="nccl", init_method="env://")
-        torch.cuda.set_device(local_rank)
+    torch.cuda.set_device(local_rank)
     
     return dist.get_rank(), dist.get_world_size()
 
