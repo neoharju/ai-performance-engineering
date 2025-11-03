@@ -1,8 +1,8 @@
 # AI Performance Engineering
 
-**Update:** Are you interested in a hands-on course for this material? 
+_**Update:** Are you interested in a hands-on course for this material?_
 
-If so, fill out this [form](https://docs.google.com/forms/d/e/1FAIpQLSf4TMDLsPcfuoLhaDktXu-hhKIGntQm550BY-ov6bRT_VMJhQ/viewform?usp=sharing&ouid=111382272947765737941) to express interest and be notified.
+_If so, fill out this [**form**](https://docs.google.com/forms/d/e/1FAIpQLSf4TMDLsPcfuoLhaDktXu-hhKIGntQm550BY-ov6bRT_VMJhQ/viewform?usp=sharing&ouid=111382272947765737941) to express interest and be notified._
 
 ## About This Repo
 
@@ -320,7 +320,7 @@ Recent sessions:
 
 ### Monthly Meetup Summaries
 
-- **September 15, 2025** – [YouTube](https://www.youtube.com/watch?v=eLnHXL1xXfM): Dynamic Adaptive RL inference kernel tuning deep dive; companion slides in `resources/Dynamic_Adaptive_RL_Inference_CUDA_Kernel_Tuning.pdf`.
+- **September 15, 2025** – [YouTube](https://www.youtube.com/watch?v=eLnHXL1xXfM): Dynamic Adaptive RL inference kernel tuning deep dive.
 - **August 18, 2025** – [YouTube](https://www.youtube.com/watch?v=SBPlOUww57I): Multi-GPU orchestration strategies and Nsight profiling case studies.
 - **July 21, 2025** – [YouTube](https://youtu.be/jaiMotxv8ck): FlashMLA, ThunderMLA, and FlexDecoding kernel walkthroughs with live Nsight Compute demos.
 - **June 16, 2025** – Slides: [High Performance Agentic AI Inference Systems](resources/High_Performance_Agentic_AI_Inference_Systems.pdf) covering disaggregated inference routing.
