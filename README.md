@@ -251,7 +251,7 @@ Recent sessions:
 - [PyTorch Model Optimization](resources/PyTorch_Model_Optimization.pdf)
 
 ### Monthly Meetup Summaries
-
+- **October 20, 2025** - [YouTube](https://youtu.be/d3ZLodGTlAo): AI-Powered GPU Kernel Optimization + Distributed PyTorch with nbdistributed
 - **September 15, 2025** – [YouTube](https://www.youtube.com/watch?v=eLnHXL1xXfM): Dynamic Adaptive RL inference kernel tuning deep dive.
 - **August 18, 2025** – [YouTube](https://www.youtube.com/watch?v=SBPlOUww57I): Multi-GPU orchestration strategies and Nsight profiling case studies.
 - **July 21, 2025** – [YouTube](https://youtu.be/jaiMotxv8ck): FlashMLA, ThunderMLA, and FlexDecoding kernel walkthroughs with live Nsight Compute demos.
