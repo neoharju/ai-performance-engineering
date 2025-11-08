@@ -36,7 +36,7 @@ def benchmark_copy(style: str) -> float:
     end_event.record()
     end_event.synchronize()
     
-    return start_event.elapsed_time(end_event)  # Already in ms
+    return float(start_event.elapsed_time(end_event))  # Already in ms
 
 
 def main() -> None:

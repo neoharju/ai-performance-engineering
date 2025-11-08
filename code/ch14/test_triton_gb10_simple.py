@@ -8,9 +8,13 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import pytest
 import torch
 import triton
 import triton.language as tl
+
+if not torch.cuda.is_available():
+    pytest.skip("CUDA device required for Triton GB10 simple kernel validation", allow_module_level=True)
 
 print("=" * 80)
 print("Testing Triton on GB10 (SM 12.1) - Simple Kernels (No TMA)")
@@ -142,4 +146,3 @@ print("=" * 80)
 print("If both tests passed, Triton 3.5.0 + arch_config patch WORKS on GB10!")
 print("TMA features are B200-specific and not available on GB10 (SM 12.1)")
 print("=" * 80)
-

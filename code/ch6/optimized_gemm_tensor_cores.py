@@ -15,6 +15,7 @@ if str(repo_root) not in sys.path:
 
 import torch
 from typing import Optional
+from common.python.compile_utils import enable_tf32
 from common.python.benchmark_harness import (
     Benchmark,
     BenchmarkConfig,
@@ -42,9 +43,8 @@ class OptimizedGEMMTensorCoresBenchmark(Benchmark):
     def setup(self) -> None:
         """Setup: Initialize matrices with FP16 for tensor cores."""
         
-        # Enable TF32 for faster matmul on Ampere+ GPUs
-        torch.backends.cuda.matmul.allow_tf32 = True
-        torch.backends.cudnn.allow_tf32 = True
+        # Enable TF32 using the new API (avoids legacy/new API mixing errors)
+        enable_tf32()
         torch.manual_seed(42)
         # Use FP16/BF16 to enable tensor cores
         # Tensor cores are available on modern GPUs (V100+, A100, H100, B200)
@@ -138,7 +138,7 @@ if __name__ == '__main__':
     result = harness.benchmark(benchmark)
     
     metrics = benchmark.get_roofline_metrics()
-    print(f"\nOptimized GEMM Tensor Cores: {result.mean_ms:.3f} ms")
+    print(f"\nOptimized GEMM Tensor Cores: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")
     print(f"Matrix size: {benchmark.M}×{benchmark.M}")
     print(f"Arithmetic Intensity: {metrics.get('ai', 0):.2f} FLOP/Byte")
     print(f"FLOPs: {metrics.get('flops', 0):.2e}")

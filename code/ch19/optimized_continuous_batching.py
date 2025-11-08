@@ -57,21 +57,23 @@ class OptimizedContinuousBatchingBenchmark(Benchmark):
             nn.ReLU(),
             nn.Linear(256, 256),
         )
-        self.model = self.model.to(self.device)
-        # Optimization: Use FP16 for faster computation
-        if self.device.type == "cuda":
-            try:
-                self.model = self.model.half()
-            except Exception:
-                 pass
+        # Optimization: Use FP16 for faster computation - FAIL FAST if not supported
+        if self.device.type != "cuda":
+            raise RuntimeError("CUDA required for optimized_continuous_batching benchmark")
+        self.model = self.model.to(self.device).half()
         self.model.eval()
         
         # Simulate dynamic batch composition (continuous batching)
         # In practice, requests would be added/removed dynamically
+        # Ensure input dtype matches model dtype
+        params = list(self.model.parameters())
+        if not params:
+            raise RuntimeError("Model has no parameters - cannot determine dtype")
+        input_dtype = params[0].dtype
         self.batch_requests = [
-        torch.randn(1, 32, 256, device=self.device),
-        torch.randn(1, 16, 256, device=self.device),
-        torch.randn(1, 48, 256, device=self.device),
+            torch.randn(1, 32, 256, device=self.device, dtype=input_dtype),
+            torch.randn(1, 16, 256, device=self.device, dtype=input_dtype),
+            torch.randn(1, 48, 256, device=self.device, dtype=input_dtype),
         ]
         torch.cuda.synchronize()
     
@@ -87,19 +89,17 @@ class OptimizedContinuousBatchingBenchmark(Benchmark):
 
         with nvtx_range("optimized_continuous_batching", enable=enable_nvtx):
             with torch.no_grad():
-                pass
-        # Optimization: Continuous batching
-        # Dynamically adjusts batch composition as requests complete
-        # Adds new requests and removes completed ones efficiently
-        # Improves GPU utilization compared to static batching
+                # Optimization: Continuous batching
+                # Dynamically adjusts batch composition as requests complete
+                # Adds new requests and removes completed ones efficiently
+                # Improves GPU utilization compared to static batching
                 
-        # Process dynamic batch (simulating continuous batching)
-        for request in self.batch_requests:
-             pass
-        _ = self.model(request)
+                # Process dynamic batch (simulating continuous batching)
+                for request in self.batch_requests:
+                    _ = self.model(request)
                 
-        # Continuous batching improves throughput by adapting to request patterns
-        # See ch16 for full continuous batching implementations
+                # Continuous batching improves throughput by adapting to request patterns
+                # See ch16 for full continuous batching implementations
 
     
     def teardown(self) -> None:
@@ -134,5 +134,5 @@ if __name__ == '__main__':
         config=benchmark.get_config()
     )
     result = harness.benchmark(benchmark)
-    print(f"\nOptimized Continuous Batching: {result.mean_ms:.3f} ms")
+    print(f"\nOptimized Continuous Batching: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")
     print(" Tip: Continuous batching dynamically adjusts batch composition for better GPU utilization")

@@ -19,6 +19,7 @@ except ImportError:
 
 from typing import Optional
 
+from common.python.compile_utils import enable_tf32
 from common.python.benchmark_harness import (
     Benchmark,
     BenchmarkConfig,
@@ -59,8 +60,7 @@ class OptimizedSpeculativeDecodingBenchmark(Benchmark):
             torch.backends.cudnn.benchmark = True
             torch.backends.cudnn.deterministic = False
             # Enable TF32 for faster matmul on Ampere+ GPUs
-            torch.backends.cuda.matmul.allow_tf32 = True
-            torch.backends.cudnn.allow_tf32 = True
+            enable_tf32()
         
         # Optimization: Speculative decoding
         # Draft model predicts multiple tokens in parallel
@@ -201,5 +201,9 @@ if __name__ == '__main__':
         config=benchmark.get_config()
     )
     result = harness.benchmark(benchmark)
-    print(f"\nOptimized Speculative Decoding: {result.mean_ms:.3f} ms")
+    timing = result.timing
+    if timing:
+        print(f"\nOptimized Speculative Decoding: {timing.mean_ms:.3f} ms")
+    else:
+        print("\nOptimized Speculative Decoding: No timing data available")
     print("NOTE: Uses draft model for parallel token prediction, verified by target model")

@@ -85,6 +85,16 @@ void sequential_ops(torch::Tensor output, torch::Tensor input) {
             input.data_ptr<float>(),
             N
         );
+        // Check for kernel launch errors
+        cudaError_t err = cudaGetLastError();
+        if (err != cudaSuccess) {
+            TORCH_CHECK(false, "CUDA kernel launch failed: ", cudaGetErrorString(err));
+        }
+        // Synchronize to catch kernel execution errors
+        err = cudaStreamSynchronize(stream);
+        if (err != cudaSuccess) {
+            TORCH_CHECK(false, "CUDA kernel execution failed: ", cudaGetErrorString(err));
+        }
     }
 }
 
@@ -106,6 +116,16 @@ void independent_ops(torch::Tensor output, torch::Tensor input) {
             input.data_ptr<float>(),
             N
         );
+        // Check for kernel launch errors
+        cudaError_t err = cudaGetLastError();
+        if (err != cudaSuccess) {
+            TORCH_CHECK(false, "CUDA kernel launch failed: ", cudaGetErrorString(err));
+        }
+        // Synchronize to catch kernel execution errors
+        err = cudaStreamSynchronize(stream);
+        if (err != cudaSuccess) {
+            TORCH_CHECK(false, "CUDA kernel execution failed: ", cudaGetErrorString(err));
+        }
     }
 }
 
@@ -128,6 +148,16 @@ void unrolled_ilp(torch::Tensor output, torch::Tensor input) {
             input.data_ptr<float>(),
             N
         );
+        // Check for kernel launch errors
+        cudaError_t err = cudaGetLastError();
+        if (err != cudaSuccess) {
+            TORCH_CHECK(false, "CUDA kernel launch failed: ", cudaGetErrorString(err));
+        }
+        // Synchronize to catch kernel execution errors
+        err = cudaStreamSynchronize(stream);
+        if (err != cudaSuccess) {
+            TORCH_CHECK(false, "CUDA kernel execution failed: ", cudaGetErrorString(err));
+        }
     }
 }
 

@@ -58,7 +58,8 @@ def test_baseline_optimized_speedup_smoke(request, harness):
     """Lightweight smoke test: verify one benchmark pair shows expected speedup.
     
     This is a minimal regression check that only tests a single benchmark pair
-    to keep CI times reasonable. Full regression suite requires RUN_REGRESSION_TESTS=1.
+    to keep CI times reasonable. Additional slow tests can be run by removing
+    the -m "not slow" filter.
     """
     repo_root = Path(__file__).parent.parent
     ch1_dir = repo_root / "ch1"
@@ -113,9 +114,11 @@ def test_benchmark_result_consistency(request, harness):
     result2 = harness.benchmark(benchmark)
     
     # Results should be within reasonable variance (50% tolerance for small sample sizes)
-    if result1.mean_ms > 0 and result2.mean_ms > 0:
-        variance = abs(result1.mean_ms - result2.mean_ms) / result1.mean_ms
-        assert variance < 0.5, f"Benchmark results too inconsistent: {result1.mean_ms:.3f}ms vs {result2.mean_ms:.3f}ms (variance: {variance:.1%})"
+    result1_mean = result1.timing.mean_ms if result1.timing else 0.0
+    result2_mean = result2.timing.mean_ms if result2.timing else 0.0
+    if result1_mean > 0 and result2_mean > 0:
+        variance = abs(result1_mean - result2_mean) / result1_mean
+        assert variance < 0.5, f"Benchmark results too inconsistent: {result1_mean:.3f}ms vs {result2_mean:.3f}ms (variance: {variance:.1%})"
 
 
 @pytest.mark.slow

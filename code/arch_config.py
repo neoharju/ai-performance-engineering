@@ -16,6 +16,13 @@ import torch
 from importlib import metadata as importlib_metadata
 from contextlib import nullcontext
 
+from common.python.symmetric_memory_patch import (
+    ensure_symmetric_memory_api as _ensure_symmetric_memory_api,
+)
+from common.python.compile_utils import enable_tf32
+
+_ensure_symmetric_memory_api()
+
 try:
     from torch.nn.attention import sdpa_kernel as _sdpa_kernel
     from torch.nn.attention import SDPBackend as _SDPBackend
@@ -355,56 +362,8 @@ class ArchitectureConfig:
                 print("Migrated PYTORCH_CUDA_ALLOC_CONF to PYTORCH_ALLOC_CONF (new API)")
         os.environ["PYTORCH_ALLOC_CONF"] = alloc_conf
         
-        # PyTorch 2.9+: Enable TF32 using the new precision API ONLY (do not mix APIs).
-        # CRITICAL: Never touch the old API (allow_tf32) to prevent API mixing detection.
-        # PyTorch 2.9+ detects when both old and new APIs are used and raises RuntimeError.
-        # This function uses ONLY the new API to ensure compatibility with torch.compile.
-        # 
-        # IMPORTANT: If old API was already touched by PyTorch internals or other code,
-        # we cannot configure TF32 here without causing mixing errors. Skip configuration
-        # in that case and let PyTorch use its default TF32 settings.
-        
-        # Use ONLY new API for matmul TF32 (PyTorch 2.9+)
-        # Do NOT check or touch allow_tf32 - that triggers mixing detection
-        # Suppress TF32 API deprecation warnings when setting precision
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", message=".*Please use the new API settings to control TF32.*", category=UserWarning)
-            try:
-                if hasattr(torch.backends.cuda.matmul, "fp32_precision"):
-                    # Only set if new API exists - never fall back to old API
-                    torch.backends.cuda.matmul.fp32_precision = "tf32"
-                elif VERBOSE_EXPERIMENTAL_FEATURES:
-                    print("WARNING: New TF32 API (fp32_precision) not available - TF32 not configured")
-            except RuntimeError as e:
-                # If mixing error occurs, skip TF32 configuration (let PyTorch handle it)
-                # This happens if old API was already touched elsewhere
-                if "mix of the legacy and new APIs" in str(e):
-                    if VERBOSE_EXPERIMENTAL_FEATURES:
-                        print("WARNING: Skipping TF32 configuration due to API mixing - PyTorch will handle it")
-                pass
-            except (AttributeError, TypeError):
-                pass
-
-        # Use ONLY new API for cuDNN conv TF32 (PyTorch 2.9+)
-        # Do NOT check or touch allow_tf32 - that triggers mixing detection
-        # Suppress TF32 API deprecation warnings when setting precision
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", message=".*Please use the new API settings to control TF32.*", category=UserWarning)
-            try:
-                if hasattr(torch.backends.cudnn.conv, "fp32_precision"):
-                    # Only set if new API exists - never fall back to old API
-                    torch.backends.cudnn.conv.fp32_precision = "tf32"
-                elif VERBOSE_EXPERIMENTAL_FEATURES:
-                    print("WARNING: New TF32 API (fp32_precision) not available for cuDNN - TF32 not configured")
-            except RuntimeError as e:
-                # If mixing error occurs, skip TF32 configuration (let PyTorch handle it)
-                # This happens if old API was already touched elsewhere
-                if "mix of the legacy and new APIs" in str(e):
-                    if VERBOSE_EXPERIMENTAL_FEATURES:
-                        print("WARNING: Skipping TF32 configuration due to API mixing - PyTorch will handle it")
-                pass
-            except (AttributeError, TypeError):
-                pass
+        # Configure TF32 using the shared helper to avoid legacy/new API mixing.
+        enable_tf32()
 
     def print_info(self) -> None:
         cfg = self.config

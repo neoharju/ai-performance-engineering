@@ -66,8 +66,10 @@ class OptimizedCoalescingBenchmark(Benchmark):
         enable_nvtx = get_nvtx_enabled(config) if config else False
 
         with nvtx_range("optimized_coalescing_coalesced", enable=enable_nvtx):
-    # Call CUDA extension kernel
+            # Call CUDA extension kernel
             self._extension.coalesced_copy(self.output, self.input)
+            # Synchronize to catch any CUDA errors immediately
+            torch.cuda.synchronize()
 
     
     def teardown(self) -> None:
@@ -83,6 +85,7 @@ class OptimizedCoalescingBenchmark(Benchmark):
             warmup=10,
             enable_memory_tracking=False,
             enable_profiling=False,
+            setup_timeout_seconds=120,  # CUDA extension compilation can take time
         )
     
     def validate_result(self) -> Optional[str]:
@@ -108,4 +111,4 @@ if __name__ == '__main__':
         config=benchmark.get_config()
     )
     result = harness.benchmark(benchmark)
-    print(f"\nOptimized Coalescing (CUDA Extension): {result.mean_ms:.3f} ms")
+    print(f"\nOptimized Coalescing (CUDA Extension): {result.timing.mean_ms if result.timing else 0.0:.3f} ms")

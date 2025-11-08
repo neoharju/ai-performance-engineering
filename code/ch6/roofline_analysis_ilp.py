@@ -78,7 +78,7 @@ class RooflineAnalyzer:
             bytes_accessed = 0
         
         # Calculate achieved performance
-        time_sec = result.mean_ms / 1000.0
+        time_sec = result.timing.mean_ms if result.timing else 0.0 / 1000.0
         achieved_tflops = (flops / time_sec) / 1e12 if time_sec > 0 else 0
         max_achievable = self.predict_performance(ai) if ai > 0 else 0
         efficiency = (achieved_tflops / max_achievable * 100) if max_achievable > 0 else 0
@@ -96,7 +96,7 @@ class RooflineAnalyzer:
             'max_achievable_tflops': max_achievable,
             'efficiency': efficiency,
             'bottleneck': bottleneck,
-            'time_ms': result.mean_ms,
+            'time_ms': result.timing.mean_ms if result.timing else 0.0,
         }
 
 

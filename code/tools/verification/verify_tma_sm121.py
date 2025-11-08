@@ -28,7 +28,7 @@ import torch
 import triton
 import triton.language as tl
 from triton.runtime.errors import PTXASError
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 # Import architecture configuration
 try:
@@ -46,7 +46,7 @@ def print_section(title: str):
     print(f"{'='*80}\n")
 
 
-def check_gpu_info() -> Dict[str, any]:
+def check_gpu_info() -> Dict[str, Any]:
     """Check GPU information and TMA support."""
     print_section("GPU Information")
     

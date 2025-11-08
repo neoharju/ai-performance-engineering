@@ -145,9 +145,9 @@ def main() -> None:
     baseline_launches = benchmark.iterations * 3
     optimized_launches = 1
     
-    print(f"Average time: {result.mean_ms:.3f} ms")
-    print(f"Median: {result.median_ms:.3f} ms")
-    print(f"Std: {result.std_ms:.3f} ms")
+    print(f"Average time: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")
+    print(f"Median: {result.timing.median_ms if result.timing else 0.0:.3f} ms")
+    print(f"Std: {result.timing.std_ms if result.timing else 0.0:.3f} ms")
     print(f"Kernel launches per run: {optimized_launches} (vs {baseline_launches} in baseline)")
     print(f"Launch overhead reduction: {baseline_launches / optimized_launches:.0f}x")
     print(f"Speedup: Reduced launch overhead enables better GPU utilization")

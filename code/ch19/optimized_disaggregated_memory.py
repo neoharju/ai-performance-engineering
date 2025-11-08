@@ -134,5 +134,5 @@ if __name__ == '__main__':
         config=benchmark.get_config()
     )
     result = harness.benchmark(benchmark)
-    print(f"\nOptimized Disaggregated Memory: {result.mean_ms:.3f} ms")
+    print(f"\nOptimized Disaggregated Memory: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")
     print(" Tip: Disaggregated memory management separates prefill/decode for better efficiency")

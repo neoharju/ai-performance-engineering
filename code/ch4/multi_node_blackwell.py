@@ -1,5 +1,6 @@
 """ Multi-Node Distributed Training for Blackwell GPUs Demonstrates multi-node distributed training optimizations for Blackwell B200/B300 GPUs with NVLink-C2C and NCCL. Includes tensor parallelism, FSDP, and gradient compression for multi-node scaling. """
 
+from common.python import compile_utils as _compile_utils_patch  # noqa: F401
 import pathlib
 import sys
 _EXTRAS_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -534,304 +535,268 @@ def train_multi_node(
 # ============================================================================ 
 
 def benchmark_8xb200_bandwidth(
-    sizes: list[int] = [1024*1024, 10*1024*1024, 100*1024*1024, 500*1024*1024],
+    sizes: List[int] | None = None,
     num_iters: int = 100,
-) -> dict:
-    """
-    Comprehensive bandwidth benchmark for 8x B200 GPUs.
-    
-    Tests:
-    - All-reduce (NVLS, Ring, Tree algorithms)
-    - Point-to-point (NVLink 5.0)
-    - All-gather
-    - Reduce-scatter
-    
-    Expected Performance:
-    - All-reduce: 700-800 GB/s bus bandwidth
-    - P2P: 800-900 GB/s per pair (NVLink 5.0)
-    - Scaling efficiency: 85-95%
-    
-    Returns:
-        Bandwidth measurements
-    """
+) -> Dict[str, float]:
+    """Run a suite of collectives tuned for an 8x B200 topology."""
+    if sizes is None:
+        sizes = [1 << 20, 10 << 20, 100 << 20, 500 << 20]
+
     rank = dist.get_rank()
     world_size = dist.get_world_size()
-    device = torch.cuda.current_device()
-    
-    if world_size != 8:
-        if rank == 0:
-            print(f"Warning: This benchmark is optimized for 8 GPUs, got {world_size}")
+    device = torch.device("cuda", torch.cuda.current_device())
+    results: Dict[str, float] = {}
+
     if rank == 0:
         print("\n" + "=" * 70)
         print("8x B200 Bandwidth Benchmark")
         print("=" * 70)
-        print(f"GPUs: {world_size}")
-        print(f"Expected: 700-800 GB/s bus bandwidth (NVLink 5.0)")
-        print("=" * 70)
-    
-    results = {}
-    
-    # Test 1: All-reduce (primary collective for training)
-    if rank == 0: 
-    
-            
-            
-            
-            
-            print("\n[1/4] All-Reduce Benchmark:")
-    for size in sizes: 
-            
-            
+
+    def _bench(collective: Callable[[], None]) -> float:
+        for _ in range(10):
+            collective()
+        torch.cuda.synchronize(device)
+        start = time.time()
+        for _ in range(num_iters):
+            collective()
+        torch.cuda.synchronize(device)
+        return time.time() - start
+
+    # All-reduce
+    if rank == 0:
+        print("\n[1/4] All-Reduce (FP32)")
+    for size in sizes:
+        tensor = torch.randn(size, device=device, dtype=torch.float32)
+        bytes_transferred = tensor.numel() * tensor.element_size()
+        elapsed = _bench(lambda: dist.all_reduce(tensor, op=dist.ReduceOp.SUM))
+        algo_factor = 2.0 * (world_size - 1) / world_size
+        bandwidth_gbs = (bytes_transferred * algo_factor * num_iters) / elapsed / 1e9
+        results[f"allreduce_{bytes_transferred/1e6:.1f}MB"] = bandwidth_gbs
+        if rank == 0:
+            print(
+                f" Size: {bytes_transferred/1e6:8.1f} MB | "
+                f"Bandwidth: {bandwidth_gbs:6.2f} GB/s | "
+                f"Time: {elapsed*1000/num_iters:6.2f} ms"
+            )
+
+    # P2P NVLink measurement
+    if rank in (0, 1):
+        if rank == 0:
+            print("\n[2/4] P2P (GPU0 ↔ GPU1)")
+        for size in sizes[:3]:
             tensor = torch.randn(size, device=device, dtype=torch.float32)
             bytes_transferred = tensor.numel() * tensor.element_size()
-            # Warmup
-            for _ in range(10):
-                dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
-            torch.cuda.synchronize()
-            # All-reduce benchmark
-            start = time.time()
-            for _ in range(num_iters):
-                dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
-            torch.cuda.synchronize()
-            elapsed = time.time() - start
-            start
-            # Calculate bandwidth (algorithm bandwidth: 2(N-1)/N factor)
-            algo_bw_factor = 2.0 * (world_size - 1) / world_size
-            bandwidth_gbs = (bytes_transferred * algo_bw_factor * num_iters) / elapsed / 1e9
-            results[f"allreduce_{bytes_transferred/1e6:.1f}MB"] = bandwidth_gbs
-    if rank == 0: 
-    
-            
-            print(f" Size: {bytes_transferred/1e6:8.1f} MB | " f"Bandwidth: {bandwidth_gbs:6.2f} GB/s | " f"Time: {elapsed*1000/num_iters:6.2f} ms")
-            # Test 2: Point-to-point (NVLink 5.0 test)
+            elapsed = _bench(
+                lambda: dist.send(tensor, dst=1) if rank == 0 else dist.recv(tensor, src=0)
+            )
+            bandwidth_gbs = (bytes_transferred * num_iters) / elapsed / 1e9
             if rank == 0:
-                print("\n[2/4] P2P Bandwidth (GPU 0 ↔ GPU 1):")
-            if rank == 0 or rank == 1:
-                for size in sizes[:3]:  # Fewer sizes for P2P
-                    tensor = torch.randn(size, device=device, dtype=torch.float32)
-                    bytes_transferred = tensor.numel() * tensor.element_size()
-                    
-                    # Warmup
-                    for _ in range(10):
-                        if rank == 0:
-                            dist.send(tensor, dst=1)
-                        else:
-                            dist.recv(tensor, src=0)
-                    torch.cuda.synchronize()
-                    
-                    # P2P benchmark
-                    start = time.time()
-                    for _ in range(num_iters):
-                        if rank == 0:
-                            dist.send(tensor, dst=1)
-                        else:
-                            dist.recv(tensor, src=0)
-                    torch.cuda.synchronize()
-                    elapsed = time.time() - start
-                    bandwidth_gbs = (bytes_transferred * num_iters) / elapsed / 1e9
-    if rank == 0: 
-    
-            
-            print(f" Size: {bytes_transferred/1e6:8.1f} MB | " f"Bandwidth: {bandwidth_gbs:6.2f} GB/s")
-            dist.barrier()
-            # Test 3: All-gather
-            if rank == 0:
-                print("\n[3/4] All-Gather Benchmark:")
-            for size in sizes[1:3]:  # Medium sizes
-                tensor = torch.randn(size, device=device, dtype=torch.float32)
-                output_list = [torch.empty_like(tensor) for _ in range(world_size)]
-                bytes_transferred = tensor.numel() * tensor.element_size()
-                
-                # Warmup
-                for _ in range(10):
-                    dist.all_gather(output_list, tensor)
-                torch.cuda.synchronize()
-                
-                # All-gather benchmark
-                start = time.time()
-                for _ in range(num_iters):
-                    dist.all_gather(output_list, tensor)
-                torch.cuda.synchronize()
-                elapsed = time.time() - start
-            start
-            # Bandwidth: each GPU receives (N-1) * size bandwidth_gbs = (bytes_transferred * (world_size - 1) * num_iters) /
-            elapsed / 1e9
-    if rank == 0: 
-    
-            
-            print(f" Size: {bytes_transferred/1e6:8.1f} MB | " f"Bandwidth: {bandwidth_gbs:6.2f} GB/s")
-            # Test 4: Reduce-scatter
-            if rank == 0:
-                print("\n[4/4] Reduce-Scatter Benchmark:")
-            for size in sizes[1:3]:  # Reduce-scatter splits input across GPUs
-                tensor = torch.randn(size * world_size, device=device, dtype=torch.float32)
-                output = torch.empty(size, device=device, dtype=torch.float32)
-                input_list = list(tensor.chunk(world_size))
-                bytes_transferred = tensor.numel() * tensor.element_size()
-                
-                # Warmup
-                for _ in range(10):
-                    dist.reduce_scatter(output, input_list)
-                torch.cuda.synchronize()
-                
-                # Reduce-scatter benchmark
-                start = time.time()
-                for _ in range(num_iters):
-                    dist.reduce_scatter(output, input_list)
-                torch.cuda.synchronize()
-                elapsed = time.time() - start
-            start
-            # Bandwidth calculation bandwidth_gbs = (bytes_transferred * num_iters) /
-            elapsed / 1e9
-    if rank == 0: 
-    
-            
-            print(f" Size: {bytes_transferred/1e6:8.1f} MB | " f"Bandwidth: {bandwidth_gbs:6.2f} GB/s")
+                print(
+                    f" Size: {bytes_transferred/1e6:8.1f} MB | "
+                    f"Bandwidth: {bandwidth_gbs:6.2f} GB/s"
+                )
+    dist.barrier()
+
+    # All-gather
+    if rank == 0:
+        print("\n[3/4] All-Gather")
+    for size in sizes[1:3]:
+        tensor = torch.randn(size, device=device, dtype=torch.float32)
+        out = [torch.empty_like(tensor) for _ in range(world_size)]
+        bytes_transferred = tensor.numel() * tensor.element_size()
+        elapsed = _bench(lambda: dist.all_gather(out, tensor))
+        bandwidth_gbs = (
+            bytes_transferred * (world_size - 1) * num_iters / elapsed / 1e9
+        )
+        results[f"allgather_{bytes_transferred/1e6:.1f}MB"] = bandwidth_gbs
+        if rank == 0:
+            print(
+                f" Size: {bytes_transferred/1e6:8.1f} MB | "
+                f"Bandwidth: {bandwidth_gbs:6.2f} GB/s"
+            )
+
+    # Reduce-scatter
+    if rank == 0:
+        print("\n[4/4] Reduce-Scatter")
+    for size in sizes[1:3]:
+        tensor = torch.randn(size * world_size, device=device, dtype=torch.float32)
+        output = torch.empty(size, device=device, dtype=torch.float32)
+        input_list = list(tensor.chunk(world_size))
+        bytes_transferred = tensor.numel() * tensor.element_size()
+        elapsed = _bench(lambda: dist.reduce_scatter(output, input_list))
+        bandwidth_gbs = (bytes_transferred * num_iters) / elapsed / 1e9
+        results[f"reducescatter_{bytes_transferred/1e6:.1f}MB"] = bandwidth_gbs
+        if rank == 0:
+            print(
+                f" Size: {bytes_transferred/1e6:8.1f} MB | "
+                f"Bandwidth: {bandwidth_gbs:6.2f} GB/s"
+            )
+
+    if rank == 0:
+        allreduce_values = [v for k, v in results.items() if k.startswith("allreduce")]
+        if allreduce_values:
+            avg_allreduce = sum(allreduce_values) / len(allreduce_values)
+            efficiency = (avg_allreduce / 750.0) * 100  # 750 GB/s target
+            print("\n" + "=" * 70)
+            print(f"Average All-Reduce Bandwidth: {avg_allreduce:.2f} GB/s")
+            print(f"Efficiency vs 750 GB/s target: {efficiency:.1f}%")
+            print("=" * 70 + "\n")
+    return results
+
+
+def benchmark_multi_node_bandwidth(
+    sizes: List[int] | None = None,
+    num_iters: int = 100,
+) -> Dict[str, float]:
+    """Benchmark collectives across multiple nodes."""
+    if sizes is None:
+        sizes = [1 << 20, 10 << 20, 100 << 20]
+
+    rank = dist.get_rank()
+    world_size = dist.get_world_size()
+    local_world_size = torch.cuda.device_count()
+
+    if local_world_size == 8 and world_size == 8:
+        return benchmark_8xb200_bandwidth(sizes, num_iters)
+
+    device = torch.device("cuda", torch.cuda.current_device())
+    results: Dict[str, float] = {}
+
     if rank == 0:
         print("\n" + "=" * 70)
-        print("Benchmark Complete!")
-        avg_allreduce = sum(v for k, v in results.items() if "allreduce" in k) / len([k for k in results if "allreduce" in k])
-        
-        print(f"Average All-Reduce Bandwidth: {avg_allreduce:.2f} GB/s")
-        print(f"Expected Range: 700-800 GB/s for 8x B200")
-        efficiency = (avg_allreduce / 750) * 100  # 750 GB/s target
-            print(f"Efficiency: {efficiency:.1f}% of target")
+        print("Multi-Node Bandwidth Benchmark")
+        print("=" * 70)
+
+    def _bench(collective: Callable[[], None]) -> float:
+        for _ in range(5):
+            collective()
+        torch.cuda.synchronize(device)
+        start = time.time()
+        for _ in range(num_iters):
+            collective()
+        torch.cuda.synchronize(device)
+        return time.time() - start
+
+    for size in sizes:
+        tensor = torch.randn(size, device=device, dtype=torch.float32)
+        bytes_transferred = tensor.numel() * tensor.element_size()
+        elapsed = _bench(lambda: dist.all_reduce(tensor, op=dist.ReduceOp.SUM))
+        algo_factor = 2.0 * (world_size - 1) / world_size
+        bandwidth_gbs = (bytes_transferred * algo_factor * num_iters) / elapsed / 1e9
+        results[f"allreduce_{bytes_transferred/1e6:.1f}MB"] = bandwidth_gbs
+        if rank == 0:
+            print(
+                f" Size: {bytes_transferred/1e6:8.1f} MB | "
+                f"Bandwidth: {bandwidth_gbs:6.2f} GB/s | "
+                f"Time: {elapsed*1000/num_iters:6.2f} ms"
+            )
+
+    if rank == 0:
         print("=" * 70 + "\n")
-    return results 
-
-def benchmark_multi_node_bandwidth( sizes: list[int] = [1024*1024, 10*1024*1024, 100*1024*1024], num_iters: int = 100, ) -> dict: 
-    """ Benchmark inter-node and intra-node bandwidth. Tests: - All-reduce (ring algorithm) - All-gather - Reduce-scatter - Point-to-point Returns: Bandwidth measurements """ rank = dist.get_rank()
-            world_size =
-           
-            dist.get_world_size()
-            device =
-           
-            torch.cuda.current_device()
-            # Use 8x B200 optimized benchmark if applicable local_world_size = torch.cuda.device_count()
-            if local_world_size == 8 and world_size == 8: 
-    
-            
-            return benchmark_8xb200_bandwidth(sizes, num_iters)
-    if rank == 0: 
-    
-            
-            print("\n" + "=" * 70)
-        print("Multi-Node Bandwidth Benchmark") print("=" * 70)
-            results = {}
-    for size in sizes: 
-            
-            
-            tensor = torch.randn(size, device=device, dtype=torch.float32)
-            bytes_transferred = tensor.numel() * tensor.element_size()
-            # Warmup
-            for _ in range(10):
-                dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
-            torch.cuda.synchronize()
-            # All-reduce benchmark
-            start = time.time()
-            for _ in range(num_iters):
-                dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
-            torch.cuda.synchronize()
-            elapsed = time.time() - start
-            start # Calculate
-            bandwidth
-            # All-reduce transfers 2(N-1)/N * data_size algo_bw_factor = 2.0 * (world_size - 1) / world_size
-            bandwidth_gbs = (bytes_transferred * algo_bw_factor * num_iters) /
-            elapsed / 1e9 results[f"{bytes_transferred/1e6:.1f}MB"] = bandwidth_gbs
-    if rank == 0: 
-    
-            
-            print(f" Size: {bytes_transferred/1e6:8.1f} MB | " f"Bandwidth: {bandwidth_gbs:6.2f} GB/s | " f"Time: {elapsed*1000/num_iters:6.2f} ms")
-    if rank == 0: 
-    
-            
-            print("=" * 70 + "\n")
-    return results 
-
-# ============================================================================ # Main Entry
-            Point 
-
-# ============================================================================ 
-            def main(): """ Main entry point for multi-node training demonstration. Launch with: 
-            
-            
-            torchrun --nnodes=2 --nproc_per_node=8 \\ --rdzv_backend=c10d --rdzv_endpoint=$MASTER_ADDR:$MASTER_PORT \\ multi_node_blackwell.py """
-            # Setup distributed rank, local_rank, world_size, local_world_size =
-            setup_blackwell_distributed()
-            # Require at least two nodes; skip gracefully on single-node runs. num_nodes = max(1, world_size // max(1, local_world_size))
-            if num_nodes <= 1: 
-    if rank == 0: print( "\nWARNING: Skipping multi_node_blackwell.py: requires at least 2 nodes.\n" " Launch with torchrun --nnodes>=2 to run the multi-node benchmarks." )
-            dist.destroy_process_group()
-
-        return # Run bandwidth benchmark
-            if rank == 0: 
-    
-            
-            print("\n[1/3] Running bandwidth benchmark...")
-            bandwidth_results = benchmark_multi_node_bandwidth()
-            # Create device mesh
-            for hybrid parallelism if rank == 0: 
-    
-            
-            
-            
-            
-            print("\n[2/3] Setting up hybrid parallelism...")
-            # Use optimized 8x B200 mesh if applicable
-            if local_world_size == 8 and world_size == 8: 
-            # Optimal configuration
-            for 8x B200 device_mesh = create_8xb200_device_mesh(tp_size=2, dp_size=4) else: # 2D mesh: [data_parallel, tensor_parallel] # Tensor parallel within nodes (via
-            NVLink-C2C)
-            # Data parallel across nodes (via InfiniBand)
-            num_nodes = world_size // local_world_size device_mesh = init_device_mesh( "cuda", mesh_shape=(num_nodes, local_world_size),
-            mesh_dim_names=("dp", "tp"), )
-            # Create model model = MultiNodeTransformer( vocab_size=50257, d_model=1024, num_layers=24, num_heads=16,
-            d_ff=4096, ).cuda()
-            # Apply tensor parallelism (intra-node)
-            model = apply_tensor_parallelism(model,
-            device_mesh)
-            # Apply FSDP (inter-node)
-            model = apply_fsdp(model, device_mesh, mixed_precision=True)
-    if rank == 0: 
-    
-            
-            print(" Model parallelization complete")
-        print(f" Tensor Parallel: {local_world_size}x (intra-node)") print(f" Data Parallel: {num_nodes}x (inter-node)")
-            # Create dummy dataset
-            if rank == 0: 
-    
-            
-            print("\n[3/3] Starting training...") 
+    return results
 
 
-class DummyDataset(torch.utils.data.Dataset): 
+class DummyDataset(torch.utils.data.Dataset):
+    """Lightweight synthetic dataset for demonstration."""
 
-def __init__(self, size=1000, seq_len=512): 
+    def __init__(self, size: int = 1000, seq_len: int = 512) -> None:
         self.size = size
-        self.seq_len = seq_len 
+        self.seq_len = seq_len
 
-def __len__(self): return self.size 
+    def __len__(self) -> int:
+        return self.size
 
-def __getitem__(self, idx): return { 'input_ids': torch.randint(0, 50257, (self.seq_len,)), 'labels': torch.randint(0, 50257, (self.seq_len,)), } dataset = DummyDataset(size=100, seq_len=512)
-            sampler = torch.utils.data.distributed.DistributedSampler( dataset, num_replicas=world_size, rank=rank, )
-            dataloader =
-           
-            torch.utils.data.DataLoader( dataset, batch_size=4, sampler=sampler, num_workers=0,
-            # Set to 0
-            for demo )
-            # Train stats = train_multi_node( model, dataloader, num_epochs=2, gradient_accumulation_steps=4, use_compile=True, )
-            if rank == 0: 
-    
-            
-            
-            
-            
-            print("\n" + "=" * 70)
-        print("Multi-Node Training Complete!") print("=" * 70)
-        print(" Bandwidth benchmark: completed") print(" Hybrid parallelism: configured")
-        print(" Training: completed") print(f" Average throughput: {sum(stats['throughputs'])/len(stats['throughputs'])/1e6:.2f}M tokens/s") print("=" * 70 + "\n")
-            # Cleanup dist.destroy_process_group()
-            if __name__ == "__main__": 
-    
-            
-            main()
+    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
+        del idx
+        return {
+            "input_ids": torch.randint(0, 50257, (self.seq_len,)),
+            "labels": torch.randint(0, 50257, (self.seq_len,)),
+        }
+
+
+def main() -> None:
+    """Main entry point for the multi-node benchmarking demo."""
+    (
+        rank,
+        local_rank,
+        world_size,
+        local_world_size,
+    ) = setup_blackwell_distributed()
+
+    num_nodes = max(1, world_size // max(1, local_world_size))
+    if num_nodes <= 1:
+        if rank == 0:
+            print(
+                "\nWARNING: multi_node_blackwell.py requires at least 2 nodes.\n"
+                "Launch with torchrun --nnodes>=2 to run the full benchmark.\n"
+            )
+        dist.destroy_process_group()
+        return
+
+    if rank == 0:
+        print("\n[1/3] Running bandwidth benchmark...")
+    bandwidth_results = benchmark_multi_node_bandwidth()
+
+    if rank == 0:
+        print("\n[2/3] Setting up hybrid parallel configuration...")
+    if local_world_size == 8 and world_size == 8:
+        device_mesh = create_8xb200_device_mesh(tp_size=2, dp_size=4)
+    else:
+        device_mesh = init_device_mesh(
+            "cuda",
+            mesh_shape=(num_nodes, local_world_size),
+            mesh_dim_names=("dp", "tp"),
+        )
+
+    model = MultiNodeTransformer(
+        vocab_size=50257,
+        d_model=1024,
+        num_layers=24,
+        num_heads=16,
+        d_ff=4096,
+    ).cuda()
+    model = apply_tensor_parallelism(model, device_mesh)
+    model = apply_fsdp(model, device_mesh, mixed_precision=True)
+
+    if rank == 0:
+        print("Hybrid parallelization complete")
+
+    if rank == 0:
+        print("\n[3/3] Starting training loop...")
+    dataset = DummyDataset(size=100, seq_len=512)
+    sampler = torch.utils.data.distributed.DistributedSampler(
+        dataset,
+        num_replicas=world_size,
+        rank=rank,
+    )
+    dataloader = torch.utils.data.DataLoader(
+        dataset,
+        batch_size=4,
+        sampler=sampler,
+        num_workers=0,
+    )
+    stats = train_multi_node(
+        model,
+        dataloader,
+        num_epochs=2,
+        gradient_accumulation_steps=4,
+        use_compile=True,
+    )
+
+    if rank == 0:
+        print("\n" + "=" * 70)
+        print("Multi-Node Training Complete!")
+        print("=" * 70)
+        if stats["throughputs"]:
+            avg_throughput = sum(stats["throughputs"]) / len(stats["throughputs"])
+            print(f"Average throughput: {avg_throughput/1e6:.2f}M tokens/s")
+        print("Bandwidth benchmark samples:")
+        for key, value in bandwidth_results.items():
+            print(f"  {key}: {value:.2f} GB/s")
+        print("=" * 70 + "\n")
+
+    dist.destroy_process_group()
+
+
+if __name__ == "__main__":
+    main()

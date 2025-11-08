@@ -21,6 +21,7 @@ from collections import deque
 
 from typing import Optional
 
+from common.python.compile_utils import enable_tf32
 from common.python.benchmark_harness import (
     Benchmark,
     BenchmarkConfig,
@@ -44,10 +45,8 @@ class OptimizedContinuousBatchingBenchmark(Benchmark):
         self.device = resolve_device()
         self.model = None
         # Optimization: Compile model for kernel fusion and optimization
-        try:
 
         # Optimization: Compile model for kernel fusion and optimization
-        try:
 
         self.sample_queue = None
     
@@ -59,8 +58,7 @@ class OptimizedContinuousBatchingBenchmark(Benchmark):
             torch.backends.cudnn.benchmark = True
             torch.backends.cudnn.deterministic = False
             # Enable TF32 for faster matmul on Ampere+ GPUs
-            torch.backends.cuda.matmul.allow_tf32 = True
-            torch.backends.cudnn.allow_tf32 = True
+            enable_tf32()
         torch.manual_seed(42)
         # Optimization: Continuous batching - dynamic sample queue
         
@@ -155,9 +153,9 @@ def main() -> None:
     print("=" * 70)
     print(f"Optimized: Continuous Batching")
     print("=" * 70)
-    print(f"Average time: {result.mean_ms:.3f} ms")
-    print(f"Median: {result.median_ms:.3f} ms")
-    print(f"Std: {result.std_ms:.3f} ms")
+    print(f"Average time: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")
+    print(f"Median: {result.timing.median_ms if result.timing else 0.0:.3f} ms")
+    print(f"Std: {result.timing.std_ms if result.timing else 0.0:.3f} ms")
 
 if __name__ == "__main__":
     main()

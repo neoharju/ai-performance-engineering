@@ -4,8 +4,17 @@
 #ifndef PROFILING_HELPERS_CUH
 #define PROFILING_HELPERS_CUH
 
-#include <nvtx3/nvToolsExt.h>
 #include <cstdint>
+
+// Define ENABLE_NVTX_PROFILING (and link with -lnvToolsExt) to emit markers.
+#if defined(NVTX_AVAILABLE)
+// Respect existing definition supplied by the build.
+#elif defined(ENABLE_NVTX_PROFILING)
+#include <nvtx3/nvToolsExt.h>
+#define NVTX_AVAILABLE 1
+#else
+#define NVTX_AVAILABLE 0
+#endif
 
 // Color palette for NVTX markers
 namespace nvtx {
@@ -23,10 +32,13 @@ namespace nvtx {
 // NVTX Range RAII wrapper
 class NvtxRange {
 private:
+#if NVTX_AVAILABLE
   nvtxRangeId_t range_id;
+#endif
 
 public:
   NvtxRange(const char* name, uint32_t color = nvtx::COLOR_GREEN) {
+#if NVTX_AVAILABLE
     nvtxEventAttributes_t eventAttrib = {0};
     eventAttrib.version = NVTX_VERSION;
     eventAttrib.size = NVTX_EVENT_ATTRIB_STRUCT_SIZE;
@@ -35,10 +47,16 @@ public:
     eventAttrib.messageType = NVTX_MESSAGE_TYPE_ASCII;
     eventAttrib.message.ascii = name;
     range_id = nvtxRangeStartEx(&eventAttrib);
+#else
+    (void)name;  // Suppress unused parameter warning
+    (void)color;
+#endif
   }
 
   ~NvtxRange() {
+#if NVTX_AVAILABLE
     nvtxRangeEnd(range_id);
+#endif
   }
 
   // Prevent copying
@@ -51,8 +69,13 @@ public:
 #define NVTX_RANGE_COLOR(name, color) NvtxRange nvtx_##__LINE__(name, color)
 
 // Mark specific operations for profiling
+#if NVTX_AVAILABLE
 #define NVTX_MARK_COMPUTE(name) nvtxMarkA(name)
 #define NVTX_MARK_MEMORY(name) nvtxMarkA(name)
+#else
+#define NVTX_MARK_COMPUTE(name) ((void)0)
+#define NVTX_MARK_MEMORY(name) ((void)0)
+#endif
 
 // Common profiling ranges
 #define PROFILE_KERNEL_LAUNCH(name) NVTX_RANGE_COLOR(name, nvtx::COLOR_BLUE)
@@ -61,4 +84,3 @@ public:
 #define PROFILE_DATA_PREP(name) NVTX_RANGE_COLOR(name, nvtx::COLOR_MAGENTA)
 
 #endif // PROFILING_HELPERS_CUH
-

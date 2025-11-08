@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Verify Triton SM 12.1 patch fixes the sm_121a bug."""
 
+from common.python import compile_utils as _compile_utils_patch  # noqa: F401
 import sys
 from pathlib import Path
 

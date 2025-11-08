@@ -61,11 +61,11 @@ import platform
 import psutil
 import torch
 import torch.multiprocessing as mp
-from typing import Dict, List, Tuple, Optional
+from typing import Any, Dict, List, Optional, Tuple
 import subprocess
 
 
-def detect_grace_cpu() -> Dict[str, any]:
+def detect_grace_cpu() -> Dict[str, Any]:
     """
     Detect Grace CPU and gather system information.
     
@@ -284,7 +284,7 @@ def optimize_data_loading_for_grace(
     num_workers: int = 8,
     prefetch_factor: int = 2,
     verbose: bool = True
-) -> Dict[str, any]:
+) -> Dict[str, Any]:
     """
     Configure optimal DataLoader settings for Grace-Blackwell.
     

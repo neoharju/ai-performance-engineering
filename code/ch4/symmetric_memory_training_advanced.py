@@ -94,6 +94,12 @@ from typing import Dict, List, Optional, Tuple
 
 import torch
 import torch.distributed as dist
+
+from common.python.symmetric_memory_patch import (
+    ensure_symmetric_memory_api as _ensure_symmetric_memory_api,
+)
+
+_ensure_symmetric_memory_api()
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, ShardingStrategy

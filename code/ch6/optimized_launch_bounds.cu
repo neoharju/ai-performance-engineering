@@ -14,10 +14,6 @@
     }                                                                          \
   } while (0)
 
-#if defined(CUDART_VERSION) && (CUDART_VERSION >= 13000)
-#include "../common/cuda13_teasers.cuh"
-#endif
-
 // Kernel with launch bounds annotation (optimized)
 __global__ __launch_bounds__(256, 8)
 void myKernel(float* input, float* output, int N) {
@@ -92,14 +88,5 @@ int main() {
     cudaFreeHost(h_input);
     cudaFreeHost(h_output);
     
-#if defined(CUDART_VERSION) && (CUDART_VERSION >= 13000)
-    // CUDA 13 teasers for Blackwell readers.
-    cuda13_teasers::stream_ordered_teaser();
-    cuda13_teasers::tma_teaser();
-#else
-    printf("CUDA 13 teasers require CUDA 13 headers; see later chapters for full demos.\n");
-#endif
-
     return 0;
 }
-

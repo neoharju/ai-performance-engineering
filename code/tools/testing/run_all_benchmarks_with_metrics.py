@@ -353,7 +353,7 @@ def test_benchmark_pair_with_metrics(
     try:
         baseline_result = harness.benchmark(baseline_benchmark)
         status.baseline_executed = True
-        status.baseline_time_ms = baseline_result.mean_ms
+        status.baseline_time_ms = baseline_result.timing.mean_ms if baseline_result.timing else None
         
         # Profile baseline with nsys
         nsys_path = profile_python_benchmark(
@@ -393,7 +393,7 @@ def test_benchmark_pair_with_metrics(
     try:
         optimized_result = harness.benchmark(optimized_benchmark)
         status.optimized_executed = True
-        status.optimized_time_ms = optimized_result.mean_ms
+        status.optimized_time_ms = optimized_result.timing.mean_ms if optimized_result.timing else None
         
         if status.baseline_time_ms and status.optimized_time_ms > 0:
             status.speedup = status.baseline_time_ms / status.optimized_time_ms

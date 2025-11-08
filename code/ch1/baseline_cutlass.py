@@ -103,4 +103,4 @@ if __name__ == '__main__':
         config=benchmark.get_config()
     )
     result = harness.benchmark(benchmark)
-    print(f"\nBaseline CUTLASS (Standard): {result.mean_ms:.3f} ms")
+    print(f"\nBaseline CUTLASS (Standard): {result.timing.mean_ms if result.timing else 0.0:.3f} ms")

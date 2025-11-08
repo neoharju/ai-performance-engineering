@@ -53,6 +53,8 @@ except Exception:
 import torch
 import torch.nn as nn
 
+from common.python.compile_utils import enable_tf32
+
 try:
     from torch.nn.attention.flex_attention import flex_attention, create_block_mask
 except ImportError:  # pragma: no cover - flex attention may be unavailable
@@ -806,9 +808,7 @@ def main() -> None:
     if devices[0].type == "cuda":
         torch.backends.cuda.enable_flash_sdp(True)
         torch.backends.cudnn.benchmark = True
-        torch.set_float32_matmul_precision("high")
-    else:
-        torch.set_float32_matmul_precision("high")
+        enable_tf32()
 
     config = GPTConfig()
     config.attention_backend = args.attention_backend

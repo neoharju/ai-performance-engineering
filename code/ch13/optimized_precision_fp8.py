@@ -20,6 +20,7 @@ import torch.nn as nn
 
 from typing import Optional
 
+from common.python.compile_utils import enable_tf32
 from common.python.benchmark_harness import (
     Benchmark,
     BenchmarkConfig,
@@ -42,8 +43,11 @@ def quantize_to_fp8(x: torch.Tensor) -> torch.Tensor:
     except (AttributeError, RuntimeError):
         pass
     
-    # Fallback: Manual FP8 quantization
-    scale = x.abs().max() / 448.0 if x.abs().max() > 0 else 1.0
+    # Optimized quantization - compute scale once, use vectorized ops
+    max_val = x.abs().max()
+    if max_val == 0:
+        return x
+    scale = max_val / 448.0
     x_scaled = x / scale
     x_clamped = torch.clamp(x_scaled, -448.0, 448.0)
     x_quantized = (x_clamped * 8.0).round() / 8.0
@@ -132,10 +136,8 @@ class OptimizedFP8Benchmark(Benchmark):
         self.device = resolve_device()
         self.model = None
         # Optimization: Compile model for kernel fusion and optimization
-        try:
 
         # Optimization: Compile model for kernel fusion and optimization
-        try:
 
         self.inputs = None
         self.optimizer = None
@@ -152,33 +154,43 @@ class OptimizedFP8Benchmark(Benchmark):
             torch.backends.cudnn.benchmark = True
             torch.backends.cudnn.deterministic = False
             # Enable TF32 for faster matmul on Ampere+ GPUs
-            torch.backends.cuda.matmul.allow_tf32 = True
-            torch.backends.cudnn.allow_tf32 = True
+            enable_tf32()
         torch.manual_seed(42)
         
-        self.model = SimpleTransformerFP8(hidden_dim=self.hidden_dim, num_layers=6, use_fp8=True).to(self.device)
-        # Optimization: Use FP16 for faster computation
-        if self.device.type == "cuda":
-            try:
-                self.model = self.model.half()
-            except Exception:
-                pass  # Fallback to FP32 if FP16 not supported
+        # Model uses BFloat16 (FP8Linear uses bfloat16 weights)
+        # Use torch.compile to fuse operations and optimize FP8 path
+        model = SimpleTransformerFP8(hidden_dim=self.hidden_dim, num_layers=6, use_fp8=True).to(self.device)
+        model.train()
         
-        self.model.train()
+        # Compile model to fuse operations and optimize quantization
+        major, _ = torch.cuda.get_device_capability(self.device)
+        compile_safe = major < 12
+        if compile_safe:
+            try:
+                self.model = torch.compile(model, mode='reduce-overhead')
+                compiled = True
+            except Exception:
+                self.model = model
+                compiled = False
+        else:
+            self.model = model
+            compiled = False
         
         # Ensure quantized weights are on device
-        for layer in self.model.layers:
+        base_model = self.model._orig_mod if compiled else self.model
+        for layer in base_model.layers:
             for name, module in layer.items():
                 if isinstance(module, FP8Linear) and hasattr(module, 'weight_quantized'):
                     module.weight_quantized = module.weight_quantized.to(self.device)
         
+        # Use bfloat16 to match model dtype (FP8Linear uses bfloat16)
         self.inputs = torch.randn(self.batch_size, self.seq_len, self.hidden_dim, device=self.device, dtype=torch.bfloat16)
         self.targets = torch.randn(self.batch_size, self.seq_len, self.hidden_dim, device=self.device, dtype=torch.bfloat16)
         self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=1e-4)
         self.criterion = nn.MSELoss()
         
-        # Warmup
-        for _ in range(3):
+        # Warmup to ensure compilation completes
+        for _ in range(10):
             self.optimizer.zero_grad()
             _ = self.model(self.inputs)
         torch.cuda.synchronize()
@@ -230,5 +242,4 @@ if __name__ == "__main__":
         config=benchmark.get_config()
     )
     result = harness.benchmark(benchmark)
-    print(f"\nOptimized FP8 Training: {result.mean_ms:.3f} ms")
-
+    print(f"\nOptimized FP8 Training: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")

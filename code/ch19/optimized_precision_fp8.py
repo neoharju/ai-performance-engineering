@@ -45,7 +45,7 @@ def resolve_device() -> torch.device:
         raise RuntimeError("CUDA required for ch19")
     return torch.device("cuda")
 
-class ProductionTransformer:
+class ProductionTransformer(nn.Module):
     """Production-scale transformer with optional FP8 support."""
     
     def __init__(self, use_te=False, hidden_dim=1024, num_layers=12):
@@ -109,19 +109,15 @@ class OptimizedFP8Benchmark:
         torch.backends.cudnn.deterministic = False
         self.model = ProductionTransformer(use_te=True, hidden_dim=self.hidden_dim)
         self.model = self.model.to(self.device)
-        # Optimization: Use FP16 for faster computation
-        if self.device.type == "cuda":
-            try:
-                self.model = self.model.half()
-            except Exception:
-                pass
         self.model.train()
-        # For TE: use bfloat16 input (TE handles FP8 internally)
-        # For non-TE: convert model to bfloat16
+        # For TE: use float32 input (TE handles FP8 internally)
+        # For non-TE: convert model to bfloat16 - FAIL FAST if CUDA not available
         if not self.te_available:
+            if self.device.type != "cuda":
+                raise RuntimeError("CUDA required for optimized_precision_fp8 benchmark")
             self.model = self.model.to(dtype=torch.bfloat16)
         # TE Linear works with float32 input - fp8_autocast handles conversion internally
-        # For non-TE fallback, use bfloat16
+        # For non-TE fallback, use bfloat16 to match model dtype
         if self.te_available:
             self.x = torch.randn(self.batch_size, self.seq_len, self.hidden_dim, device=self.device, dtype=torch.float32)
         else:
@@ -274,9 +270,9 @@ def main() -> None:
         print("Precision: BF16 (Transformer Engine not available)")
         print("WARNING: Install transformer-engine for FP8\n")
     
-    print(f"Average time per iteration: {result.mean_ms:.3f} ms")
-    print(f"Median: {result.median_ms:.3f} ms")
-    print(f"Std: {result.std_ms:.3f} ms")
+    print(f"Average time per iteration: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")
+    print(f"Median: {result.timing.median_ms if result.timing else 0.0:.3f} ms")
+    print(f"Std: {result.timing.std_ms if result.timing else 0.0:.3f} ms")
     if benchmark.te_available:
         print("Status: FP8 training (1.5-2x speedup, 30-40% memory reduction)")
     else:

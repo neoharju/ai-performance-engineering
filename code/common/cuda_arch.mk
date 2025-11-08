@@ -13,9 +13,43 @@
 #   CUDA_NVCC_ARCH_FLAGS- Baseline nvcc flags for the selected architecture
 #   ARCH_LIST           - Ordered list of supported architectures (sm_100, sm_103, sm_121)
 
-ARCH ?= sm_100
 CUDA_VERSION ?= 13.0
 NVCC ?= nvcc
+PYTHON ?= python3
+
+CUDA_ARCH_MK_PATH := $(abspath $(lastword $(MAKEFILE_LIST)))
+CUDA_COMMON_DIR := $(dir $(CUDA_ARCH_MK_PATH))
+
+DEFAULT_ARCH := sm_100
+AUTO_ARCH_DETECTION ?= 1
+
+ifeq ($(origin ARCH), undefined)
+  ifeq ($(AUTO_ARCH_DETECTION),1)
+    DETECTED_ARCH := $(strip $(shell $(PYTHON) $(CUDA_COMMON_DIR)/python/detect_sm.py 2>/dev/null))
+  endif
+endif
+
+ifeq ($(strip $(DETECTED_ARCH)),)
+  ARCH ?= $(DEFAULT_ARCH)
+  ARCH_SOURCE := default
+else
+  ARCH := $(DETECTED_ARCH)
+  ARCH_SOURCE := auto
+endif
+
+ifeq ($(origin ARCH), command line)
+  ARCH_SOURCE := user
+endif
+ifeq ($(origin ARCH), environment)
+  ARCH_SOURCE := user
+endif
+
+ifeq ($(ARCH_SOURCE),auto)
+$(info [cuda_arch] Auto-detected GPU architecture $(ARCH) (override with ARCH=<sm_100|sm_103|sm_121>))
+endif
+NVTX_STUB_DIR := $(abspath $(CUDA_COMMON_DIR)/nvtx_stub)
+NVTX_STUB_LIB := $(NVTX_STUB_DIR)/libnvToolsExt.a
+NVTX_STUB_SCRIPT := $(abspath $(CUDA_COMMON_DIR)/python/nvtx_stub.py)
 
 ARCH_LIST := sm_100 sm_103 sm_121
 
@@ -49,4 +83,19 @@ ifeq ($(USE_ARCH_SUFFIX),1)
 TARGET_SUFFIX := $(ARCH_SUFFIX)
 else
 TARGET_SUFFIX :=
+endif
+
+$(NVTX_STUB_LIB):
+	$(PYTHON) $(NVTX_STUB_SCRIPT) --output $@
+
+# Enable NVTX profiling helpers by default. Set NVTX_ENABLED=0 to disable.
+NVTX_ENABLED ?= 1
+ifeq ($(strip $(NVTX_ENABLED)),1)
+CUDA_NVTX_CFLAGS := -DENABLE_NVTX_PROFILING
+CUDA_NVTX_LDFLAGS := -L$(NVTX_STUB_DIR) -lnvToolsExt
+CUDA_NVTX_DEPS := $(NVTX_STUB_LIB)
+else
+CUDA_NVTX_CFLAGS :=
+CUDA_NVTX_LDFLAGS :=
+CUDA_NVTX_DEPS :=
 endif

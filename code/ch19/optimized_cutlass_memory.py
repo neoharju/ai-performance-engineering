@@ -23,6 +23,7 @@ except ImportError:
 
 from typing import Optional
 
+from common.python.compile_utils import enable_tf32
 from common.python.benchmark_harness import (
     Benchmark,
     BenchmarkConfig,
@@ -53,8 +54,7 @@ class OptimizedCutlassMemoryBenchmark(Benchmark):
             torch.backends.cudnn.benchmark = True
             torch.backends.cudnn.deterministic = False
         # Enable TF32 for faster matmul on Ampere+ GPUs
-            torch.backends.cuda.matmul.allow_tf32 = True
-            torch.backends.cudnn.allow_tf32 = True
+            enable_tf32()
         torch.manual_seed(42)
         # Optimization: Memory management with CUTLASS
         # CUTLASS provides optimized GEMM kernels with efficient memory access
@@ -128,5 +128,5 @@ if __name__ == '__main__':
     )
     result = harness.benchmark(benchmark)
     
-    print(f"\nOptimized CUTLASS Memory: {result.mean_ms:.3f} ms")
+    print(f"\nOptimized CUTLASS Memory: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")
     print(" Tip: CUTLASS-optimized memory management improves bandwidth utilization")

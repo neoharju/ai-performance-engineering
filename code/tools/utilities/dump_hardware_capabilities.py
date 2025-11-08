@@ -10,6 +10,7 @@ This script outputs all hardware capabilities including:
 - Memory and bandwidth specifications
 """
 
+from common.python import compile_utils as _compile_utils_patch  # noqa: F401
 import sys
 from pathlib import Path
 

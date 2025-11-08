@@ -4,36 +4,38 @@ This module provides utilities to conditionally add NVTX ranges only when
 profiling is enabled, reducing overhead for pure performance benchmarks.
 """
 
-import os
 import sys
 from contextlib import contextmanager, redirect_stderr
-from io import StringIO
-from typing import Optional
+from typing import Any, Generator, Optional, TextIO, cast
+
+import io
 
 import torch
 
 
-class FilteredStderr:
+class FilteredStderr(io.TextIOBase):
     """Thread-safe filter for stderr that removes NVTX threading errors."""
-    def __init__(self, original):
+    def __init__(self, original: TextIO):
         self.original = original
     
-    def write(self, text):
+    def write(self, text: str) -> int:
         # Filter out NVTX threading error messages
         if "External init callback must run in same thread as registerClient" not in text:
             self.original.write(text)
+            return len(text)
         # Otherwise silently drop the error message
+        return 0
     
-    def flush(self):
+    def flush(self) -> None:
         self.original.flush()
     
-    def __getattr__(self, name):
+    def __getattr__(self, name: str):
         # Forward all other attributes to original stderr
         return getattr(self.original, name)
 
 
 @contextmanager
-def _suppress_nvtx_threading_error():
+def _suppress_nvtx_threading_error() -> Generator[None, None, None]:
     """Suppress NVTX threading errors that occur when CUDA initializes in different thread.
     
     This is a known PyTorch/NVTX issue where NVTX is initialized in one thread
@@ -42,12 +44,12 @@ def _suppress_nvtx_threading_error():
     """
     # Use contextlib.redirect_stderr for thread-safe stderr redirection
     filtered_stderr = FilteredStderr(sys.stderr)
-    with redirect_stderr(filtered_stderr):
+    with redirect_stderr(cast(TextIO, filtered_stderr)):
         yield
 
 
 @contextmanager
-def nvtx_range(name: str, enable: Optional[bool] = None):
+def nvtx_range(name: str, enable: Optional[bool] = None) -> Generator[None, None, None]:
     """Conditionally add NVTX range marker.
     
     Args:
@@ -65,24 +67,18 @@ def nvtx_range(name: str, enable: Optional[bool] = None):
         enable = False
     
     if enable and torch.cuda.is_available():
-        # Suppress NVTX threading errors (harmless but noisy)
         with _suppress_nvtx_threading_error():
+            torch.cuda.nvtx.range_push(name)
             try:
-                torch.cuda.nvtx.range_push(name)
-                try:
-                    yield
-                finally:
-                    torch.cuda.nvtx.range_pop()
-            except Exception:
-                # If NVTX fails (e.g., threading issue), silently fall back to no-op
-                # This ensures benchmarks continue to work even if NVTX has issues
                 yield
-    else:
-        # No-op when NVTX is disabled
-        yield
+            finally:
+                torch.cuda.nvtx.range_pop()
+        return
+    # No-op when NVTX is disabled or CUDA is unavailable
+    yield
 
 
-def get_nvtx_enabled(config) -> bool:
+def get_nvtx_enabled(config: Any) -> bool:
     """Get NVTX enabled status from benchmark config.
     
     Args:
@@ -91,10 +87,10 @@ def get_nvtx_enabled(config) -> bool:
     Returns:
         True if NVTX should be enabled, False otherwise
     """
-    if hasattr(config, 'enable_nvtx'):
-        return config.enable_nvtx
-    # Fallback: enable only if profiling is enabled
-    if hasattr(config, 'enable_profiling'):
-        return config.enable_profiling
+    nvtx_value = getattr(config, "enable_nvtx", None)
+    if isinstance(nvtx_value, bool):
+        return nvtx_value
+    profiling_value = getattr(config, "enable_profiling", None)
+    if isinstance(profiling_value, bool):
+        return profiling_value
     return False
-

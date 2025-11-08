@@ -69,8 +69,10 @@ class BaselineLaunchBoundsBenchmark(Benchmark):
 
 
         with nvtx_range("baseline_launch_bounds", enable=enable_nvtx):
-            # Call CUDA extension
+            # Call CUDA extension (already synchronizes internally)
             self._extension.launch_bounds_baseline(self.input_data, self.output_data, self.iterations)
+            # Additional synchronization to catch any errors
+            torch.cuda.synchronize()
 
     
     def teardown(self) -> None:
@@ -86,6 +88,7 @@ class BaselineLaunchBoundsBenchmark(Benchmark):
             warmup=1,
             enable_memory_tracking=False,
             enable_profiling=False,
+            setup_timeout_seconds=120,  # CUDA extension compilation can take time
         )
     
     def validate_result(self) -> Optional[str]:
@@ -111,5 +114,5 @@ if __name__ == '__main__':
         config=benchmark.get_config()
     )
     result = harness.benchmark(benchmark)
-    print(f"\nBaseline Launch Bounds (no annotation): {result.mean_ms:.3f} ms")
+    print(f"\nBaseline Launch Bounds (no annotation): {result.timing.mean_ms if result.timing else 0.0:.3f} ms")
 

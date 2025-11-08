@@ -2,9 +2,21 @@
 
 from __future__ import annotations
 
+from common.python import compile_utils as _compile_utils_patch  # noqa: F401
+from common.python.cuda_capabilities import (
+    pipeline_support_status,
+    pipeline_runtime_allowed,
+    tma_support_status,
+)
 import os
 import sys
+from pathlib import Path
 from typing import Dict, Iterable, List, Tuple
+
+try:
+    from common.python.build_utils import ensure_clean_build_directory
+except ImportError:  # pragma: no cover - psutil optional in some environments
+    ensure_clean_build_directory = None  # type: ignore[assignment]
 
 ENV_DEFAULTS: Dict[str, str] = {
     "PYTHONFAULTHANDLER": "1",
@@ -100,6 +112,53 @@ def apply_env_defaults() -> Dict[str, str]:
         legacy = os.environ.pop("PYTORCH_CUDA_ALLOC_CONF", None)
         os.environ["PYTORCH_ALLOC_CONF"] = legacy or "max_split_size_mb:128,expandable_segments:True"
     applied["PYTORCH_ALLOC_CONF"] = os.environ["PYTORCH_ALLOC_CONF"]
+    
+    # Ensure PyTorch inductor cache directory exists to prevent C++ compilation errors
+    # PyTorch inductor needs this directory to exist for C++ code generation
+    # Use absolute path to avoid working directory issues
+    inductor_cache_dir = os.environ.get("TORCHINDUCTOR_CACHE_DIR")
+    if not inductor_cache_dir:
+        # Default to .torch_inductor in current working directory (convert to absolute)
+        inductor_cache_dir = str(Path.cwd() / ".torch_inductor")
+        os.environ["TORCHINDUCTOR_CACHE_DIR"] = inductor_cache_dir
+    else:
+        # Convert relative paths to absolute paths to avoid working directory issues
+        if not os.path.isabs(inductor_cache_dir):
+            inductor_cache_dir = str(Path.cwd() / inductor_cache_dir)
+            os.environ["TORCHINDUCTOR_CACHE_DIR"] = inductor_cache_dir
+    
+    if inductor_cache_dir:
+        inductor_cache_path = Path(inductor_cache_dir)
+        # Create directory and subdirectories (used by inductor for C++ compilation)
+        # 'od' is for output directory, 'tk' is for temporary kernel files
+        try:
+            inductor_cache_path.mkdir(parents=True, exist_ok=True)
+            (inductor_cache_path / "od").mkdir(parents=True, exist_ok=True)
+            (inductor_cache_path / "tk").mkdir(parents=True, exist_ok=True)
+            if ensure_clean_build_directory is not None:
+                # Kill stale compiler processes/locks that keep torch.compile hanging
+                ensure_clean_build_directory(inductor_cache_path)
+        except (OSError, PermissionError):
+            # If we can't create the directory, that's okay - PyTorch will handle it
+            # or fail with a clearer error message
+            pass
+
+    # Ensure cpp-extension builds use a workspace-local cache to avoid /tmp lockups
+    torch_extensions_dir = os.environ.get("TORCH_EXTENSIONS_DIR")
+    if not torch_extensions_dir:
+        torch_extensions_dir = str(Path.cwd() / ".torch_extensions")
+        os.environ["TORCH_EXTENSIONS_DIR"] = torch_extensions_dir
+    elif not os.path.isabs(torch_extensions_dir):
+        torch_extensions_dir = str(Path.cwd() / torch_extensions_dir)
+        os.environ["TORCH_EXTENSIONS_DIR"] = torch_extensions_dir
+
+    try:
+        torch_extensions_path = Path(torch_extensions_dir)
+        torch_extensions_path.mkdir(parents=True, exist_ok=True)
+        if ensure_clean_build_directory is not None:
+            ensure_clean_build_directory(torch_extensions_path)
+    except (OSError, PermissionError):
+        pass
 
     # Only ensure CUDA paths if CUDA_HOME was not already set by user
     # This prevents overwriting user-configured CUDA installations
@@ -233,6 +292,13 @@ def dump_environment_and_capabilities(stream=None, *, force: bool = False) -> No
     except Exception:
         cudnn_version = None
     print(f"cuDNN Version: {cudnn_version or 'unavailable'}", file=stream)
+    
+    pipeline_supported, pipeline_reason = pipeline_support_status()
+    tma_supported, tma_reason = tma_support_status()
+    print(f"CUDA Pipeline API Support: {'yes' if pipeline_supported else 'no'} ({pipeline_reason})", file=stream)
+    runtime_allowed, runtime_reason = pipeline_runtime_allowed()
+    print(f"Pipeline Runtime Enabled: {'yes' if runtime_allowed else 'no'} ({runtime_reason})", file=stream)
+    print(f"TMA Support: {'yes' if tma_supported else 'no'} ({tma_reason})", file=stream)
     
     # Check profiling tool availability
     print("\n" + "=" * 80, file=stream)

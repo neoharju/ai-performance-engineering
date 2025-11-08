@@ -190,7 +190,7 @@ def main() -> None:
     print("=" * 70)
     print("Optimized: Memory MoE (Mixture of Experts)")
     print("=" * 70)
-    print(f"Average time: {result.mean_ms:.3f} ms")
+    print(f"Average time: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")
     print(f"Num experts: {benchmark.num_experts}, Top-k: 2")
     print(" Tip: MoE enables adaptive memory usage by activating only selected experts")
 

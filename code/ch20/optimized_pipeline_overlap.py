@@ -151,5 +151,9 @@ if __name__ == "__main__":
         config=benchmark.get_config()
     )
     result = harness.benchmark(benchmark)
-    print(f"\nOptimized Pipeline Overlap: {result.mean_ms:.3f} ms")
+    timing = result.timing
+    if timing:
+        print(f"\nOptimized Pipeline Overlap: {timing.mean_ms:.3f} ms")
+    else:
+        print("No timing data available")
 

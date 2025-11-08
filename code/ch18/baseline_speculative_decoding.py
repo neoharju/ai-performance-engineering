@@ -57,11 +57,14 @@ class BaselineSpeculativeDecodingBenchmark(Benchmark):
         hidden_dim = 256
         vocab_size = 1000
         
+        # TransformerDecoder requires embedding layer for input_ids
+        self.embedding = nn.Embedding(vocab_size, hidden_dim)
         self.model = nn.TransformerDecoder(
             nn.TransformerDecoderLayer(d_model=hidden_dim, nhead=8, batch_first=True),
             num_layers=2
         )
         self.model = self.model.to(self.device).eval()
+        self.embedding = self.embedding.to(self.device).eval()
         
         # Baseline: Standard decoding - sequential token generation
         batch_size = 4
@@ -91,8 +94,9 @@ class BaselineSpeculativeDecodingBenchmark(Benchmark):
                 current_ids = self.input_ids.clone()
                 for _ in range(self.max_length):
                     # Generate next token (sequential - no speculative decoding)
-                    # TransformerDecoder requires both tgt and memory arguments
-                    output = self.model(current_ids, self.memory)
+                    # TransformerDecoder requires embedded inputs and memory arguments
+                    tgt_embedded = self.embedding(current_ids)
+                    output = self.model(tgt_embedded, self.memory)
                     next_token = output[:, -1, :].argmax(dim=-1, keepdim=True)
                     current_ids = torch.cat([current_ids, next_token], dim=1)
                 
@@ -103,7 +107,9 @@ class BaselineSpeculativeDecodingBenchmark(Benchmark):
     def teardown(self) -> None:
         """Teardown: Clean up resources."""
         self.model = None
+        self.embedding = None
         self.input_ids = None
+        self.memory = None
         torch.cuda.empty_cache()
     
     def get_config(self) -> BenchmarkConfig:
@@ -141,9 +147,9 @@ def main() -> None:
     print("=" * 70)
     print(f"Baseline: Speculative Decoding")
     print("=" * 70)
-    print(f"Average time: {result.mean_ms:.3f} ms")
-    print(f"Median: {result.median_ms:.3f} ms")
-    print(f"Std: {result.std_ms:.3f} ms")
+    print(f"Average time: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")
+    print(f"Median: {result.timing.median_ms if result.timing else 0.0:.3f} ms")
+    print(f"Std: {result.timing.std_ms if result.timing else 0.0:.3f} ms")
 
 
 if __name__ == "__main__":

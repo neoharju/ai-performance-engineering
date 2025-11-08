@@ -8,6 +8,7 @@ Implements Benchmark protocol for harness integration.
 
 from __future__ import annotations
 
+import logging
 import sys
 from pathlib import Path
 
@@ -26,6 +27,10 @@ except ImportError:
     pass  # Continue if arch_config not available
 from typing import Optional
 
+from common.python.compile_utils import (
+    enable_tf32,
+    is_torch_compile_supported_on_device,
+)
 from common.python.benchmark_harness import (
     Benchmark,
     BenchmarkConfig,
@@ -68,6 +73,8 @@ class OptimizedAutogradCompiledBenchmark(Benchmark):
         self.criterion = None
         self.batch_size = 32
         self.hidden_dim = 1024
+        self._compiled = False
+        self._logger = logging.getLogger(__name__)
     
     def setup(self) -> None:
         """Setup: Initialize compiled model and data."""
@@ -77,14 +84,46 @@ class OptimizedAutogradCompiledBenchmark(Benchmark):
             torch.backends.cudnn.benchmark = True
             torch.backends.cudnn.deterministic = False
             # Enable TF32 for faster matmul on Ampere+ GPUs
-            torch.backends.cuda.matmul.allow_tf32 = True
-            torch.backends.cudnn.allow_tf32 = True
+            enable_tf32()
         torch.manual_seed(42)
         
         # Compile model for optimized autograd
         model = SimpleModel(hidden_dim=self.hidden_dim).to(self.device).half().train()
-        self.model = torch.compile(model, mode='reduce-overhead')  # Optimize backward pass
-        
+        support_ok, support_reason = is_torch_compile_supported_on_device(self.device.index)
+        self._compiled = False
+
+        if not support_ok and support_reason:
+            self._logger.warning(
+                "torch.compile is missing native SASS for this GPU (%s); continuing with PTX JIT fallback.",
+                support_reason,
+            )
+
+        # Wrap torch.compile in try-except to handle compilation failures gracefully
+        try:
+            self.model = torch.compile(model, mode='reduce-overhead')  # Optimize backward pass
+            self._compiled = True
+            # Warmup to trigger compilation and catch errors early
+            test_input = torch.randn(self.batch_size, self.hidden_dim, device=self.device, dtype=torch.float16)
+            for _ in range(3):
+                with torch.no_grad():
+                    _ = self.model(test_input)
+            torch.cuda.synchronize()
+        except (RuntimeError, Exception) as e:
+            # Fallback to eager mode if compilation fails
+            error_msg = str(e)
+            if (
+                "generator" in error_msg.lower()
+                or "SavedTensorHooks" in error_msg
+                or "CppCompileError" in error_msg
+            ):
+                # Known PyTorch internal bugs - fall back to eager mode
+                self._logger.warning("torch.compile failed (%s); falling back to eager mode.", error_msg.splitlines()[0])
+                self.model = model
+                self._compiled = False
+            else:
+                # Re-raise unknown errors
+                raise
+
         self.inputs = torch.randn(self.batch_size, self.hidden_dim, device=self.device, dtype=torch.float16)
         self.targets = torch.randn(self.batch_size, self.hidden_dim, device=self.device, dtype=torch.float16)
         self.optimizer = torch.optim.SGD(self.model.parameters(), lr=0.01)
@@ -118,6 +157,13 @@ class OptimizedAutogradCompiledBenchmark(Benchmark):
         """Cleanup."""
         del self.model, self.inputs, self.targets, self.optimizer, self.criterion
         torch.cuda.empty_cache()
+        if self._compiled:
+            try:
+                import torch._dynamo as _dynamo  # type: ignore
+                _dynamo.reset()
+            except Exception:
+                pass
+            self._compiled = False
     
     def get_config(self) -> BenchmarkConfig:
         """Return benchmark configuration."""
@@ -126,6 +172,7 @@ class OptimizedAutogradCompiledBenchmark(Benchmark):
             warmup=10,
             enable_memory_tracking=False,
             enable_profiling=False,
+            setup_timeout_seconds=180,  # torch.compile compilation can take 60-120 seconds
         )
     def validate_result(self) -> Optional[str]:
         """Validate benchmark result."""
@@ -146,5 +193,4 @@ if __name__ == "__main__":
         config=benchmark.get_config()
     )
     result = harness.benchmark(benchmark)
-    print(f"\nOptimized Autograd Compiled: {result.mean_ms:.3f} ms")
-
+    print(f"\nOptimized Autograd Compiled: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")

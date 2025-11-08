@@ -58,20 +58,22 @@ class OptimizedMemoryDoubleBufferingBenchmark(Benchmark):
             nn.ReLU(),
             nn.Linear(self.hidden_dim * 4, self.hidden_dim),
         )
-        self.model = self.model.to(self.device).to(dtype=torch.bfloat16)
-        # Optimization: Use FP16 for faster computation
-        if self.device.type == "cuda":
-            try:
-                self.model = self.model.half()
-            except Exception:
-                pass  # Fallback to FP32 if FP16 not supported
+        # Optimization: Use FP16 for faster computation - FAIL FAST if not supported
+        if self.device.type != "cuda":
+            raise RuntimeError("CUDA required for optimized_memory_double_buffering benchmark")
+        self.model = self.model.to(self.device).half()
         self.model.eval()
         
         # Optimization: Double buffering (ping-pong buffers)
         # Two buffers allow overlapping copy and compute operations
+        # Ensure buffer dtype matches model dtype - FAIL FAST if model has no parameters
+        params = list(self.model.parameters())
+        if not params:
+            raise RuntimeError("Model has no parameters - cannot determine dtype")
+        model_dtype = params[0].dtype
         self.buffer_a = torch.randn(
             self.batch_size, self.seq_len, self.hidden_dim,
-            device=self.device, dtype=torch.bfloat16
+            device=self.device, dtype=model_dtype
         )
         self.buffer_b = torch.empty_like(self.buffer_a)
         
@@ -152,7 +154,7 @@ def main() -> None:
     print("=" * 70)
     print("Optimized: Memory Double Buffering (Ping-Pong)")
     print("=" * 70)
-    print(f"Average time: {result.mean_ms:.3f} ms")
+    print(f"Average time: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")
     print(" Tip: Double buffering overlaps memory transfers with compute operations")
 
 if __name__ == "__main__":

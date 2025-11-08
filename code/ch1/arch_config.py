@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 import sys
 import warnings
+from pathlib import Path
 
 # Suppress NVTX threading errors BEFORE importing torch
 # This error occurs when CUDA/NVTX initializes in one thread but is used in another
@@ -75,6 +76,8 @@ except (OSError, AttributeError):
 
 import torch
 
+from common.python.compile_utils import enable_tf32
+
 # Suppress known warnings that don't affect functionality
 # TF32 deprecation warning - PyTorch internally uses old API when set_float32_matmul_precision is called
 warnings.filterwarnings("ignore", message=".*Please use the new API settings to control TF32.*", category=UserWarning)
@@ -85,34 +88,30 @@ warnings.filterwarnings("ignore", message=".*Minimum and Maximum cuda capability
 
 def _configure_torch_defaults() -> None:
     """Enable TF32 Tensor Core math and cuDNN autotune."""
-    try:
-        torch.set_float32_matmul_precision("high")
-    except (AttributeError, RuntimeError):
-        # Older PyTorch builds might not expose this helper; ignore quietly.
-        pass
-
-    if torch.backends.cuda.is_built():
-        matmul_backend = getattr(torch.backends.cuda, "matmul", None)
-        if matmul_backend is not None and hasattr(matmul_backend, "fp32_precision"):
-            try:
-                matmul_backend.fp32_precision = "tf32"
-            except RuntimeError:
-                # If the new API is unavailable or conflicts with prior configuration,
-                # leave PyTorch defaults unchanged.
-                pass
+    enable_tf32()
     if torch.backends.cudnn.is_available():
-        cudnn_conv = getattr(torch.backends.cudnn, "conv", None)
-        if cudnn_conv is not None and hasattr(cudnn_conv, "fp32_precision"):
-            try:
-                cudnn_conv.fp32_precision = "tf32"
-            except RuntimeError:
-                pass
         torch.backends.cudnn.benchmark = True
 
 
 def _configure_environment() -> None:
     """Set default TorchInductor knobs that play nicely on Blackwell."""
-    os.environ.setdefault("TORCHINDUCTOR_CACHE_DIR", ".torch_inductor")
+    # Set cache directory and ensure it exists with required subdirectories
+    cache_dir = os.environ.get("TORCHINDUCTOR_CACHE_DIR", ".torch_inductor")
+    if not os.path.isabs(cache_dir):
+        # Convert relative paths to absolute paths to avoid working directory issues
+        cache_dir = str(Path.cwd() / cache_dir)
+        os.environ["TORCHINDUCTOR_CACHE_DIR"] = cache_dir
+    
+    cache_path = Path(cache_dir)
+    try:
+        cache_path.mkdir(parents=True, exist_ok=True)
+        # Create subdirectories needed by PyTorch inductor for C++ compilation
+        # 'od' is for output directory, 'tk' is for temporary kernel files
+        (cache_path / "od").mkdir(parents=True, exist_ok=True)
+        (cache_path / "tk").mkdir(parents=True, exist_ok=True)
+    except (OSError, PermissionError):
+        pass  # If we can't create directories, PyTorch will handle it
+    
     os.environ.setdefault("TORCHINDUCTOR_FUSE_TRANSPOSE", "1")
     os.environ.setdefault("TORCHINDUCTOR_FUSE_ROTARY", "1")
     os.environ.setdefault("TORCHINDUCTOR_SCHEDULING", "1")

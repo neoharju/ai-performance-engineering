@@ -14,6 +14,13 @@ sys.path.insert(0, str(repo_root))
 
 import torch
 
+# Import arch_config early to set up torch inductor cache directory
+# This prevents C++ compilation errors when torch.compile is used
+try:
+    from ch8 import arch_config  # noqa: F401 - triggers cache setup
+except ImportError:
+    pass  # If arch_config not available, continue without it
+
 from common.python.benchmark_harness import (
     BenchmarkConfig,
 )

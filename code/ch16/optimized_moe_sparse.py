@@ -24,6 +24,7 @@ from common.python.benchmark_harness import (
     BenchmarkHarness,
     BenchmarkMode
 )
+from common.python.benchmark_utils import warn_benchmark_scaling
 
 
 def resolve_device() -> torch.device:
@@ -122,13 +123,40 @@ class OptimizedMoEBenchmark(Benchmark):
     
     def __init__(self):
         self.device = resolve_device()
-        self.model = None        self.x = None
-        # Larger workload to better demonstrate sparse routing benefits
+        self.model = None
+        self.x = None
+        # Target workload sizes for optimal demonstration of sparse routing benefits
         # Sparse routing overhead is amortized over larger workloads
-        # Reduced from batch=128, seq=16384 to avoid GPU OOM
-        # At batch=64, seq=8192: ~18GB vs batch=128, seq=16384: ~72GB worst case
-        self.batch_size = 32  # Reduced to prevent OOM
-        self.seq_len = 4096  # Reduced to prevent OOM
+        original_batch_size = 128
+        original_seq_len = 16384
+        
+        # Scale down based on available GPU memory to prevent OOM
+        # At batch=128, seq=16384: ~72GB worst case
+        # At batch=64, seq=8192: ~18GB
+        if torch.cuda.is_available():
+            total_memory_gb = torch.cuda.get_device_properties(0).total_memory / 1e9
+            if total_memory_gb >= 80:  # Large GPU - can use larger workload
+                self.batch_size = 64
+                self.seq_len = 8192
+            elif total_memory_gb >= 40:  # Medium GPU
+                self.batch_size = 32
+                self.seq_len = 4096
+            else:  # Smaller GPU
+                self.batch_size = 16
+                self.seq_len = 2048
+        else:
+            self.batch_size = 32
+            self.seq_len = 4096
+        
+        # Warn if workload was reduced
+        warn_benchmark_scaling(
+            scaling_type="MoE workload size",
+            original_values={"batch_size": original_batch_size, "seq_len": original_seq_len},
+            scaled_values={"batch_size": self.batch_size, "seq_len": self.seq_len},
+            impact_description="Smaller workloads may not fully demonstrate sparse routing benefits; speedup ratios may be lower than production-scale",
+            recommendation="For accurate production benchmarks, use GPUs with >=80GB memory or manually increase batch_size/seq_len"
+        )
+        
         self.hidden_dim = 1024
         self.num_experts = 8
         self.top_k = 2
@@ -141,16 +169,15 @@ class OptimizedMoEBenchmark(Benchmark):
             torch.backends.cudnn.benchmark = True
             torch.backends.cudnn.deterministic = False
         self.model = SimpleMoELayer(hidden_dim=self.hidden_dim, num_experts=self.num_experts, top_k=self.top_k)
-        self.model = self.model.to(self.device).to(torch.bfloat16)
-        # Optimization: Use FP16 for faster computation
-        if self.device.type == "cuda":
-            try:
-                self.model = self.model.half()
-            except Exception:
-                pass  # Fallback to FP32 if FP16 not supported
+        self.model = self.model.to(self.device)
+        # Optimization: Use FP16 for faster computation - FAIL FAST if not supported
+        if self.device.type != "cuda":
+            raise RuntimeError("CUDA required for optimized_moe_sparse benchmark")
+        self.model = self.model.half()
+        input_dtype = torch.float16
         
         self.model.eval()
-        self.x = torch.randn(self.batch_size, self.seq_len, self.hidden_dim, device=self.device, dtype=torch.bfloat16)
+        self.x = torch.randn(self.batch_size, self.seq_len, self.hidden_dim, device=self.device, dtype=input_dtype)
     
     def benchmark_fn(self) -> None:
         """Function to benchmark."""
@@ -207,9 +234,9 @@ def main() -> None:
     print("Benefit: Only computes necessary experts (2x instead of 8x)")
     print("Note: Same workload size as baseline\n")
     
-    print(f"Average time: {result.mean_ms:.3f} ms")
-    print(f"Median: {result.median_ms:.3f} ms")
-    print(f"Std: {result.std_ms:.3f} ms")
+    print(f"Average time: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")
+    print(f"Median: {result.timing.median_ms if result.timing else 0.0:.3f} ms")
+    print(f"Std: {result.timing.std_ms if result.timing else 0.0:.3f} ms")
     print(f"Experts used: {benchmark.top_k} (sparse routing)")
     print("Status: Sparse routing (efficient)")
     print(f"Speedup: ~{benchmark.num_experts / benchmark.top_k:.1f}x over dense routing")

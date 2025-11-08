@@ -49,7 +49,7 @@
 #
 # After running this script, you can:
 #   - Run examples: python3 ch1/performance_basics.py
-#   - Test benchmarks: python benchmark.py
+#   - Drive the benchmark suite: python tools/cli/benchmark_cli.py run
 #   - Capture peak performance: python tools/benchmarking/benchmark_peak.py
 #   - Verify examples: python3 tools/verification/verify_all_benchmarks.py
 #
@@ -660,7 +660,7 @@ if [ -f "$REQUIREMENTS_FILE" ]; then
             nvidia-ml-py3 nvidia-ml-py==12.560.30 psutil==7.1.0 GPUtil==1.4.0 py-cpuinfo==9.0.0 \
             numpy==2.1.2 pandas==2.3.2 scikit-learn==1.7.2 pillow==11.3.0 \
             matplotlib==3.10.6 seaborn==0.13.2 tensorboard==2.20.0 wandb==0.22.0 plotly==6.3.0 bokeh==3.8.0 dash==3.2.0 \
-            jupyter==1.1.1 ipykernel==6.30.1 black==25.9.0 flake8==7.3.0 mypy==1.18.2 pytest==8.3.4 \
+            jupyter==1.1.1 ipykernel==6.30.1 black==25.9.0 flake8==7.3.0 mypy==1.18.2 pytest==8.3.4 typer==0.12.0 rich==13.7.0 \
             transformers==4.40.2 datasets==2.18.0 accelerate==0.29.0 sentencepiece==0.2.0 tokenizers==0.19.1 \
             onnx==1.19.0 onnxruntime-gpu==1.23.0 \
             py-spy==0.4.1 memory-profiler==0.61.0 line-profiler==5.0.0 pyinstrument==5.1.1 snakeviz==2.2.2 \
@@ -674,7 +674,7 @@ else
         nvidia-ml-py3 nvidia-ml-py==12.560.30 psutil==7.1.0 GPUtil==1.4.0 py-cpuinfo==9.0.0 \
         numpy==2.1.2 pandas==2.3.2 scikit-learn==1.7.2 pillow==11.3.0 \
         matplotlib==3.10.6 seaborn==0.13.2 tensorboard==2.20.0 wandb==0.22.0 plotly==6.3.0 bokeh==3.8.0 dash==3.2.0 \
-        jupyter==1.1.1 ipykernel==6.30.1 black==25.9.0 flake8==7.3.0 mypy==1.18.2 pytest==8.3.4 \
+        jupyter==1.1.1 ipykernel==6.30.1 black==25.9.0 flake8==7.3.0 mypy==1.18.2 pytest==8.3.4 typer==0.12.0 rich==13.7.0 \
         transformers==4.40.2 datasets==2.18.0 accelerate==0.29.0 sentencepiece==0.2.0 tokenizers==0.19.1 \
         onnx==1.19.0 onnxruntime-gpu==1.23.0 \
         py-spy==0.4.1 memory-profiler==0.61.0 line-profiler==5.0.0 pyinstrument==5.1.1 snakeviz==2.2.2 \

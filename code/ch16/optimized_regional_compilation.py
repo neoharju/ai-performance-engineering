@@ -12,6 +12,7 @@ avoiding the graph explosion that causes hangs in the baseline.
 
 from __future__ import annotations
 
+from common.python import compile_utils as _compile_utils_patch  # noqa: F401
 import sys
 from pathlib import Path
 
@@ -119,10 +120,11 @@ class OptimizedRegionalCompilationBenchmark(Benchmark):
     
     def __init__(self):
         self.device = resolve_device()
-        self.model = None        self.config = None
+        self.model = None
+        self.config = None
         self.compiled_layers: List[int] = []
     
-    def setup(self, config: BenchmarkConfig) -> None:
+    def setup(self) -> None:
         """Create model and apply regional compilation."""
         # Create a large model (~40B parameters)
         n_layers = 48
@@ -178,7 +180,7 @@ class OptimizedRegionalCompilationBenchmark(Benchmark):
             self.model = model
             self.compiled_layers = []
         
-        self.config = config
+        self.config = self.get_config()
     
     def setup_with_custom_regions(self, config: BenchmarkConfig, layer_indices: List[int]) -> None:
         """Alternative: Manually specify which layers to compile (regional compilation)."""
@@ -212,7 +214,7 @@ class OptimizedRegionalCompilationBenchmark(Benchmark):
             self.model = model
             self.compiled_layers = []
         
-        self.config = config
+        self.config = self.get_config()
     
     def run(self, input_data: Optional[torch.Tensor] = None, compare_eager: bool = True) -> torch.Tensor:
         """Run inference and optionally compare with eager mode."""
@@ -286,6 +288,20 @@ class OptimizedRegionalCompilationBenchmark(Benchmark):
         self.model = None
         if self.device.type == "cuda":
             torch.cuda.empty_cache()
+    
+    def get_config(self) -> BenchmarkConfig:
+        """Return benchmark configuration."""
+        return BenchmarkConfig(
+            iterations=1,
+            warmup=0,
+            setup_timeout_seconds=180,  # torch.compile compilation can take 60-120 seconds, use 180s for safety
+            measurement_timeout_seconds=30,  # Increased timeout for inference
+        )
+
+
+def get_benchmark() -> Benchmark:
+    """Factory function for benchmark discovery."""
+    return OptimizedRegionalCompilationBenchmark()
 
 
 def main():
@@ -300,7 +316,7 @@ def main():
     print("Example 1: Automatic Regional Compilation (smart_compile)")
     print("=" * 80)
     
-    benchmark.setup(config)
+    benchmark.setup()
     output = benchmark.run(compare_eager=True)
     print(f"\n[OK] Optimized completed: output shape {output.shape}")
     print(f"   Compiled layers: {benchmark.compiled_layers}")

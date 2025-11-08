@@ -6,10 +6,6 @@
 #include <cuda_runtime.h>
 #include <iostream>
 
-#if defined(CUDART_VERSION) && (CUDART_VERSION >= 13000)
-#include "../common/cuda13_teasers.cuh"
-#endif
-
 //-------------------------------------------------------
 // Kernel: my2DKernel running on the device (GPU)
 // - input : device pointer to float array of size width×height
@@ -79,13 +75,5 @@ int main() {
     cudaStreamDestroy(stream);
     cudaFreeHost(h_image);
     
-#if defined(CUDART_VERSION) && (CUDART_VERSION >= 13000)
-    // CUDA 13 teasers for Blackwell readers.
-    cuda13_teasers::stream_ordered_teaser();
-    cuda13_teasers::tma_teaser();
-#else
-    std::cout << "CUDA 13 teasers require CUDA 13 headers; see later chapters for full demos.\n";
-#endif
-
     return 0;
 }

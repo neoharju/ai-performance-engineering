@@ -82,10 +82,13 @@ void static_work_distribution(torch::Tensor input, torch::Tensor output, int ite
     
     {
         PROFILE_KERNEL_LAUNCH("static_work_distribution");
+        // Use const_cast to work around PyTorch ABI issues with const data_ptr template
+        const float* input_ptr = input.data_ptr<float>();
+        float* output_ptr = output.data_ptr<float>();
         for (int i = 0; i < iterations; ++i) {
             compute_static_kernel<<<num_blocks, threads_per_block, 0, stream>>>(
-                input.data_ptr<const float>(),
-                output.data_ptr<float>(),
+                input_ptr,
+                output_ptr,
                 n
             );
         }
@@ -115,14 +118,17 @@ void dynamic_work_queue(torch::Tensor input, torch::Tensor output, int iteration
     
     {
         PROFILE_KERNEL_LAUNCH("dynamic_work_queue");
+        // Use const_cast to work around PyTorch ABI issues with const data_ptr template
+        const float* input_ptr = input.data_ptr<float>();
+        float* output_ptr = output.data_ptr<float>();
         for (int i = 0; i < iterations; ++i) {
             // Reset counter before each iteration
             unsigned zero = 0;
             CHECK_CUDA(cudaMemcpyToSymbol(g_work_index, &zero, sizeof(unsigned)));
             
             compute_dynamic_kernel<<<num_blocks, threads_per_block, 0, stream>>>(
-                input.data_ptr<const float>(),
-                output.data_ptr<float>(),
+                input_ptr,
+                output_ptr,
                 n
             );
         }

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Dict, Optional
+from types import ModuleType
 import torch
 
 try:
@@ -20,7 +21,7 @@ except ImportError:
 
 
 # Module-level cache for loaded extensions
-_EXTENSIONS: Dict[str, torch.utils.cpp_extension.CppExtension] = {}
+_EXTENSIONS: Dict[str, ModuleType] = {}
 
 
 def load_cuda_extension(
@@ -30,7 +31,7 @@ def load_cuda_extension(
     include_dirs: Optional[list[Path]] = None,
     extra_cuda_cflags: Optional[list[str]] = None,
     verbose: bool = False,
-) -> torch.utils.cpp_extension.CppExtension:
+) -> ModuleType:
     """Load a CUDA extension with automatic stale lock cleanup.
     
     Args:
@@ -105,4 +106,3 @@ def load_cuda_extension(
             f"Source: {cuda_source_file}\n"
             f"Build dir: {build_dir}"
         ) from e
-

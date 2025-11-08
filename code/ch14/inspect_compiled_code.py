@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+from common.python import compile_utils as _compile_utils_patch  # noqa: F401
 """
 Inspecting torch.compile Generated Code
 

@@ -1,7 +1,8 @@
 // nvtx_profiling.cu -- NVTX ranges for inference pipelines (CUDA 13 / NVTX v3 header-only).
 // Build (Linux):
 //   nvcc nvtx_profiling.cu -std=c++17 -O3 -lineinfo -o nvtx_profiling
-// NOTE: NVTX v3 is header-only on CUDA 12.9+/13.0; do NOT link -lnvToolsExt.
+// NOTE: NVTX v3 is header-only on CUDA 12.9+/13.0; we ship a stub -lnvToolsExt
+// archive so existing build systems can continue linking with the familiar flag.
 
 #include <cuda_runtime.h>
 #include <nvtx3/nvToolsExt.h>

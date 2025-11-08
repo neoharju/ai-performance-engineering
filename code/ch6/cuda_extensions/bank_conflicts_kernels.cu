@@ -69,6 +69,16 @@ void bank_conflicts(torch::Tensor output, torch::Tensor input) {
             input.data_ptr<float>(),
             N
         );
+        // Check for kernel launch errors
+        cudaError_t err = cudaGetLastError();
+        if (err != cudaSuccess) {
+            TORCH_CHECK(false, "CUDA kernel launch failed: ", cudaGetErrorString(err));
+        }
+        // Synchronize to catch kernel execution errors
+        err = cudaStreamSynchronize(stream);
+        if (err != cudaSuccess) {
+            TORCH_CHECK(false, "CUDA kernel execution failed: ", cudaGetErrorString(err));
+        }
     }
 }
 
@@ -92,6 +102,16 @@ void bank_conflicts_padded(torch::Tensor output, torch::Tensor input) {
             input.data_ptr<float>(),
             N
         );
+        // Check for kernel launch errors
+        cudaError_t err = cudaGetLastError();
+        if (err != cudaSuccess) {
+            TORCH_CHECK(false, "CUDA kernel launch failed: ", cudaGetErrorString(err));
+        }
+        // Synchronize to catch kernel execution errors
+        err = cudaStreamSynchronize(stream);
+        if (err != cudaSuccess) {
+            TORCH_CHECK(false, "CUDA kernel execution failed: ", cudaGetErrorString(err));
+        }
     }
 }
 

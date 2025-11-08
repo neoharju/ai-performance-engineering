@@ -43,9 +43,14 @@ class BaselineSpeculativeDecodingBenchmark(Benchmark):
     def __init__(self):
         self.device = resolve_device()
         self.model = None
+        self.embedding = None
         self.input_ids = None
         self.memory = None
         self.max_length = 20
+        self.hidden_dim = 256
+        self.vocab_size = 1000
+        self.batch_size = 4
+        self.seq_len = 10
     
     def setup(self) -> None:
         """Setup: Initialize model and input."""
@@ -54,21 +59,37 @@ class BaselineSpeculativeDecodingBenchmark(Benchmark):
         # Speculative decoding predicts multiple tokens in parallel
         # This baseline does not use speculative decoding
         
-        hidden_dim = 256
-        vocab_size = 1000
-        
         self.model = nn.TransformerDecoder(
-            nn.TransformerDecoderLayer(d_model=hidden_dim, nhead=8, batch_first=True),
+            nn.TransformerDecoderLayer(d_model=self.hidden_dim, nhead=8, batch_first=True),
             num_layers=2
         )
-        self.model = self.model.to(self.device).eval()
+        self.model = self.model.to(self.device)
+        if self.device.type == "cuda":
+            self.model = self.model.half()
+        self.model.eval()
+        
+        self.embedding = nn.Embedding(self.vocab_size, self.hidden_dim).to(self.device)
+        if self.device.type == "cuda":
+            self.embedding = self.embedding.half()
+        
+        decoder_dtype = next(self.model.parameters()).dtype
         
         # Baseline: Standard decoding - sequential token generation
-        batch_size = 4
-        seq_len = 10
-        self.input_ids = torch.randint(0, vocab_size, (batch_size, seq_len), device=self.device)
+        self.input_ids = torch.randint(
+            0,
+            self.vocab_size,
+            (self.batch_size, self.seq_len),
+            device=self.device,
+            dtype=torch.long,
+        )
         # Create dummy memory tensor for TransformerDecoder (encoder output)
-        self.memory = torch.randn(batch_size, seq_len, hidden_dim, device=self.device)
+        self.memory = torch.randn(
+            self.batch_size,
+            self.seq_len,
+            self.hidden_dim,
+            device=self.device,
+            dtype=decoder_dtype,
+        )
         torch.cuda.synchronize()
     
     def benchmark_fn(self) -> None:
@@ -91,8 +112,9 @@ class BaselineSpeculativeDecodingBenchmark(Benchmark):
                 current_ids = self.input_ids.clone()
                 for _ in range(self.max_length):
                     # Generate next token (sequential - no speculative decoding)
+                    tgt_embeddings = self.embedding(current_ids).to(self.memory.dtype)
                     # TransformerDecoder requires both tgt and memory arguments
-                    output = self.model(current_ids, self.memory)
+                    output = self.model(tgt_embeddings, self.memory)
                     next_token = output[:, -1, :].argmax(dim=-1, keepdim=True)
                     current_ids = torch.cat([current_ids, next_token], dim=1)
                 
@@ -103,6 +125,7 @@ class BaselineSpeculativeDecodingBenchmark(Benchmark):
     def teardown(self) -> None:
         """Teardown: Clean up resources."""
         self.model = None
+        self.embedding = None
         self.input_ids = None
         torch.cuda.empty_cache()
     
@@ -140,9 +163,9 @@ def main() -> None:
     print("=" * 70)
     print(f"Baseline: speculative_decoding")
     print("=" * 70)
-    print(f"Average time: {result.mean_ms:.3f} ms")
-    print(f"Median: {result.median_ms:.3f} ms")
-    print(f"Std: {result.std_ms:.3f} ms")
+    print(f"Average time: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")
+    print(f"Median: {result.timing.median_ms if result.timing else 0.0:.3f} ms")
+    print(f"Std: {result.timing.std_ms if result.timing else 0.0:.3f} ms")
 
 
 if __name__ == "__main__":

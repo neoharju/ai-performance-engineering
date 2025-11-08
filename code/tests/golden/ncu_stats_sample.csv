@@ -1,0 +1,8 @@
+"gpu__time_duration.avg","10.500"
+"sm__throughput.avg.pct_of_peak_sustained_elapsed","85.25"
+"dram__throughput.avg.pct_of_peak_sustained_elapsed","60.75"
+"l2__throughput.avg.pct_of_peak_sustained_elapsed","70.50"
+"sm__throughput.avg.pct_of_peak_sustained_elapsed","90.00"
+"sm__sass_thread_inst_executed_op_dadd_pred_on.sum","123456789"
+"dram__bytes_read.sum","9876543210"
+

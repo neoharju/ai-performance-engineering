@@ -100,13 +100,23 @@ class BaselinePagedAttentionBenchmark(Benchmark):
                 # Memory is allocated contiguously, causing fragmentation
                 # Cannot efficiently handle variable-length sequences
                 
+                model_dtype = next(self.model.parameters()).dtype
+                
                 for step, query in enumerate(self.inputs):
-                    # Compute new K, V
-                    _, k_new, v_new = self.model(query, query, query, need_weights=False)
+                    query = query.to(dtype=model_dtype)
+                    
+                    # Compute new Q/K/V projections manually to expose tensors
+                    qkv = F.linear(query, self.model.in_proj_weight, self.model.in_proj_bias)
+                    batch_size, seq_len = query.shape[:2]
+                    num_heads = self.model.num_heads
+                    head_dim = self.model.embed_dim // num_heads
+                    
+                    qkv = qkv.reshape(batch_size, seq_len, 3, num_heads, head_dim)
+                    q, k, v = qkv.unbind(dim=2)  # Each: (batch, seq, num_heads, head_dim)
                     
                     # Store in contiguous cache (inefficient for variable lengths)
-                    self.kv_cache['k'][:, step:step+1, :, :] = k_new
-                    self.kv_cache['v'][:, step:step+1, :, :] = v_new
+                    self.kv_cache['k'][:, step:step+seq_len, :, :] = k
+                    self.kv_cache['v'][:, step:step+seq_len, :, :] = v
                     
                     # Attention computation using all cached K, V
                     k_all = self.kv_cache['k'][:, :step+1, :, :]
@@ -157,9 +167,9 @@ def main() -> None:
     print("=" * 70)
     print(f"Baseline: paged_attention")
     print("=" * 70)
-    print(f"Average time: {result.mean_ms:.3f} ms")
-    print(f"Median: {result.median_ms:.3f} ms")
-    print(f"Std: {result.std_ms:.3f} ms")
+    print(f"Average time: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")
+    print(f"Median: {result.timing.median_ms if result.timing else 0.0:.3f} ms")
+    print(f"Std: {result.timing.std_ms if result.timing else 0.0:.3f} ms")
 
 
 if __name__ == "__main__":

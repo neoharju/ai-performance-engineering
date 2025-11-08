@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import torch
 import torch.nn as nn
-from typing import Literal, Optional, Union
+from typing import Callable, Dict, Literal, Optional, Union, cast
+
+QuantizeFn = Callable[..., Union[torch.Tensor, tuple[torch.Tensor, float]]]
 
 
 def quantize_to_fp8(tensor: torch.Tensor, return_scale: bool = False) -> Union[torch.Tensor, tuple[torch.Tensor, float]]:
@@ -99,6 +101,30 @@ def quantize_to_fp4(tensor: torch.Tensor, return_scale: bool = False) -> Union[t
     return quantized
 
 
+def _ensure_scale_dict(module: nn.Module) -> Dict[str, float]:
+    """Ensure module has a mutable dict for quantization scales."""
+    existing = getattr(module, "_quantization_scales", None)
+    if not isinstance(existing, dict):
+        existing = {}
+        setattr(module, "_quantization_scales", existing)
+    return cast(Dict[str, float], existing)
+
+
+def _scale_to_float(scale: Union[float, torch.Tensor]) -> float:
+    """Convert scale value (float or tensor scalar) to float."""
+    if isinstance(scale, torch.Tensor):
+        return float(scale.item())
+    return float(scale)
+
+
+def _quantize_tensor_only(quantize_fn: QuantizeFn, tensor: torch.Tensor) -> torch.Tensor:
+    """Call quantize_fn without returning scale and ensure tensor result."""
+    result = quantize_fn(tensor)
+    if isinstance(result, tuple):
+        return result[0]
+    return result
+
+
 def quantize_model_to_fp8(
     model: nn.Module,
     device: torch.device,
@@ -129,21 +155,19 @@ def quantize_model_to_fp8(
                 if store_scales:
                     quantized_weight, weight_scale = quantize_fn(module.weight.data, return_scale=True)
                     module.weight.data = quantized_weight
-                    if not hasattr(module, '_quantization_scales'):
-                        module._quantization_scales = {}
-                    module._quantization_scales['weight'] = weight_scale
+                    scale_dict = _ensure_scale_dict(module)
+                    scale_dict['weight'] = _scale_to_float(weight_scale)
                 else:
-                    module.weight.data = quantize_fn(module.weight.data)
+                    module.weight.data = _quantize_tensor_only(quantize_fn, module.weight.data)
                 
                 if module.bias is not None:
                     if store_scales:
                         quantized_bias, bias_scale = quantize_fn(module.bias.data, return_scale=True)
                         module.bias.data = quantized_bias
-                        if not hasattr(module, '_quantization_scales'):
-                            module._quantization_scales = {}
-                        module._quantization_scales['bias'] = bias_scale
+                        scale_dict = _ensure_scale_dict(module)
+                        scale_dict['bias'] = _scale_to_float(bias_scale)
                     else:
-                        module.bias.data = quantize_fn(module.bias.data)
+                        module.bias.data = _quantize_tensor_only(quantize_fn, module.bias.data)
     
     # Convert model to BF16 for computation (FP8/FP4 weights stored as BF16)
     model = model.to(device).to(torch.bfloat16).eval()

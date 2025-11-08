@@ -50,7 +50,7 @@ import platform
 import subprocess
 import torch
 import psutil
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 
 # GPU Architecture mappings
@@ -77,7 +77,7 @@ GPU_ARCH_INFO = {
 }
 
 
-def detect_cpu_info() -> Dict[str, any]:
+def detect_cpu_info() -> Dict[str, Any]:
     """
     Detect CPU architecture and topology.
     
@@ -145,7 +145,7 @@ def get_gpu_arch_info(major: int, minor: int) -> Dict[str, str]:
     })
 
 
-def detect_interconnect_type(cpu_info: Dict[str, any], gpu_info: Dict[str, any]) -> str:
+def detect_interconnect_type(cpu_info: Dict[str, Any], gpu_info: Dict[str, Any]) -> str:
     """
     Detect the CPU-GPU interconnect type.
     
@@ -176,7 +176,7 @@ def detect_interconnect_type(cpu_info: Dict[str, any], gpu_info: Dict[str, any])
     return "PCIe (~16-128 GB/s)"
 
 
-def detect_system_topology() -> Dict[str, any]:
+def detect_system_topology() -> Dict[str, Any]:
     """
     Detect complete system CPU-GPU topology.
     
@@ -263,7 +263,7 @@ def detect_system_topology() -> Dict[str, any]:
     return topology
 
 
-def print_topology_info(topology: Dict[str, any]) -> None:
+def print_topology_info(topology: Dict[str, Any]) -> None:
     """Print detailed topology information."""
     print("=" * 80)
     print("CPU-GPU System Topology")
@@ -318,7 +318,7 @@ def print_topology_info(topology: Dict[str, any]) -> None:
     print("=" * 80)
 
 
-def set_cpu_affinity_for_gpu(gpu_id: int, topology: Dict[str, any]) -> bool:
+def set_cpu_affinity_for_gpu(gpu_id: int, topology: Dict[str, Any]) -> bool:
     """
     Set CPU affinity for current process based on GPU assignment.
     
@@ -406,7 +406,7 @@ def allocate_tensor_with_numa_hint(
     return tensor
 
 
-def demonstrate_hybrid_placement(topology: Dict[str, any]) -> None:
+def demonstrate_hybrid_placement(topology: Dict[str, Any]) -> None:
     """
     Demonstrate optimal tensor placement based on system topology.
     """
@@ -505,7 +505,7 @@ def demonstrate_hybrid_placement(topology: Dict[str, any]) -> None:
         print("  Overflow KV cache: CPU memory (with explicit management)")
 
 
-def demonstrate_multi_gpu_placement(topology: Dict[str, any]) -> None:
+def demonstrate_multi_gpu_placement(topology: Dict[str, Any]) -> None:
     """
     Demonstrate NUMA-aware placement for multi-GPU training.
     """

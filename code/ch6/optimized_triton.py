@@ -16,6 +16,13 @@ if str(repo_root) not in sys.path:
 
 import torch
 
+# Import arch_config to apply Triton patch for sm_12x support
+# The patch removes 'a' suffix from sm_121a -> sm_121 for ptxas compatibility
+try:
+    import arch_config  # noqa: F401
+except ImportError:
+    pass  # Continue if arch_config not available
+
 try:
     import triton
     import triton.language as tl
@@ -56,12 +63,13 @@ if TRITON_AVAILABLE:
         output = x + y
         tl.store(output_ptr + offsets, output, mask=mask)
 
-class OptimizedTritonBenchmark:
+class OptimizedTritonBenchmark(Benchmark):
     """Optimized: Uses Triton kernels for efficient GPU operations."""
     
     def __init__(self):
         self.device = resolve_device()
         self.input = None
+        self.input2 = None  # Second input for addition
         self.output = None
         self.N = 1_000_000
     
@@ -74,6 +82,7 @@ class OptimizedTritonBenchmark:
         # Provides Python-like syntax for CUDA kernel development
         # Enables explicit optimization of memory access and compute patterns
         self.input = torch.randn(self.N, device=self.device, dtype=torch.float32)
+        self.input2 = torch.randn(self.N, device=self.device, dtype=torch.float32)  # Second input for addition
         self.output = torch.empty(self.N, device=self.device, dtype=torch.float32)
         torch.cuda.synchronize()
     
@@ -93,9 +102,11 @@ class OptimizedTritonBenchmark:
             # Enables explicit optimization of memory access patterns
             # Blocksize optimization for better GPU utilization
             if TRITON_AVAILABLE:
+                # arch_config.py patches Triton to handle sm_12x architectures (removes 'a' suffix from sm_121a)
                 grid = lambda meta: (triton.cdiv(self.N, meta['BLOCK_SIZE']),)
                 triton_add_kernel[grid](
                     self.input,
+                    self.input2,  # Second input for addition
                     self.output,
                     self.N,
                     BLOCK_SIZE=1024,
@@ -106,12 +117,13 @@ class OptimizedTritonBenchmark:
             else:
                 # Fallback if Triton not available
                 # Use optimized PyTorch operations
-                self.output = self.input * 2.0 + 1.0
+                self.output = (self.input + self.input2) * 2.0 + 1.0
 
     
     def teardown(self) -> None:
         """Teardown: Clean up resources."""
         self.input = None
+        self.input2 = None
         self.output = None
         torch.cuda.empty_cache()
     
@@ -141,7 +153,7 @@ if __name__ == '__main__':
         config=benchmark.get_config()
     )
     result = harness.benchmark(benchmark)
-    print(f"\nOptimized Triton: {result.mean_ms:.3f} ms")
+    print(f"\nOptimized Triton: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")
     if TRITON_AVAILABLE:
         print("  Tip: Triton enables efficient GPU kernel programming with Python-like syntax")
     else:

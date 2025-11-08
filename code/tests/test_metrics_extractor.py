@@ -1,8 +1,14 @@
 """Unit tests for metrics_extractor module."""
 
-import pytest
+import sys
 from pathlib import Path
+import pytest
 from unittest.mock import Mock, patch, MagicMock
+
+# Add repo root to path
+repo_root = Path(__file__).parent.parent
+if str(repo_root) not in sys.path:
+    sys.path.insert(0, str(repo_root))
 
 from common.python.metrics_extractor import (
     NsysMetrics,
@@ -225,4 +231,126 @@ class TestExtractNcuMetrics:
         
         # Should read from companion CSV
         assert metrics.kernel_time_ms == 20.0
+
+
+class TestGoldenFileMetrics:
+    """Golden file tests for metric extraction with real sample data."""
+    
+    def test_nsys_csv_golden(self):
+        """Golden test for nsys CSV parsing with realistic data from golden file."""
+        # Read from actual golden file
+        golden_file = Path(__file__).parent / "golden" / "nsys_stats_sample.csv"
+        if not golden_file.exists():
+            pytest.skip(f"Golden file not found: {golden_file}")
+        
+        nsys_csv = golden_file.read_text()
+        result = _parse_nsys_csv(nsys_csv)
+        
+        # Verify expected metrics are extracted
+        assert "nsys_total_gpu_time_ms" in result
+        assert result["nsys_total_gpu_time_ms"] == 1234.56
+        
+        # Verify raw metrics contain other values
+        assert len(result) > 0
+    
+    def test_ncu_csv_golden(self):
+        """Golden test for ncu CSV parsing with realistic data from golden file."""
+        # Read from actual golden file
+        golden_file = Path(__file__).parent / "golden" / "ncu_stats_sample.csv"
+        if not golden_file.exists():
+            pytest.skip(f"Golden file not found: {golden_file}")
+        
+        ncu_csv = golden_file.read_text()
+        result = _parse_ncu_csv(ncu_csv)
+        
+        # Verify expected metrics are extracted
+        assert "gpu__time_duration.avg" in result
+        assert result["gpu__time_duration.avg"] == 10.5
+        assert "sm__throughput.avg.pct_of_peak_sustained_elapsed" in result
+        assert result["sm__throughput.avg.pct_of_peak_sustained_elapsed"] == 90.0  # Last value wins
+    
+    def test_nsys_extraction_golden(self, tmp_path):
+        """Golden test for full nsys extraction with sample report using golden file."""
+        # Read golden file content
+        golden_file = Path(__file__).parent / "golden" / "nsys_stats_sample.csv"
+        if not golden_file.exists():
+            pytest.skip(f"Golden file not found: {golden_file}")
+        
+        nsys_rep = tmp_path / "test.nsys-rep"
+        nsys_rep.touch()
+        
+        # Use golden file content as subprocess output
+        nsys_stats_output = golden_file.read_text()
+        
+        with patch('subprocess.run') as mock_run:
+            mock_run.return_value = Mock(
+                returncode=0,
+                stdout=nsys_stats_output
+            )
+            
+            metrics = extract_nsys_metrics(nsys_rep)
+            
+            assert metrics.total_gpu_time_ms == 1234.56  # From golden file
+            assert metrics.raw_metrics is not None
+    
+    def test_ncu_extraction_golden(self, tmp_path):
+        """Golden test for full ncu extraction with sample report using golden file."""
+        # Read golden file content
+        golden_file = Path(__file__).parent / "golden" / "ncu_stats_sample.csv"
+        if not golden_file.exists():
+            pytest.skip(f"Golden file not found: {golden_file}")
+        
+        ncu_rep = tmp_path / "test.ncu-rep"
+        ncu_rep.touch()
+        
+        # Use golden file content as subprocess output
+        ncu_stats_output = golden_file.read_text()
+        
+        with patch('subprocess.run') as mock_run:
+            mock_run.return_value = Mock(
+                returncode=0,
+                stdout=ncu_stats_output
+            )
+            
+            metrics = extract_ncu_metrics(ncu_rep)
+            
+            assert metrics.kernel_time_ms == 10.5  # From golden file
+            assert metrics.sm_throughput_pct == 90.0  # Last value in golden file
+            assert metrics.dram_throughput_pct == 60.75  # From golden file
+    
+    def test_nsys_csv_edge_cases(self):
+        """Test nsys CSV parsing with edge cases."""
+        # Test with extra whitespace
+        csv1 = "Metric,Value\n  Total GPU Time  ,  123.45  "
+        result1 = _parse_nsys_csv(csv1)
+        assert result1.get("nsys_total_gpu_time_ms") == 123.45
+        
+        # Test with different line endings
+        csv2 = "Metric,Value\r\nTotal GPU Time,456.78"
+        result2 = _parse_nsys_csv(csv2)
+        assert result2.get("nsys_total_gpu_time_ms") == 456.78
+        
+        # Test with missing header
+        csv3 = "Total GPU Time,789.01"
+        result3 = _parse_nsys_csv(csv3)
+        # Should handle gracefully
+        assert isinstance(result3, dict)
+    
+    def test_ncu_csv_edge_cases(self):
+        """Test ncu CSV parsing with edge cases."""
+        # Test with escaped quotes
+        csv1 = '"gpu__time_duration.avg","10.5"'
+        result1 = _parse_ncu_csv(csv1)
+        assert result1.get("gpu__time_duration.avg") == 10.5
+        
+        # Test with scientific notation
+        csv2 = '"gpu__time_duration.avg","1.5e-3"'
+        result2 = _parse_ncu_csv(csv2)
+        assert result2.get("gpu__time_duration.avg") == 0.0015
+        
+        # Test with empty values
+        csv3 = '"gpu__time_duration.avg",""'
+        result3 = _parse_ncu_csv(csv3)
+        # Should handle gracefully
+        assert isinstance(result3, dict)
 

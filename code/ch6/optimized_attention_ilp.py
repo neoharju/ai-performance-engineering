@@ -65,6 +65,13 @@ class OptimizedAttentionILPBenchmark(Benchmark):
         # not PyTorch compilation. ILP is achieved through kernel design.
         
         self.input = torch.randn(4, 32, 256, device=self.device)
+        # Convert input to match model dtype (FP16 if model was converted)
+        try:
+            first_param = next(self.model.parameters())
+            if first_param.dtype == torch.float16:
+                self.input = self.input.half()
+        except StopIteration:
+            pass  # No parameters, use default dtype
         torch.cuda.synchronize()
     
     def benchmark_fn(self) -> None:
@@ -120,5 +127,5 @@ if __name__ == '__main__':
     )
     result = harness.benchmark(benchmark)
     
-    print(f"\nOptimized Attention ILP: {result.mean_ms:.3f} ms")
+    print(f"\nOptimized Attention ILP: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")
     print(" Tip: Optimized attention operations maximize instruction-level parallelism")

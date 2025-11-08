@@ -48,7 +48,8 @@ class OptimizedFlashAttentionBenchmark(Benchmark):
     
     def __init__(self):
         self.device = resolve_device()
-        self.model = None        self.input = None
+        self.model = None
+        self.input = None
     
     def setup(self) -> None:
         """Setup: Initialize FlashAttention model."""
@@ -151,9 +152,9 @@ def main() -> None:
     print("=" * 70)
     print(f"Optimized: Flash Attention")
     print("=" * 70)
-    print(f"Average time: {result.mean_ms:.3f} ms")
-    print(f"Median: {result.median_ms:.3f} ms")
-    print(f"Std: {result.std_ms:.3f} ms")
+    print(f"Average time: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")
+    print(f"Median: {result.timing.median_ms if result.timing else 0.0:.3f} ms")
+    print(f"Std: {result.timing.std_ms if result.timing else 0.0:.3f} ms")
 
 
 if __name__ == "__main__":

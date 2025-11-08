@@ -11,6 +11,7 @@ Usage:
     python benchmark.py [--chapter ch1|all] [--format json|markdown|both]
 """
 
+from common.python import compile_utils as _compile_utils_patch  # noqa: F401
 import sys
 from pathlib import Path
 import json
@@ -38,6 +39,23 @@ import tempfile
 from typing import List, Tuple, Any
 from common.python.chapter_compare_template import discover_benchmarks, load_benchmark
 from common.python.benchmark_harness import BenchmarkHarness, BenchmarkMode, BenchmarkConfig
+from common.python.run_manifest import reset_gpu_state
+try:
+    from common.python.cuda_binary_benchmark import detect_supported_arch
+except ImportError:  # pragma: no cover - optional dependency during docs builds
+    detect_supported_arch = None  # type: ignore[assignment]
+
+# Import logger
+try:
+    from common.python.logger import get_logger, setup_logging
+    logger = get_logger(__name__)
+    LOGGER_AVAILABLE = True
+except ImportError:
+    import logging
+    logger = logging.getLogger(__name__)
+    LOGGER_AVAILABLE = False
+    def setup_logging(*args, **kwargs):
+        pass
 
 # Check if torch.profiler is available at module level
 TORCH_PROFILER_AVAILABLE = hasattr(torch, 'profiler') and hasattr(torch.profiler, 'profile')
@@ -54,6 +72,29 @@ except ImportError:
         return {}
     def extract_from_nsys_report(path: Path) -> Dict[str, float]:
         return {}
+
+
+def reset_gpu_via_script(reason: str) -> None:
+    """Invoke tools/reset_gpu.py with the provided reason."""
+    reset_script = Path(__file__).resolve().parents[1] / "tools" / "reset_gpu.py"
+    if not reset_script.exists():
+        logger.warning("GPU reset script not found at %s", reset_script)
+        return
+    try:
+        subprocess.run(
+            [sys.executable, str(reset_script), "--reason", reason],
+            check=False,
+            timeout=180,
+        )
+    except Exception as exc:
+        logger.warning("GPU reset script failed: %s", exc)
+
+
+def maybe_reset_gpu_for_error(error_message: str, context: str) -> None:
+    """Trigger GPU reset when the error message indicates a hang/timeout."""
+    normalized = error_message.strip().upper()
+    if "TIMEOUT" in normalized or "HANG" in normalized:
+        reset_gpu_via_script(f"{context}: {error_message.splitlines()[0]}")
 
 
 def extract_from_pytorch_trace(trace_path: Path) -> Dict[str, float]:
@@ -150,6 +191,55 @@ def reset_cuda_state():
         pass
 
 
+def is_distributed_benchmark(file_path: Path) -> bool:
+    """Check if a benchmark file contains distributed operations.
+    
+    This function detects distributed benchmarks by looking for:
+    - torch.distributed imports and usage
+    - DistributedDataParallel (DDP)
+    - NCCL backend usage
+    - Environment variables like WORLD_SIZE, RANK
+    - Multi-GPU communication patterns
+    """
+    try:
+        content = file_path.read_text()
+        
+        # Check for distributed imports
+        has_dist_import = any(pattern in content for pattern in [
+            'import torch.distributed',
+            'from torch.distributed',
+            'torch.distributed as dist',
+        ])
+        
+        # Check for distributed operations
+        has_dist_ops = any(pattern in content for pattern in [
+            'dist.init_process_group',
+            'torch.distributed.init_process_group',
+            'torch.nn.parallel.DistributedDataParallel',
+            'DistributedDataParallel(',
+            'DDP(',
+        ])
+        
+        # Check for NCCL backend (strong indicator of multi-GPU)
+        has_nccl = any(pattern in content for pattern in [
+            "backend='nccl'",
+            'backend="nccl"',
+            'backend = "nccl"',
+            'backend = \'nccl\'',
+        ])
+        
+        # Check for distributed environment variables (but not just setup code)
+        # Only count if it's actually used, not just set
+        has_world_size = 'WORLD_SIZE' in content and ('os.environ' in content or 'getenv' in content)
+        has_rank = 'RANK' in content and ('os.environ' in content or 'getenv' in content)
+        
+        # A benchmark is distributed if it has distributed imports AND operations
+        # OR if it explicitly uses NCCL backend
+        return (has_dist_import and has_dist_ops) or has_nccl or (has_world_size and has_rank and has_dist_ops)
+    except Exception:
+        return False
+
+
 def check_hardware_limitation(error_msg: str) -> Optional[str]:
     """Check if error is due to hardware/software limitation and return skip reason.
     
@@ -174,12 +264,11 @@ def check_hardware_limitation(error_msg: str) -> Optional[str]:
         # Don't skip - reset should handle this. Return None to let it fail normally.
         return None
     
-    # Torch.compile timeouts - should reduce model size instead of skipping
-    # Only skip if it's a true timeout AND we can't reduce model size
-    # But for now, let's not skip - the benchmark should handle this
-    if 'timeout' in error_lower and 'compile' in error_lower:
-        # Don't skip - benchmarks should use safe_compile() with timeout or reduce model size
-        return None
+    # CUDA pipeline API unavailable (older GPUs)
+    if 'cuda pipeline api unavailable' in error_lower:
+        return "CUDA Pipeline API not supported on this GPU"
+    if 'requires compute capability >= 8.0' in error_lower and 'pipeline' in error_lower:
+        return "CUDA Pipeline API requires compute capability >= 8.0"
     
     # Segmentation faults - these should be prevented by pre-compilation
     # If they still occur after pre-compilation, it's a real issue, not a limitation
@@ -272,6 +361,13 @@ def discover_cuda_benchmarks(chapter_dir: Path) -> List[Tuple[Path, List[Path], 
     return pairs
 
 
+def cuda_binary_requires_multi_gpu(path: Path) -> bool:
+    """Best-effort heuristic to detect CUDA binaries that require multi-GPU hardware."""
+    name = path.stem.lower()
+    multi_gpu_tokens = ("nvlink", "multigpu", "multi_gpu", "multi-gpu", "distributed")
+    return any(token in name for token in multi_gpu_tokens)
+
+
 def find_cuda_executable(cu_file: Path, chapter_dir: Path) -> Optional[Path]:
     """Find the compiled executable for a CUDA source file.
     
@@ -310,7 +406,7 @@ class CudaBenchmarkResult:
     warmup_iterations: int
 
 
-def benchmark_cuda_executable(executable: Path, iterations: int = 20, warmup: int = 5, timeout: int = 15) -> Optional[CudaBenchmarkResult]:
+def benchmark_cuda_executable(executable: Path, iterations: int = 3, warmup: int = 0, timeout: int = 15) -> Optional[CudaBenchmarkResult]:
     """Benchmark a CUDA executable and return statistical results.
     
     Args:
@@ -327,47 +423,87 @@ def benchmark_cuda_executable(executable: Path, iterations: int = 20, warmup: in
     
     times_ms = []
     
-    # Warmup runs
-    for _ in range(warmup):
+    def safe_kill_process(process):
+        """Safely kill a process and its children."""
         try:
-            # Run executable in its own process group so we can kill it without affecting parent
-            process = subprocess.Popen(
-                [str(executable)],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                preexec_fn=os.setsid  # Create new process group
-            )
-            try:
-                stdout, stderr = process.communicate(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                # Timeout occurred - kill the process group (only the child, not parent)
+            # Try to kill process group if setsid was used
+            if hasattr(os, 'setsid'):
                 try:
-                    os.killpg(os.getpgid(process.pid), signal.SIGTERM)
-                    # Wait a bit for graceful termination
+                    pgid = os.getpgid(process.pid)
+                    os.killpg(pgid, signal.SIGTERM)
                     try:
                         process.wait(timeout=2)
                     except subprocess.TimeoutExpired:
-                        # Force kill if still running
-                        os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                        os.killpg(pgid, signal.SIGKILL)
                         process.wait()
-                except (ProcessLookupError, OSError):
-                    # Process already terminated
-                    pass
-                return None
-        except Exception as e:
-            # If process creation failed, return None
-            return None
+                except (ProcessLookupError, OSError, AttributeError):
+                    # Fallback to killing just the process
+                    process.terminate()
+                    try:
+                        process.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait()
+            else:
+                # No setsid support, just kill the process
+                process.terminate()
+                try:
+                    process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+        except (ProcessLookupError, OSError):
+            # Process already terminated
+            pass
     
-    # Benchmark runs
-    for _ in range(iterations):
+    # Warmup runs (executables already perform their own warmup/averaging internally)
+    for _ in range(warmup):
         try:
-            start = time.perf_counter()
-            # Run executable in its own process group so we can kill it without affecting parent
+            # Run executable with timeout protection
             process = subprocess.Popen(
                 [str(executable)],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                preexec_fn=os.setsid  # Create new process group
+                preexec_fn=os.setsid if hasattr(os, 'setsid') else None  # Create new process group if available
+            )
+            try:
+                stdout, stderr = process.communicate(timeout=timeout)
+                if process.returncode != 0:
+                    # Executable failed, skip warmup
+                    continue
+            except subprocess.TimeoutExpired:
+                # Timeout occurred - kill the process
+                safe_kill_process(process)
+                logger.warning(f"CUDA executable {executable.name} timed out during warmup (>{timeout}s)")
+                reset_gpu_via_script(f"{executable.name} warmup timeout")
+                return None
+        except Exception as e:
+            # If process creation failed, return None
+            logger.warning(f"Failed to run CUDA executable {executable.name}: {e}")
+            return None
+    
+    # Benchmark runs
+    # Ensure CUDA libraries are in library path
+    env = os.environ.copy()
+    cuda_lib_paths = [
+        '/usr/lib/aarch64-linux-gnu',  # libcuda.so.1 location
+        '/usr/local/cuda-13.0/lib64',
+        '/usr/local/cuda-13.0/targets/sbsa-linux/lib',
+    ]
+    existing_ld_path = env.get('LD_LIBRARY_PATH', '')
+    new_ld_path = ':'.join(cuda_lib_paths + ([existing_ld_path] if existing_ld_path else []))
+    env['LD_LIBRARY_PATH'] = new_ld_path
+    
+    for i in range(iterations):
+        try:
+            start = time.perf_counter()
+            # Run executable with timeout protection
+            process = subprocess.Popen(
+                [str(executable)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=env,
+                preexec_fn=os.setsid if hasattr(os, 'setsid') else None  # Create new process group if available
             )
             try:
                 stdout, stderr = process.communicate(timeout=timeout)
@@ -376,24 +512,21 @@ def benchmark_cuda_executable(executable: Path, iterations: int = 20, warmup: in
                 if process.returncode == 0:
                     elapsed_ms = (end - start) * 1000.0
                     times_ms.append(elapsed_ms)
+                else:
+                    # Executable failed, log but continue
+                    logger.warning(f"CUDA executable {executable.name} failed with return code {process.returncode} on iteration {i+1}")
+                    if stderr:
+                        logger.warning(f"  stderr: {stderr.decode('utf-8', errors='ignore')[:200]}")
             except subprocess.TimeoutExpired:
-                # Timeout occurred - kill the process group (only the child, not parent)
-                try:
-                    os.killpg(os.getpgid(process.pid), signal.SIGTERM)
-                    # Wait a bit for graceful termination
-                    try:
-                        process.wait(timeout=2)
-                    except subprocess.TimeoutExpired:
-                        # Force kill if still running
-                        os.killpg(os.getpgid(process.pid), signal.SIGKILL)
-                        process.wait()
-                except (ProcessLookupError, OSError):
-                    # Process already terminated
-                    pass
+                # Timeout occurred - kill the process
+                safe_kill_process(process)
+                logger.warning(f"CUDA executable {executable.name} timed out on iteration {i+1} (>{timeout}s)")
+                reset_gpu_via_script(f"{executable.name} measurement timeout")
                 return None
         except Exception as e:
-            # If process creation failed, skip this iteration
-            continue
+            # If process creation failed, log and return None
+            logger.warning(f"Failed to run CUDA executable {executable.name} on iteration {i+1}: {e}")
+            return None
     
     if not times_ms:
         return None
@@ -856,6 +989,9 @@ def profile_python_benchmark_torch(
 def ensure_cuda_executables_built(chapter_dir: Path) -> bool:
     """Try to build CUDA executables if Makefile exists.
     
+    Uses auto-detection to build for the correct GPU architecture (sm_121, sm_103, or sm_100).
+    The Makefile will auto-detect the architecture unless ARCH is explicitly set.
+    
     Args:
         chapter_dir: Path to chapter directory
         
@@ -866,29 +1002,55 @@ def ensure_cuda_executables_built(chapter_dir: Path) -> bool:
     if not makefile.exists():
         return True  # No Makefile, assume executables are pre-built or don't exist
     
+    env = os.environ.copy()
+    make_desc = "default ARCH"
+    if detect_supported_arch is not None:
+        try:
+            arch = detect_supported_arch()
+            if arch:
+                env["ARCH"] = arch
+                make_desc = f"ARCH={arch}"
+        except Exception as exc:
+            logger.warning(f"  WARNING: Unable to auto-detect CUDA arch for {chapter_dir.name}: {exc}")
+    
     try:
+        logger.info(f"  Building CUDA executables ({make_desc})...")
+        # Explicitly set ARCH so Makefiles consistently target the active GPU
         result = subprocess.run(
-            ["make", "-C", str(chapter_dir)],
+            ["make", "-B", "-C", str(chapter_dir), "all"],
             capture_output=True,
-            timeout=60,  # 60s - compilation can take time for complex kernels
-            check=False
+            timeout=120,  # Increased timeout - compilation can take time for complex kernels
+            check=False,
+            text=True,
+            env=env,
         )
+        if result.returncode != 0:
+            logger.warning(f"  WARNING: Make build failed (exit code {result.returncode})")
+            if result.stderr:
+                logger.warning(f"  Build stderr: {result.stderr[:500]}")
         return result.returncode == 0
     except subprocess.TimeoutExpired:
         # Make timed out - compilation takes too long
-        print(f"  WARNING: Make build timed out after 60s - compilation may be too slow or hanging")
+        logger.warning(f"  WARNING: Make build timed out after 120s - compilation may be too slow or hanging")
         return False
-    except Exception:
+    except Exception as e:
+        logger.warning(f"  WARNING: Make build exception: {e}")
         return False
 
 
-def test_chapter(chapter_dir: Path, enable_profiling: bool = False, fast_mode: bool = False) -> Dict[str, Any]:
+def test_chapter(chapter_dir: Path, enable_profiling: bool = False, smoke_test: bool = False, timeout_multiplier: float = 1.0, reproducible: bool = False, cold_start: bool = False, iterations: Optional[int] = None, warmup: Optional[int] = None, only_examples: Optional[List[str]] = None) -> Dict[str, Any]:
     """Test all benchmarks in a chapter and return results.
     
     Args:
         chapter_dir: Path to chapter directory
         enable_profiling: If True, generate profiling files (nsys, ncu, PyTorch) alongside benchmarks
-        fast_mode: If True, reduce iterations and warmup for faster runs
+        smoke_test: If True, reduce iterations and warmup for smoke testing (CI/quick validation)
+        timeout_multiplier: Multiply all timeouts by this factor (e.g., 2.0 = double all timeouts)
+        reproducible: If True, set all seeds to 42 and enable deterministic algorithms
+        cold_start: If True, perform additional GPU state cleanup (gc.collect()) between benchmarks for cold start measurements. CUDA state is always reset by default.
+        iterations: Number of benchmark iterations (overrides smoke_test defaults if provided)
+        warmup: Number of warmup iterations (overrides smoke_test defaults if provided)
+        only_examples: List of example names to run (e.g., ['moe', 'cutlass']). If None, runs all examples.
     """
     dump_environment_and_capabilities()
 
@@ -916,14 +1078,14 @@ def test_chapter(chapter_dir: Path, enable_profiling: bool = False, fast_mode: b
             profilers.append("PyTorch")
         
         if profilers:
-            print(f"  Profiling enabled: {', '.join(profilers)} profiling files will be saved to {profiling_output_dir}")
+            logger.info(f"  Profiling enabled: {', '.join(profilers)} profiling files will be saved to {profiling_output_dir}")
         else:
-            print(f"  WARNING: Profiling requested but no profilers available - skipping profiling")
+            logger.warning(f"  Profiling requested but no profilers available - skipping profiling")
             enable_profiling = False
     
-    print(f"\n{'='*80}")
-    print(f"Testing {chapter_name.upper()}")
-    print(f"{'='*80}")
+    logger.info(f"\n{'='*80}")
+    logger.info(f"Testing {chapter_name.upper()}")
+    logger.info(f"{'='*80}")
     
     if not torch.cuda.is_available():
         return {
@@ -940,19 +1102,52 @@ def test_chapter(chapter_dir: Path, enable_profiling: bool = False, fast_mode: b
             }
         }
     
-    # Reset CUDA state at start of chapter
+    # Reset CUDA state at start of chapter (always, to prevent cascading failures)
     reset_cuda_state()
+    # Additional cleanup for cold start mode (includes gc.collect() for more thorough cleanup)
+    if cold_start:
+        reset_gpu_state()
+    
+    # Ensure PyTorch inductor cache directory exists to prevent C++ compilation errors
+    # (This is also done in env_defaults.py, but we ensure it here as well for safety)
+    # Use absolute path to avoid working directory issues
+    inductor_cache_dir = os.environ.get("TORCHINDUCTOR_CACHE_DIR", ".torch_inductor")
+    if inductor_cache_dir:
+        # Convert relative paths to absolute paths
+        if not os.path.isabs(inductor_cache_dir):
+            inductor_cache_dir = str(Path.cwd() / inductor_cache_dir)
+            os.environ["TORCHINDUCTOR_CACHE_DIR"] = inductor_cache_dir
+        inductor_cache_path = Path(inductor_cache_dir)
+        try:
+            inductor_cache_path.mkdir(parents=True, exist_ok=True)
+            (inductor_cache_path / "od").mkdir(parents=True, exist_ok=True)
+            (inductor_cache_path / "tk").mkdir(parents=True, exist_ok=True)
+        except (OSError, PermissionError):
+            # If we can't create the directory, that's okay - env_defaults.py should have handled it
+            pass
     
     # Discover Python benchmarks
-    print(f"  Discovering Python benchmarks...", flush=True)
+    logger.info(f"  Discovering Python benchmarks...")
     python_pairs = discover_benchmarks(chapter_dir)
-    print(f"  Found {len(python_pairs)} Python benchmark pair(s)", flush=True)
+    example_filters = None
+    if only_examples:
+        example_filters = {name.strip() for name in only_examples if name.strip()}
+        if example_filters:
+            python_pairs = [
+                pair for pair in python_pairs if pair[2] in example_filters
+            ]
+            logger.info(f"  Filtered to {len(python_pairs)} example(s): {', '.join(sorted(example_filters))}")
+    logger.info(f"  Found {len(python_pairs)} Python benchmark pair(s)")
     
     # Discover CUDA benchmarks and ensure executables are built
-    print(f"  Discovering CUDA benchmarks...", flush=True)
+    logger.info(f"  Discovering CUDA benchmarks...")
     cuda_pairs = discover_cuda_benchmarks(chapter_dir)
+    if example_filters:
+        cuda_pairs = [
+            pair for pair in cuda_pairs if pair[2] in example_filters
+        ]
     if cuda_pairs:
-        print(f"  Found {len(cuda_pairs)} CUDA benchmark pair(s), ensuring executables are built...")
+        logger.info(f"  Found {len(cuda_pairs)} CUDA benchmark pair(s), ensuring executables are built...")
         ensure_cuda_executables_built(chapter_dir)
     
     if not python_pairs and not cuda_pairs:
@@ -969,22 +1164,23 @@ def test_chapter(chapter_dir: Path, enable_profiling: bool = False, fast_mode: b
         }
     
     # Create harness for Python benchmarks with explicit timeout to prevent hangs
-    # Adjust iterations/warmup based on fast_mode
-    if fast_mode:
-        iterations = 5
-        warmup = 1
-    else:
-        iterations = 20
-        warmup = 5
+    # Adjust iterations/warmup based on smoke_test or use provided values
+    if iterations is None:
+        iterations = 5 if smoke_test else 20
+    if warmup is None:
+        warmup = 1 if smoke_test else 5
     
     config = BenchmarkConfig(
         iterations=iterations,
         warmup=warmup,
-        timeout_seconds=15,  # 15 second timeout per benchmark to prevent hangs
+        measurement_timeout_seconds=15,  # 15 second timeout per benchmark to prevent hangs
+        timeout_multiplier=timeout_multiplier,  # Apply timeout multiplier from CLI
         enable_memory_tracking=True,  # Enable memory metrics display
-        enable_profiling=enable_profiling,  # Respect profiling flag (default: True, can opt out with --skip-profiling)
+        enable_profiling=enable_profiling,  # Respect profiling flag (opt-in via CLI)
         enable_nsys=enable_profiling,  # nsys profiling (gracefully degrades if unavailable)
         enable_ncu=enable_profiling,  # ncu profiling (gracefully degrades if unavailable)
+        seed=42 if reproducible else None,  # Set seed for reproducibility
+        deterministic=reproducible,  # Enable deterministic algorithms for reproducibility
     )
     harness = BenchmarkHarness(mode=BenchmarkMode.CUSTOM, config=config)
     
@@ -992,12 +1188,16 @@ def test_chapter(chapter_dir: Path, enable_profiling: bool = False, fast_mode: b
     successful = 0
     failed = 0
     skipped_hw = 0
+    skipped_distributed = 0
     speedups = []
+    
+    # Check GPU count for distributed benchmark detection
+    num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
     
     # Process Python benchmarks
     for baseline_path, optimized_paths, example_name in python_pairs:
-        print(f"\n  Example: {example_name}")
-        print(f"    Baseline: {baseline_path.name}")
+        logger.info(f"\n  Example: {example_name}")
+        logger.info(f"    Baseline: {baseline_path.name}")
         
         result_entry = {
             'example': example_name,
@@ -1009,8 +1209,23 @@ def test_chapter(chapter_dir: Path, enable_profiling: bool = False, fast_mode: b
             'error': None,
         }
         
-        # Reset CUDA state before each benchmark pair
+        # Check if this is a distributed benchmark and we have only 1 GPU
+        is_distributed = is_distributed_benchmark(baseline_path)
+        if is_distributed and num_gpus == 1:
+            skip_reason = f"SKIPPED: Distributed benchmark requires multiple GPUs (found {num_gpus} GPU)"
+            logger.warning(f"    WARNING: {skip_reason}")
+            result_entry['status'] = 'skipped'
+            result_entry['error'] = skip_reason
+            result_entry['skip_reason'] = skip_reason
+            benchmark_results.append(result_entry)
+            skipped_distributed += 1  # Count as skipped, not successful
+            continue
+        
+        # Reset CUDA state before each benchmark pair (always, to prevent cascading failures)
         reset_cuda_state()
+        # Additional cleanup for cold start mode (includes gc.collect() for more thorough cleanup)
+        if cold_start:
+            reset_gpu_state()
         
         # Load and run baseline
         baseline_benchmark = load_benchmark(baseline_path)
@@ -1018,38 +1233,47 @@ def test_chapter(chapter_dir: Path, enable_profiling: bool = False, fast_mode: b
             result_entry['error'] = 'Failed to load baseline'
             benchmark_results.append(result_entry)
             failed += 1
+            reset_cuda_state()  # Reset after failure
+            if cold_start:
+                reset_gpu_state()
             continue
         
         try:
-            baseline_result = harness.benchmark(baseline_benchmark)
-            baseline_time = baseline_result.mean_ms
+            # Use benchmark_with_manifest for reproducibility
+            run_id = f"{chapter_name}_{example_name}_baseline"
+            baseline_run = harness.benchmark_with_manifest(baseline_benchmark, run_id=run_id)
+            baseline_result = baseline_run.result
+            baseline_timing = baseline_result.timing
+            baseline_memory = baseline_result.memory
+            baseline_time = baseline_timing.mean_ms if baseline_timing else 0.0
             result_entry['baseline_time_ms'] = baseline_time
             
             # Enhanced baseline metrics display with emojis and formatting
-            print(f"    Baseline: {format_time_ms(baseline_time)} ms")
-            print(f"      📊 Timing Stats: median={format_time_ms(baseline_result.median_ms)}ms, "
-                  f"min={format_time_ms(baseline_result.min_ms)}ms, max={format_time_ms(baseline_result.max_ms)}ms, "
-                  f"std={format_time_ms(baseline_result.std_ms)}ms")
-            if baseline_result.memory_peak_mb:
-                mem_str = f"      💾 Memory: peak={baseline_result.memory_peak_mb:.2f}MB"
-                if baseline_result.memory_allocated_mb:
-                    mem_str += f", allocated={baseline_result.memory_allocated_mb:.2f}MB"
-                print(mem_str)
-            if baseline_result.percentiles:
-                p99 = baseline_result.percentiles.get(99.0, 0)
-                p75 = baseline_result.percentiles.get(75.0, 0)
-                p50 = baseline_result.percentiles.get(50.0, baseline_result.median_ms)
-                print(f"      📈 Percentiles: p99={format_time_ms(p99)}ms, p75={format_time_ms(p75)}ms, p50={format_time_ms(p50)}ms")
+            logger.info(f"    Baseline: {format_time_ms(baseline_time)} ms")
+            if baseline_timing:
+                logger.info(f"      📊 Timing Stats: median={format_time_ms(baseline_timing.median_ms)}ms, "
+                      f"min={format_time_ms(baseline_timing.min_ms)}ms, max={format_time_ms(baseline_timing.max_ms)}ms, "
+                      f"std={format_time_ms(baseline_timing.std_ms)}ms")
+            if baseline_memory and baseline_memory.peak_mb:
+                mem_str = f"      💾 Memory: peak={baseline_memory.peak_mb:.2f}MB"
+                if baseline_memory.allocated_mb:
+                    mem_str += f", allocated={baseline_memory.allocated_mb:.2f}MB"
+                logger.info(mem_str)
+            if baseline_timing and baseline_timing.percentiles:
+                p99 = baseline_timing.percentiles.get(99.0, 0)
+                p75 = baseline_timing.percentiles.get(75.0, 0)
+                p50 = baseline_timing.percentiles.get(50.0, baseline_timing.median_ms if baseline_timing else 0)
+                logger.info(f"      📈 Percentiles: p99={format_time_ms(p99)}ms, p75={format_time_ms(p75)}ms, p50={format_time_ms(p50)}ms")
             
             # Profile baseline if profiling is enabled (nsys, ncu, PyTorch)
             if enable_profiling and profiling_output_dir:
-                print(f"    Profiling baseline...", flush=True)
+                logger.info(f"    Profiling baseline...")
                 profiler_results = []
                 baseline_metrics = {}
                 
                 # nsys profiling
                 if check_nsys_available():
-                    print(f"      nsys...", end=' ', flush=True)
+                    logger.info(f"      nsys...")
                     nsys_path = profile_python_benchmark(
                         baseline_benchmark, baseline_path, chapter_dir, profiling_output_dir, variant="baseline"
                     )
@@ -1067,7 +1291,7 @@ def test_chapter(chapter_dir: Path, enable_profiling: bool = False, fast_mode: b
                 
                 # ncu profiling
                 if check_ncu_available():
-                    print(f"ncu...", end=' ', flush=True)
+                    logger.info(f"ncu...")
                     ncu_path = profile_python_benchmark_ncu(
                         baseline_benchmark, baseline_path, chapter_dir, profiling_output_dir, variant="baseline"
                     )
@@ -1085,7 +1309,7 @@ def test_chapter(chapter_dir: Path, enable_profiling: bool = False, fast_mode: b
                 
                 # PyTorch profiler
                 if TORCH_PROFILER_AVAILABLE:
-                    print(f"PyTorch...", end=' ', flush=True)
+                    logger.info(f"PyTorch...")
                     torch_path = profile_python_benchmark_torch(
                         baseline_benchmark, baseline_path, chapter_dir, profiling_output_dir, variant="baseline"
                     )
@@ -1101,20 +1325,20 @@ def test_chapter(chapter_dir: Path, enable_profiling: bool = False, fast_mode: b
                 else:
                     profiler_results.append("torch-")
                 
-                print(f" ({', '.join(profiler_results)})")
+                logger.info(f" ({', '.join(profiler_results)})")
                 
                 # Display extracted metrics
                 if baseline_metrics:
-                    print(f"      📈 Profiler Metrics:")
+                    logger.info(f"      📈 Profiler Metrics:")
                     if 'nsys' in baseline_metrics:
                         for key, value in baseline_metrics['nsys'].items():
-                            print(f"        nsys.{key}: {value:.2f}")
+                            logger.info(f"        nsys.{key}: {value:.2f}")
                     if 'ncu' in baseline_metrics:
                         for key, value in baseline_metrics['ncu'].items():
-                            print(f"        ncu.{key}: {value:.2f}")
+                            logger.info(f"        ncu.{key}: {value:.2f}")
                     if 'torch' in baseline_metrics:
                         for key, value in baseline_metrics['torch'].items():
-                            print(f"        torch.{key}: {value:.2f}")
+                            logger.info(f"        torch.{key}: {value:.2f}")
                     result_entry['baseline_profiler_metrics'] = baseline_metrics
         except Exception as e:
             error_str = str(e)
@@ -1124,14 +1348,18 @@ def test_chapter(chapter_dir: Path, enable_profiling: bool = False, fast_mode: b
                 result_entry['status'] = 'skipped'
                 result_entry['error'] = f'HARDWARE/SOFTWARE LIMITATION: {skip_reason}'
                 result_entry['skip_reason'] = skip_reason
-                print(f"    WARNING: SKIPPED: {skip_reason}")
+                logger.warning(f"    WARNING: SKIPPED: {skip_reason}")
                 skipped_hw += 1
             else:
                 result_entry['error'] = f'Baseline execution failed: {error_str}'
                 failed += 1
+                maybe_reset_gpu_for_error(error_str, f"{chapter_name}:{example_name}:baseline")
             
             benchmark_results.append(result_entry)
             reset_cuda_state()  # Reset after failure
+            # Additional cleanup for cold start mode
+            if cold_start:
+                reset_gpu_state()
             continue
         
         # Test each optimization
@@ -1141,9 +1369,22 @@ def test_chapter(chapter_dir: Path, enable_profiling: bool = False, fast_mode: b
             if technique == opt_name.replace('optimized_', '').replace('.py', ''):
                 technique = 'default'
             
+            # Check if optimized benchmark is distributed and we have only 1 GPU
+            is_opt_distributed = is_distributed_benchmark(optimized_path)
+            if is_opt_distributed and num_gpus == 1:
+                skip_reason = f"SKIPPED: Distributed benchmark requires multiple GPUs (found {num_gpus} GPU)"
+                logger.warning(f"    WARNING: {opt_name}: {skip_reason}")
+                result_entry['optimizations'].append({
+                    'file': opt_name,
+                    'technique': technique,
+                    'status': 'skipped',
+                    'error': skip_reason,
+                })
+                continue
+            
             optimized_benchmark = load_benchmark(optimized_path)
             if optimized_benchmark is None:
-                print(f"    Testing: {opt_name}... FAILED (load)")
+                logger.error(f"    Testing: {opt_name}... FAILED (load)")
                 result_entry['optimizations'].append({
                     'file': opt_name,
                     'technique': technique,
@@ -1153,44 +1394,53 @@ def test_chapter(chapter_dir: Path, enable_profiling: bool = False, fast_mode: b
                 continue
             
             try:
-                # Reset CUDA state before each optimized benchmark
+                # Reset CUDA state before each optimized benchmark (always, to prevent cascading failures)
                 reset_cuda_state()
+                # Additional cleanup for cold start mode (includes gc.collect() for more thorough cleanup)
+                if cold_start:
+                    reset_gpu_state()
                 
-                optimized_result = harness.benchmark(optimized_benchmark)
-                optimized_time = optimized_result.mean_ms
+                # Use benchmark_with_manifest for reproducibility
+                opt_run_id = f"{chapter_name}_{example_name}_optimized_{technique}"
+                optimized_run = harness.benchmark_with_manifest(optimized_benchmark, run_id=opt_run_id)
+                optimized_result = optimized_run.result
+                optimized_timing = optimized_result.timing
+                optimized_memory = optimized_result.memory
+                optimized_time = optimized_timing.mean_ms if optimized_timing else 0.0
                 speedup = baseline_time / optimized_time if optimized_time > 0 else 1.0
                 
                 # Enhanced metrics display with emojis and formatting
                 emoji = "🚀" if speedup > 1.0 else "⚠️" if speedup < 1.0 else "="
-                print(f"    Testing: {opt_name}... {format_time_ms(optimized_time)} ms ({speedup:.2f}x) {emoji}")
+                logger.info(f"    Testing: {opt_name}... {format_time_ms(optimized_time)} ms ({speedup:.2f}x) {emoji}")
                 
-                print(f"        📊 Timing: median={format_time_ms(optimized_result.median_ms)}ms, "
-                      f"min={format_time_ms(optimized_result.min_ms)}ms, max={format_time_ms(optimized_result.max_ms)}ms, "
-                      f"std={format_time_ms(optimized_result.std_ms)}ms")
+                if optimized_timing:
+                    logger.info(f"        📊 Timing: median={format_time_ms(optimized_timing.median_ms)}ms, "
+                          f"min={format_time_ms(optimized_timing.min_ms)}ms, max={format_time_ms(optimized_timing.max_ms)}ms, "
+                          f"std={format_time_ms(optimized_timing.std_ms)}ms")
                 
-                if optimized_result.memory_peak_mb:
+                if optimized_memory and optimized_memory.peak_mb:
                     mem_change = ""
-                    if baseline_result.memory_peak_mb:
-                        diff_mb = optimized_result.memory_peak_mb - baseline_result.memory_peak_mb
-                        pct_change = (diff_mb / baseline_result.memory_peak_mb) * 100 if baseline_result.memory_peak_mb > 0 else 0
+                    if baseline_memory and baseline_memory.peak_mb:
+                        diff_mb = optimized_memory.peak_mb - baseline_memory.peak_mb
+                        pct_change = (diff_mb / baseline_memory.peak_mb) * 100 if baseline_memory.peak_mb > 0 else 0
                         sign = "+" if diff_mb >= 0 else ""
                         mem_change = f" ({sign}{diff_mb:.2f}MB, {sign}{pct_change:.1f}%)"
                     
-                    mem_str = f"        💾 Memory: peak={optimized_result.memory_peak_mb:.2f}MB{mem_change}"
-                    print(mem_str)
-                    if optimized_result.memory_allocated_mb:
-                        print(f"                 allocated={optimized_result.memory_allocated_mb:.2f}MB")
+                    mem_str = f"        💾 Memory: peak={optimized_memory.peak_mb:.2f}MB{mem_change}"
+                    logger.info(mem_str)
+                    if optimized_memory.allocated_mb:
+                        logger.info(f"                 allocated={optimized_memory.allocated_mb:.2f}MB")
                 
-                if optimized_result.percentiles:
-                    p99 = optimized_result.percentiles.get(99.0, 0)
-                    p75 = optimized_result.percentiles.get(75.0, 0)
-                    p50 = optimized_result.percentiles.get(50.0, optimized_result.median_ms)
+                if optimized_timing and optimized_timing.percentiles:
+                    p99 = optimized_timing.percentiles.get(99.0, 0)
+                    p75 = optimized_timing.percentiles.get(75.0, 0)
+                    p50 = optimized_timing.percentiles.get(50.0, optimized_timing.median_ms if optimized_timing else 0)
                     p99_speedup = ""
-                    if baseline_result.percentiles and 99.0 in baseline_result.percentiles:
-                        p99_baseline = baseline_result.percentiles[99.0]
+                    if baseline_timing and baseline_timing.percentiles and 99.0 in baseline_timing.percentiles:
+                        p99_baseline = baseline_timing.percentiles[99.0]
                         if p99_baseline > 0:
                             p99_speedup = f" ({p99_baseline/p99:.2f}x)" if p99 > 0 else ""
-                    print(f"        📈 Percentiles: p99={format_time_ms(p99)}ms{p99_speedup}, p75={format_time_ms(p75)}ms, p50={format_time_ms(p50)}ms")
+                    logger.info(f"        📈 Percentiles: p99={format_time_ms(p99)}ms{p99_speedup}, p75={format_time_ms(p75)}ms, p50={format_time_ms(p50)}ms")
                 
                 # Visual speedup bar (always show for consistency)
                 bar_length = 40
@@ -1198,18 +1448,18 @@ def test_chapter(chapter_dir: Path, enable_profiling: bool = False, fast_mode: b
                     # Improvement: fill bar proportionally to speedup
                     filled = min(int((speedup - 1.0) / max(speedup, 10.0) * bar_length), bar_length)
                     bar = "█" * filled + "░" * (bar_length - filled)
-                    print(f"        [{bar}] {speedup:.2f}x speedup")
+                    logger.info(f"        [{bar}] {speedup:.2f}x speedup")
                 elif speedup < 1.0:
                     # Regression: show how much slower (distance from 1.0)
                     regress_ratio = (1.0 - speedup)  # e.g., 0.93x = 0.07 (7% slower)
                     # Normalize: 0.5x (50% slower) = full bar, scale linearly
                     filled = min(int(regress_ratio / 0.5 * bar_length), bar_length)
                     bar = "█" * filled + "░" * (bar_length - filled)
-                    print(f"        [{bar}] {speedup:.2f}x slowdown")
+                    logger.info(f"        [{bar}] {speedup:.2f}x slowdown")
                 else:
                     # No change
                     bar = "░" * bar_length
-                    print(f"        [{bar}] {speedup:.2f}x (no change)")
+                    logger.info(f"        [{bar}] {speedup:.2f}x (no change)")
                 
                 opt_result = {
                     'file': opt_name,
@@ -1221,13 +1471,13 @@ def test_chapter(chapter_dir: Path, enable_profiling: bool = False, fast_mode: b
                 
                 # Profile optimized if profiling is enabled (nsys, ncu, PyTorch)
                 if enable_profiling and profiling_output_dir:
-                    print(f"\n    Profiling optimized...", flush=True)
+                    logger.info(f"\n    Profiling optimized...")
                     profiler_results = []
                     optimized_metrics = {}
                     
                     # nsys profiling
                     if check_nsys_available():
-                        print(f"      nsys...", end=' ', flush=True)
+                        logger.info(f"      nsys...")
                         nsys_path = profile_python_benchmark(
                             optimized_benchmark, optimized_path, chapter_dir, profiling_output_dir, 
                             variant=f"optimized_{technique}"
@@ -1246,7 +1496,7 @@ def test_chapter(chapter_dir: Path, enable_profiling: bool = False, fast_mode: b
                     
                     # ncu profiling
                     if check_ncu_available():
-                        print(f"ncu...", end=' ', flush=True)
+                        logger.info(f"ncu...")
                         ncu_path = profile_python_benchmark_ncu(
                             optimized_benchmark, optimized_path, chapter_dir, profiling_output_dir,
                             variant=f"optimized_{technique}"
@@ -1265,7 +1515,7 @@ def test_chapter(chapter_dir: Path, enable_profiling: bool = False, fast_mode: b
                     
                     # PyTorch profiler
                     if TORCH_PROFILER_AVAILABLE:
-                        print(f"PyTorch...", end=' ', flush=True)
+                        logger.info(f"PyTorch...")
                         torch_path = profile_python_benchmark_torch(
                             optimized_benchmark, optimized_path, chapter_dir, profiling_output_dir,
                             variant=f"optimized_{technique}"
@@ -1282,20 +1532,20 @@ def test_chapter(chapter_dir: Path, enable_profiling: bool = False, fast_mode: b
                     else:
                         profiler_results.append("torch-")
                     
-                    print(f" ({', '.join(profiler_results)})")
+                    logger.info(f" ({', '.join(profiler_results)})")
                     
                     # Display extracted metrics
                     if optimized_metrics:
-                        print(f"        📈 Profiler Metrics:")
+                        logger.info(f"        📈 Profiler Metrics:")
                         if 'nsys' in optimized_metrics:
                             for key, value in optimized_metrics['nsys'].items():
-                                print(f"          nsys.{key}: {value:.2f}")
+                                logger.info(f"          nsys.{key}: {value:.2f}")
                         if 'ncu' in optimized_metrics:
                             for key, value in optimized_metrics['ncu'].items():
-                                print(f"          ncu.{key}: {value:.2f}")
+                                logger.info(f"          ncu.{key}: {value:.2f}")
                         if 'torch' in optimized_metrics:
                             for key, value in optimized_metrics['torch'].items():
-                                print(f"          torch.{key}: {value:.2f}")
+                                logger.info(f"          torch.{key}: {value:.2f}")
                         opt_result['optimized_profiler_metrics'] = optimized_metrics
                 
                 result_entry['optimizations'].append(opt_result)
@@ -1357,7 +1607,7 @@ def test_chapter(chapter_dir: Path, enable_profiling: bool = False, fast_mode: b
                 skip_reason = check_hardware_limitation(error_full)
                 
                 if skip_reason:
-                    print(f"    Testing: {opt_name}... WARNING: SKIPPED: {skip_reason}")
+                    logger.warning(f"    Testing: {opt_name}... WARNING: SKIPPED: {skip_reason}")
                     result_entry['optimizations'].append({
                         'file': opt_name,
                         'technique': technique,
@@ -1375,36 +1625,58 @@ def test_chapter(chapter_dir: Path, enable_profiling: bool = False, fast_mode: b
                         if last_space > 150:
                             truncated = truncated[:last_space]
                         truncated += "..."
-                        print(f"    Testing: {opt_name}... FAILED ({truncated})")
-                        print(f"        Full error: {error_full}")
+                        logger.error(f"    Testing: {opt_name}... FAILED ({truncated})")
+                        logger.error(f"        Full error: {error_full}")
                     else:
-                        print(f"    Testing: {opt_name}... FAILED ({error_full})")
+                        logger.error(f"    Testing: {opt_name}... FAILED ({error_full})")
                     result_entry['optimizations'].append({
                         'file': opt_name,
                         'technique': technique,
                         'status': 'failed',
                         'error': error_full,  # Store full error with type
                     })
+                    maybe_reset_gpu_for_error(error_full, f"{chapter_name}:{example_name}:{opt_name}")
                 
                 reset_cuda_state()  # Reset after failure
+                # Additional cleanup for cold start mode
+                if cold_start:
+                    reset_gpu_state()
         
         if result_entry['status'] == 'skipped':
-            # Already handled
+            # Already handled - distributed benchmark skipped
             pass
-        elif result_entry['optimizations'] and any(opt['status'] == 'success' for opt in result_entry['optimizations']):
-            result_entry['status'] = 'success'
-            successful += 1
+        elif result_entry.get('baseline_time_ms') is not None:
+            # Baseline ran successfully
+            if result_entry['optimizations'] and any(opt['status'] == 'success' for opt in result_entry['optimizations']):
+                # Has successful optimizations
+                result_entry['status'] = 'success'
+                successful += 1
+            elif result_entry['optimizations'] and all(opt['status'] == 'skipped' for opt in result_entry['optimizations']):
+                # All optimizations skipped (e.g., distributed), but baseline ran successfully
+                result_entry['status'] = 'success'
+                successful += 1
+            elif not result_entry['optimizations']:
+                # No optimizations to test, but baseline ran successfully
+                result_entry['status'] = 'success'
+                successful += 1
+            else:
+                # Baseline ran but optimizations failed
+                failed += 1
         else:
+            # Baseline failed or didn't run
             failed += 1
         
         benchmark_results.append(result_entry)
         
-        # Reset CUDA state after each benchmark pair
+        # Reset CUDA state after each benchmark pair (always, to ensure clean state)
         reset_cuda_state()
+        # Additional cleanup for cold start mode (includes gc.collect() for more thorough cleanup)
+        if cold_start:
+            reset_gpu_state()
     
     # Process CUDA benchmarks
     for baseline_cu_path, optimized_cu_paths, example_name in cuda_pairs:
-        print(f"\n  Example (CUDA): {example_name}")
+        logger.info(f"\n  Example (CUDA): {example_name}")
         
         result_entry = {
             'example': example_name,
@@ -1423,39 +1695,55 @@ def test_chapter(chapter_dir: Path, enable_profiling: bool = False, fast_mode: b
             result_entry['error'] = f'Baseline executable not found for {baseline_cu_path.name}'
             benchmark_results.append(result_entry)
             failed += 1
+            reset_cuda_state()  # Reset after failure
+            if cold_start:
+                reset_gpu_state()
             continue
         
         # Benchmark baseline with explicit timeout
-        baseline_result = benchmark_cuda_executable(baseline_executable, iterations=20, warmup=5, timeout=15)
+        # Use fewer iterations in smoke test mode to prevent hangs
+        # Note: Some CUDA benchmarks (like memory transfer) can take 3-5 seconds per run
+        # So we need longer timeouts for these benchmarks
+        cuda_iterations = 1 if smoke_test else 3
+        cuda_warmup = 0
+        cuda_timeout = 20 if smoke_test else 30  # Longer timeout for CUDA benchmarks that do heavy I/O
+        logger.info(
+            f"    Running baseline executable {baseline_executable.name} "
+            f"(runs={cuda_iterations}, timeout={cuda_timeout}s per run)"
+        )
+        baseline_result = benchmark_cuda_executable(baseline_executable, iterations=cuda_iterations, warmup=cuda_warmup, timeout=cuda_timeout)
         if baseline_result is None:
-            result_entry['error'] = 'Baseline execution failed or timed out (15s timeout)'
+            result_entry['error'] = f'Baseline execution failed or timed out ({cuda_timeout}s timeout)'
             benchmark_results.append(result_entry)
             failed += 1
+            reset_cuda_state()  # Reset after failure
+            if cold_start:
+                reset_gpu_state()
             continue
         
         baseline_time = baseline_result.mean_ms
         result_entry['baseline_time_ms'] = baseline_time
         
         # Enhanced baseline metrics display with emojis and formatting (same as Python)
-        print(f"    Baseline: {format_time_ms(baseline_time)} ms")
-        print(f"      📊 Timing Stats: median={format_time_ms(baseline_result.median_ms)}ms, "
+        logger.info(f"    Baseline: {format_time_ms(baseline_time)} ms")
+        logger.info(f"      📊 Timing Stats: median={format_time_ms(baseline_result.median_ms)}ms, "
               f"min={format_time_ms(baseline_result.min_ms)}ms, max={format_time_ms(baseline_result.max_ms)}ms, "
               f"std={format_time_ms(baseline_result.std_ms)}ms")
         if baseline_result.percentiles:
             p99 = baseline_result.percentiles.get(99.0, 0)
             p75 = baseline_result.percentiles.get(75.0, 0)
             p50 = baseline_result.percentiles.get(50.0, baseline_result.median_ms)
-            print(f"      📈 Percentiles: p99={format_time_ms(p99)}ms, p75={format_time_ms(p75)}ms, p50={format_time_ms(p50)}ms")
+            logger.info(f"      📈 Percentiles: p99={format_time_ms(p99)}ms, p75={format_time_ms(p75)}ms, p50={format_time_ms(p50)}ms")
         
         # Profile baseline if profiling is enabled (nsys, ncu)
         if enable_profiling and profiling_output_dir:
-            print(f"    Profiling baseline...", flush=True)
+            logger.info(f"    Profiling baseline...")
             profiler_results = []
             baseline_metrics = {}
             
             # nsys profiling
             if check_nsys_available():
-                print(f"      nsys...", end=' ', flush=True)
+                logger.info(f"      nsys...")
                 nsys_path = profile_cuda_executable(
                     baseline_executable, chapter_dir, profiling_output_dir, variant="baseline"
                 )
@@ -1473,7 +1761,7 @@ def test_chapter(chapter_dir: Path, enable_profiling: bool = False, fast_mode: b
             
             # ncu profiling
             if check_ncu_available():
-                print(f"ncu...", end=' ', flush=True)
+                logger.info(f"ncu...")
                 ncu_path = profile_cuda_executable_ncu(
                     baseline_executable, chapter_dir, profiling_output_dir, variant="baseline"
                 )
@@ -1489,17 +1777,17 @@ def test_chapter(chapter_dir: Path, enable_profiling: bool = False, fast_mode: b
             else:
                 profiler_results.append("ncu-")
             
-            print(f" ({', '.join(profiler_results)})")
+            logger.info(f" ({', '.join(profiler_results)})")
             
             # Display extracted metrics
             if baseline_metrics:
-                print(f"      📈 Profiler Metrics:")
+                logger.info(f"      📈 Profiler Metrics:")
                 if 'nsys' in baseline_metrics:
                     for key, value in baseline_metrics['nsys'].items():
-                        print(f"        nsys.{key}: {value:.2f}")
+                        logger.info(f"        nsys.{key}: {value:.2f}")
                 if 'ncu' in baseline_metrics:
                     for key, value in baseline_metrics['ncu'].items():
-                        print(f"        ncu.{key}: {value:.2f}")
+                        logger.info(f"        ncu.{key}: {value:.2f}")
                 result_entry['baseline_profiler_metrics'] = baseline_metrics
         
         # Test each optimization
@@ -1508,10 +1796,24 @@ def test_chapter(chapter_dir: Path, enable_profiling: bool = False, fast_mode: b
             technique = opt_name.replace(f'optimized_{example_name}_', '').replace('.cu', '')
             if technique == opt_name.replace('optimized_', '').replace('.cu', ''):
                 technique = 'default'
+
+            if num_gpus < 2 and cuda_binary_requires_multi_gpu(optimized_cu_path):
+                reason = (
+                    f"SKIPPED: {opt_name} requires >=2 GPUs (e.g., NVLink/C2C) but only {num_gpus} GPU present"
+                )
+                logger.warning(f"    WARNING: {reason}")
+                result_entry['optimizations'].append({
+                    'file': opt_name,
+                    'technique': technique,
+                    'status': 'skipped',
+                    'skip_reason': reason,
+                })
+                skipped_hw += 1
+                continue
             
             optimized_executable = find_cuda_executable(optimized_cu_path, chapter_dir)
             if optimized_executable is None:
-                print(f"    Testing: {opt_name}... FAILED (executable not found)")
+                logger.error(f"    Testing: {opt_name}... FAILED (executable not found)")
                 result_entry['optimizations'].append({
                     'file': opt_name,
                     'technique': technique,
@@ -1519,15 +1821,19 @@ def test_chapter(chapter_dir: Path, enable_profiling: bool = False, fast_mode: b
                     'error': 'Executable not found',
                 })
                 continue
-            
-            optimized_result = benchmark_cuda_executable(optimized_executable, iterations=20, warmup=5, timeout=15)
+
+            logger.info(
+                f"    Running {opt_name} "
+                f"(runs={cuda_iterations}, timeout={cuda_timeout}s per run)"
+            )
+            optimized_result = benchmark_cuda_executable(optimized_executable, iterations=cuda_iterations, warmup=cuda_warmup, timeout=cuda_timeout)
             if optimized_result is None:
-                print(f"    Testing: {opt_name}... FAILED (execution or timeout)")
+                logger.error(f"    Testing: {opt_name}... FAILED (execution or timeout)")
                 result_entry['optimizations'].append({
                     'file': opt_name,
                     'technique': technique,
                     'status': 'failed',
-                    'error': 'Execution failed or timed out (15s timeout)',
+                    'error': f'Execution failed or timed out ({cuda_timeout}s timeout)',
                 })
                 continue
             
@@ -1536,9 +1842,9 @@ def test_chapter(chapter_dir: Path, enable_profiling: bool = False, fast_mode: b
             
             # Enhanced metrics display with emojis and formatting (same as Python)
             emoji = "🚀" if speedup > 1.0 else "⚠️" if speedup < 1.0 else "="
-            print(f"    Testing: {opt_name}... {format_time_ms(optimized_time)} ms ({speedup:.2f}x) {emoji}")
+            logger.info(f"    Testing: {opt_name}... {format_time_ms(optimized_time)} ms ({speedup:.2f}x) {emoji}")
             
-            print(f"        📊 Timing: median={format_time_ms(optimized_result.median_ms)}ms, "
+            logger.info(f"        📊 Timing: median={format_time_ms(optimized_result.median_ms)}ms, "
                   f"min={format_time_ms(optimized_result.min_ms)}ms, max={format_time_ms(optimized_result.max_ms)}ms, "
                   f"std={format_time_ms(optimized_result.std_ms)}ms")
             
@@ -1551,7 +1857,7 @@ def test_chapter(chapter_dir: Path, enable_profiling: bool = False, fast_mode: b
                     p99_baseline = baseline_result.percentiles[99.0]
                     if p99_baseline > 0:
                         p99_speedup = f" ({p99_baseline/p99:.2f}x)" if p99 > 0 else ""
-                print(f"        📈 Percentiles: p99={format_time_ms(p99)}ms{p99_speedup}, p75={format_time_ms(p75)}ms, p50={format_time_ms(p50)}ms")
+                logger.info(f"        📈 Percentiles: p99={format_time_ms(p99)}ms{p99_speedup}, p75={format_time_ms(p75)}ms, p50={format_time_ms(p50)}ms")
             
             # Visual speedup bar (always show for consistency, same as Python)
             bar_length = 40
@@ -1559,18 +1865,18 @@ def test_chapter(chapter_dir: Path, enable_profiling: bool = False, fast_mode: b
                 # Improvement: fill bar proportionally to speedup
                 filled = min(int((speedup - 1.0) / max(speedup, 10.0) * bar_length), bar_length)
                 bar = "█" * filled + "░" * (bar_length - filled)
-                print(f"        [{bar}] {speedup:.2f}x speedup")
+                logger.info(f"        [{bar}] {speedup:.2f}x speedup")
             elif speedup < 1.0:
                 # Regression: show how much slower (distance from 1.0)
                 regress_ratio = (1.0 - speedup)  # e.g., 0.93x = 0.07 (7% slower)
                 # Normalize: 0.5x (50% slower) = full bar, scale linearly
                 filled = min(int(regress_ratio / 0.5 * bar_length), bar_length)
                 bar = "█" * filled + "░" * (bar_length - filled)
-                print(f"        [{bar}] {speedup:.2f}x slowdown")
+                logger.info(f"        [{bar}] {speedup:.2f}x slowdown")
             else:
                 # No change
                 bar = "░" * bar_length
-                print(f"        [{bar}] {speedup:.2f}x (no change)")
+                logger.info(f"        [{bar}] {speedup:.2f}x (no change)")
             
             opt_result = {
                 'file': opt_name,
@@ -1582,13 +1888,13 @@ def test_chapter(chapter_dir: Path, enable_profiling: bool = False, fast_mode: b
             
             # Profile optimized if profiling is enabled (nsys, ncu)
             if enable_profiling and profiling_output_dir:
-                print(f"\n    Profiling optimized...", flush=True)
+                logger.info(f"\n    Profiling optimized...")
                 profiler_results = []
                 optimized_metrics = {}
                 
                 # nsys profiling
                 if check_nsys_available():
-                    print(f"      nsys...", end=' ', flush=True)
+                    logger.info(f"      nsys...")
                     nsys_path = profile_cuda_executable(
                         optimized_executable, chapter_dir, profiling_output_dir,
                         variant=f"optimized_{technique}"
@@ -1607,7 +1913,7 @@ def test_chapter(chapter_dir: Path, enable_profiling: bool = False, fast_mode: b
                 
                 # ncu profiling
                 if check_ncu_available():
-                    print(f"ncu...", end=' ', flush=True)
+                    logger.info(f"ncu...")
                     ncu_path = profile_cuda_executable_ncu(
                         optimized_executable, chapter_dir, profiling_output_dir,
                         variant=f"optimized_{technique}"
@@ -1624,17 +1930,17 @@ def test_chapter(chapter_dir: Path, enable_profiling: bool = False, fast_mode: b
                 else:
                     profiler_results.append("ncu-")
                 
-                print(f" ({', '.join(profiler_results)})")
+                logger.info(f" ({', '.join(profiler_results)})")
                 
                 # Display extracted metrics
                 if optimized_metrics:
-                    print(f"        📈 Profiler Metrics:")
+                    logger.info(f"        📈 Profiler Metrics:")
                     if 'nsys' in optimized_metrics:
                         for key, value in optimized_metrics['nsys'].items():
-                            print(f"          nsys.{key}: {value:.2f}")
+                            logger.info(f"          nsys.{key}: {value:.2f}")
                     if 'ncu' in optimized_metrics:
                         for key, value in optimized_metrics['ncu'].items():
-                            print(f"          ncu.{key}: {value:.2f}")
+                            logger.info(f"          ncu.{key}: {value:.2f}")
                     opt_result['optimized_profiler_metrics'] = optimized_metrics
             
             result_entry['optimizations'].append(opt_result)
@@ -1657,14 +1963,15 @@ def test_chapter(chapter_dir: Path, enable_profiling: bool = False, fast_mode: b
     max_speedup = max(speedups) if speedups else 1.0
     min_speedup = min(speedups) if speedups else 1.0
 
-    print("\n" + "-" * 80)
-    print(f"{chapter_name.upper()} SUMMARY")
-    print(f"Benchmarks: {len(benchmark_results)} | Successful: {successful} | Failed: {failed} | Skipped: {skipped_hw}")
+    logger.info("\n" + "-" * 80)
+    logger.info(f"{chapter_name.upper()} SUMMARY")
+    total_skipped = skipped_hw + skipped_distributed
+    logger.info(f"Benchmarks: {len(benchmark_results)} | Successful: {successful} | Failed: {failed} | Skipped: {total_skipped} (HW: {skipped_hw}, Dist: {skipped_distributed})")
     if speedups:
-        print(f"Speedups collected: {len(speedups)} | Avg: {avg_speedup:.2f}x | Best: {max_speedup:.2f}x | Worst: {min_speedup:.2f}x")
+        logger.info(f"Speedups collected: {len(speedups)} | Avg: {avg_speedup:.2f}x | Best: {max_speedup:.2f}x | Worst: {min_speedup:.2f}x")
     else:
-        print("No successful optimizations exceeded baseline performance")
-    print("-" * 80)
+        logger.info("No successful optimizations exceeded baseline performance")
+    logger.info("-" * 80)
     
     return {
         'chapter': chapter_name,
@@ -1675,6 +1982,8 @@ def test_chapter(chapter_dir: Path, enable_profiling: bool = False, fast_mode: b
             'successful': successful,
             'failed': failed,
             'skipped_hardware': skipped_hw,
+            'skipped_distributed': skipped_distributed,
+            'total_skipped': total_skipped,
             'total_speedups': len(speedups),
             'average_speedup': avg_speedup,
             'max_speedup': max_speedup,
@@ -1834,19 +2143,30 @@ def main():
         action='store_true',
         help='Enable profiling (generates nsys .nsys-rep, ncu .ncu-rep, and PyTorch trace files for each benchmark)'
     )
+    parser.add_argument(
+        '--only-examples',
+        type=str,
+        default=None,
+        help='Comma-separated list of example names to run (e.g., "moe,cutlass"). If not specified, runs all examples.'
+    )
     
     args = parser.parse_args()
     
-    print("=" * 80)
-    print("TESTING ALL BENCHMARKS")
-    print("=" * 80)
-    print()
+    # Parse --only-examples into a list
+    only_examples = None
+    if args.only_examples:
+        only_examples = [name.strip() for name in args.only_examples.split(",") if name.strip()]
+    
+    logger.info("=" * 80)
+    logger.info("TESTING ALL BENCHMARKS")
+    logger.info("=" * 80)
+    logger.info("")
 
     dump_environment_and_capabilities()
-    print()
+    logger.info("")
     
     # Dump hardware capabilities at start
-    print("Dumping hardware capabilities...")
+    logger.info("Dumping hardware capabilities...")
     try:
         dump_caps_path = repo_root / "tools" / "utilities" / "dump_hardware_capabilities.py"
         if dump_caps_path.exists():
@@ -1857,17 +2177,17 @@ def main():
                 text=True,
                 timeout=15
             )
-            print(result.stdout)
+            logger.info(result.stdout)
             if result.stderr:
-                print(result.stderr, file=sys.stderr)
+                logger.warning(result.stderr)
         else:
-            print("WARNING: Hardware capabilities script not found")
+            logger.warning("WARNING: Hardware capabilities script not found")
     except Exception as e:
-        print(f"WARNING: Could not dump hardware capabilities: {e}")
-        print()
+        logger.warning(f"WARNING: Could not dump hardware capabilities: {e}")
+        logger.info("")
     
     # Pre-compile CUDA extensions before running benchmarks
-    print("Pre-compiling CUDA extensions...")
+    logger.info("Pre-compiling CUDA extensions...")
     try:
         precompile_path = repo_root / "tools" / "utilities" / "precompile_cuda_extensions.py"
         if precompile_path.exists():
@@ -1878,19 +2198,19 @@ def main():
                 text=True,
                 timeout=60  # 60s - pre-compilation can take time for multiple extensions
             )
-            print(result.stdout)
+            logger.info(result.stdout)
             if result.stderr:
-                print(result.stderr, file=sys.stderr)
+                logger.warning(result.stderr)
             precompile_success = result.returncode == 0
             if not precompile_success:
-                print("WARNING: Some CUDA extensions failed to pre-compile")
-                print("   Benchmarks using these extensions may fail")
+                logger.warning("WARNING: Some CUDA extensions failed to pre-compile")
+                logger.warning("   Benchmarks using these extensions may fail")
         else:
-            print("WARNING: Pre-compilation script not found - extensions will compile at runtime")
+            logger.warning("WARNING: Pre-compilation script not found - extensions will compile at runtime")
     except Exception as e:
-        print(f"WARNING: Could not pre-compile CUDA extensions: {e}")
-        print("   Extensions will compile at runtime (may cause segfaults)")
-    print()
+        logger.warning(f"WARNING: Could not pre-compile CUDA extensions: {e}")
+        logger.warning("   Extensions will compile at runtime (may cause segfaults)")
+    logger.info("")
     
     # Determine chapters to test
     if args.chapter and args.chapter != 'all':
@@ -1907,7 +2227,11 @@ def main():
         if not chapter_dir.exists():
             continue
         
-        result = test_chapter(chapter_dir, enable_profiling=args.profile)
+        result = test_chapter(
+            chapter_dir,
+            enable_profiling=args.profile,
+            only_examples=only_examples
+        )
         all_results.append(result)
     
     # Save results
@@ -1920,37 +2244,37 @@ def main():
                 'timestamp': datetime.now().isoformat(),
                 'results': all_results,
             }, f, indent=2)
-        print(f"\nJSON results saved to: {output_json}")
+        logger.info(f"\nJSON results saved to: {output_json}")
     
     if args.format in ['markdown', 'both']:
         generate_markdown_report(all_results, output_md)
-        print(f"Markdown report saved to: {output_md}")
+        logger.info(f"Markdown report saved to: {output_md}")
     
     # Print summary
-    print("\n" + "=" * 80)
-    print("SUMMARY")
-    print("=" * 80)
+    logger.info("\n" + "=" * 80)
+    logger.info("SUMMARY")
+    logger.info("=" * 80)
     
     total_benchmarks = sum(r['summary']['total_benchmarks'] for r in all_results)
     total_successful = sum(r['summary']['successful'] for r in all_results)
     total_failed = sum(r['summary']['failed'] for r in all_results)
     total_skipped_hw = sum(r['summary'].get('skipped_hardware', 0) for r in all_results)
     
-    print(f"Total benchmarks tested: {total_benchmarks}")
-    print(f"Successful: {total_successful}")
-    print(f"Failed: {total_failed}")
+    logger.info(f"Total benchmarks tested: {total_benchmarks}")
+    logger.info(f"Successful: {total_successful}")
+    logger.info(f"Failed: {total_failed}")
     if total_skipped_hw > 0:
-        print(f"WARNING: Skipped (hardware/software limitations): {total_skipped_hw}")
+        logger.warning(f"WARNING: Skipped (hardware/software limitations): {total_skipped_hw}")
     
     if total_benchmarks > 0:
         success_rate = (total_successful / total_benchmarks) * 100
-        print(f"Success rate: {success_rate:.1f}%")
+        logger.info(f"Success rate: {success_rate:.1f}%")
     
     if total_skipped_hw > 0:
-        print(f"\nWARNING: HARDWARE/SOFTWARE LIMITATIONS DETECTED:")
-        print(f"   {total_skipped_hw} benchmarks skipped due to known limitations")
-        print(f"   (e.g., Triton SM 12.1 support, device-side assert cascades)")
-        print(f"   See detailed report for specific skip reasons")
+        logger.warning(f"\nWARNING: HARDWARE/SOFTWARE LIMITATIONS DETECTED:")
+        logger.warning(f"   {total_skipped_hw} benchmarks skipped due to known limitations")
+        logger.warning(f"   (e.g., Triton SM 12.1 support, device-side assert cascades)")
+        logger.warning(f"   See detailed report for specific skip reasons")
     
     # Calculate overall speedup statistics
     all_speedups = []
@@ -1961,10 +2285,10 @@ def main():
                     all_speedups.append(bench['best_speedup'])
     
     if all_speedups:
-        print(f"\nSpeedup Statistics:")
-        print(f"  Average: {sum(all_speedups)/len(all_speedups):.2f}x")
-        print(f"  Best: {max(all_speedups):.2f}x")
-        print(f"  Worst: {min(all_speedups):.2f}x")
+        logger.info(f"\nSpeedup Statistics:")
+        logger.info(f"  Average: {sum(all_speedups)/len(all_speedups):.2f}x")
+        logger.info(f"  Best: {max(all_speedups):.2f}x")
+        logger.info(f"  Worst: {min(all_speedups):.2f}x")
     
     return 0 if total_failed == 0 else 1
 

@@ -15,11 +15,11 @@ if str(repo_root) not in sys.path:
     sys.path.insert(0, str(repo_root))
 
 import torch
+from common.python.compile_utils import enable_tf32
 import torch.distributed as dist
 import torch.nn as nn
 import torch.optim as optim
 
-from common.python.compile_utils import enable_tf32
 
 # Ensure consistent TF32 state before any operations (new API only)
 enable_tf32()
@@ -197,4 +197,4 @@ if __name__ == "__main__":
         config=benchmark.get_config()
     )
     result = harness.benchmark(benchmark)
-    print(f"\nOptimized Overlap DDP: {result.mean_ms:.3f} ms")
+    print(f"\nOptimized Overlap DDP: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")

@@ -215,10 +215,14 @@ def main() -> None:
     print("Optimized: FP4 Precision (NVFP4)")
     print("=" * 70)
     print(f"FP4 Available: {benchmark.fp4_available}")
-    print(f"Average time per iteration: {result.mean_ms:.3f} ms")
-    print(f"Median time: {result.median_ms:.3f} ms")
-    print(f"Std deviation: {result.std_ms:.3f} ms")
-    print(f"Min: {result.min_ms:.3f} ms, Max: {result.max_ms:.3f} ms")
+    timing = result.timing
+    if timing:
+        print(f"Average time per iteration: {timing.mean_ms:.3f} ms")
+        print(f"Median time: {timing.median_ms:.3f} ms")
+        print(f"Std deviation: {timing.std_ms:.3f} ms")
+        print(f"Min: {timing.min_ms:.3f} ms, Max: {timing.max_ms:.3f} ms")
+    else:
+        print("No timing data available")
 
 
 if __name__ == "__main__":

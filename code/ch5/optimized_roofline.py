@@ -163,9 +163,13 @@ def main() -> None:
     print("=" * 70)
     print(f"Optimized: Roofline")
     print("=" * 70)
-    print(f"Average time: {result.mean_ms:.3f} ms")
-    print(f"Median: {result.median_ms:.3f} ms")
-    print(f"Std: {result.std_ms:.3f} ms")
+    timing = result.timing
+    if timing:
+        print(f"Average time: {timing.mean_ms:.3f} ms")
+        print(f"Median: {timing.median_ms:.3f} ms")
+        print(f"Std: {timing.std_ms:.3f} ms")
+    else:
+        print("No timing data available")
 
 
 if __name__ == "__main__":

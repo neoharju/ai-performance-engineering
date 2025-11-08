@@ -22,6 +22,7 @@ from common.python.benchmark_harness import (
     Benchmark,
     BenchmarkConfig,
 )
+from common.python.benchmark_utils import warn_benchmark_scaling
 
 
 def resolve_device() -> torch.device:
@@ -42,8 +43,10 @@ class BaselineIlpBasicBenchmark(Benchmark):
         self.device = resolve_device()
         self.input = None
         self.output = None
+        # Target workload size for optimal ILP demonstration
+        original_N = 100_000_000  # 100M elements (~400 MB FP32)
+        
         # Scale workload based on available GPU memory (match optimized scale)
-        # Default: 100M elements (~400 MB FP32) for large GPUs
         # Scale down for smaller GPUs to ensure it fits
         if torch.cuda.is_available():
             total_memory_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
@@ -57,6 +60,15 @@ class BaselineIlpBasicBenchmark(Benchmark):
                 self.N = 10_000_000  # 10M elements
         else:
             self.N = 100_000_000  # Fallback (shouldn't happen - CUDA required)
+        
+        # Warn if workload was reduced
+        warn_benchmark_scaling(
+            scaling_type="ILP workload size",
+            original_values={"N": original_N},
+            scaled_values={"N": self.N},
+            impact_description="Smaller workloads may not fully demonstrate ILP benefits; speedup ratios may be lower than production-scale",
+            recommendation="For accurate production benchmarks, use GPUs with >=16GB memory"
+        )
     
     def setup(self) -> None:
         """Setup: Initialize tensors."""
@@ -130,4 +142,8 @@ if __name__ == '__main__':
         config=benchmark.get_config()
     )
     result = harness.benchmark(benchmark)
-    print(f"\nBaseline ILP Basic: {result.mean_ms:.3f} ms")
+    timing = result.timing
+    if timing:
+        print(f"\nBaseline ILP Basic: {timing.mean_ms:.3f} ms")
+    else:
+        print("\nBaseline ILP Basic: No timing data available")

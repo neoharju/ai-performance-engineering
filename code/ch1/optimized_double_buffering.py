@@ -24,6 +24,7 @@ except ImportError:
 
 from typing import Optional
 
+from common.python.compile_utils import enable_tf32
 from common.python.benchmark_harness import (
     Benchmark,
     BenchmarkConfig,
@@ -71,8 +72,7 @@ class OptimizedDoubleBufferingBenchmark(Benchmark):
             torch.backends.cudnn.benchmark = True
             torch.backends.cudnn.deterministic = False
             # Enable TF32 for faster matmul on Ampere+ GPUs
-            torch.backends.cuda.matmul.allow_tf32 = True
-            torch.backends.cudnn.allow_tf32 = True
+            enable_tf32()
         torch.manual_seed(42)
         self.buffer_size = self.N // 2
         # Create pinned host memory for efficient async transfers
@@ -214,7 +214,7 @@ if __name__ == '__main__':
     
     result = harness.benchmark(benchmark)
     print(f"\nOptimized Double Buffering Benchmark Results:")
-    print(f"  Mean time: {result.mean_ms:.3f} ms")
-    print(f"  Std dev: {result.std_ms:.3f} ms")
-    print(f"  Min time: {result.min_ms:.3f} ms")
-    print(f"  Max time: {result.max_ms:.3f} ms")
+    print(f"  Mean time: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")
+    print(f"  Std dev: {result.timing.std_ms if result.timing else 0.0:.3f} ms")
+    print(f"  Min time: {result.timing.min_ms if result.timing else 0.0:.3f} ms")
+    print(f"  Max time: {result.timing.max_ms if result.timing else 0.0:.3f} ms")

@@ -122,4 +122,8 @@ if __name__ == '__main__':
         config=benchmark.get_config()
     )
     result = harness.benchmark(benchmark)
-    print(f"\nBaseline Guided Decoding (Standard): {result.mean_ms:.3f} ms")
+    timing = result.timing
+    if timing:
+        print(f"\nBaseline Guided Decoding (Standard): {timing.mean_ms:.3f} ms")
+    else:
+        print("\nBaseline Guided Decoding (Standard): No timing data available")

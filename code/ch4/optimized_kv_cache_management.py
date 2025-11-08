@@ -20,6 +20,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.distributed as dist
 
+from common.python.compile_utils import enable_tf32
 from common.python.compile_utils import compile_model
 
 from typing import Optional, Tuple
@@ -119,8 +120,7 @@ class OptimizedKVCacheManagementBenchmark:
         """Setup: Initialize model and pre-allocated KV cache."""
         
         # Enable TF32 for faster matmul on Ampere+ GPUs
-        torch.backends.cuda.matmul.allow_tf32 = True
-        torch.backends.cudnn.allow_tf32 = True
+        enable_tf32()
         # Initialize distributed if available
         if dist.is_available() and torch.cuda.device_count() > 1:
             try:
@@ -264,9 +264,9 @@ def main() -> None:
     print("=" * 70)
     print(f"Optimized: kv_cache_management")
     print("=" * 70)
-    print(f"Average time: {result.mean_ms:.3f} ms")
-    print(f"Median: {result.median_ms:.3f} ms")
-    print(f"Std: {result.std_ms:.3f} ms")
+    print(f"Average time: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")
+    print(f"Median: {result.timing.median_ms if result.timing else 0.0:.3f} ms")
+    print(f"Std: {result.timing.std_ms if result.timing else 0.0:.3f} ms")
 
 if __name__ == "__main__":
     main()

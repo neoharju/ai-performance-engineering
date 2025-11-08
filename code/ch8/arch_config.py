@@ -13,12 +13,43 @@ from __future__ import annotations
 
 import os
 import warnings
+from pathlib import Path
 
 import torch
-
 from common.python.compile_utils import enable_tf32
 
+
 enable_tf32()
+
+# Configure torch inductor cache directory to avoid C++ compilation errors
+def _configure_inductor_cache() -> None:
+    """Set up torch inductor cache directory to avoid C++ compilation errors."""
+    cache_dir = os.getenv("TORCHINDUCTOR_CACHE_DIR")
+    if cache_dir is None:
+        # Use absolute path in repo root to avoid working directory issues
+        repo_root = Path(__file__).parent.parent
+        cache_path = repo_root / ".torch_inductor"
+        cache_path.mkdir(parents=True, exist_ok=True)
+        os.environ["TORCHINDUCTOR_CACHE_DIR"] = str(cache_path)
+    else:
+        # User-specified cache directory - ensure it exists
+        cache_path = Path(cache_dir)
+        if not cache_path.is_absolute():
+            # Relative path - create in current working directory
+            cache_path = Path.cwd() / cache_dir
+        cache_path.mkdir(parents=True, exist_ok=True)
+        os.environ["TORCHINDUCTOR_CACHE_DIR"] = str(cache_path)
+    
+    # Create subdirectories needed by PyTorch inductor for C++ compilation
+    # 'od' is for output directory, 'tk' is for temporary kernel files
+    cache_path = Path(os.environ["TORCHINDUCTOR_CACHE_DIR"])
+    try:
+        (cache_path / "od").mkdir(parents=True, exist_ok=True)
+        (cache_path / "tk").mkdir(parents=True, exist_ok=True)
+    except (OSError, PermissionError):
+        pass  # If we can't create subdirectories, PyTorch will handle it
+
+_configure_inductor_cache()
 
 _VALID_MODES = {
     "default",
@@ -66,5 +97,13 @@ def maybe_compile(fn, *, default_mode: str = "reduce-overhead"):
     try:
         return torch.compile(fn, mode=mode)
     except Exception as exc:  # pragma: no cover - torch.compile failures are rare
-        warnings.warn(f"torch.compile failed in mode {mode!r}: {exc}. Running eager path.")
+        error_msg = str(exc)
+        # Handle C++ compilation errors gracefully
+        if "CppCompileError" in error_msg or "torch._inductor" in error_msg or "No such file or directory" in error_msg:
+            warnings.warn(
+                f"torch.compile failed due to C++ compilation error in mode {mode!r}: {error_msg[:200]}. "
+                f"Running eager path. This may be due to missing cache directory or working directory issues."
+            )
+        else:
+            warnings.warn(f"torch.compile failed in mode {mode!r}: {exc}. Running eager path.")
         return fn

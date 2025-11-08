@@ -13,6 +13,7 @@ import time
 import numpy as np
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -185,11 +186,11 @@ def test_profiling_tools():
     try:
         # Use conditional NVTX ranges - only enabled when profiling
         from common.python.nvtx_helper import nvtx_range, get_nvtx_enabled
-        config = self.get_config()
-        enable_nvtx = get_nvtx_enabled(config) if config else False
+        config = SimpleNamespace(enable_nvtx=True)
+        enable_nvtx = get_nvtx_enabled(config)
 
         with nvtx_range("test_region", enable=enable_nvtx):
-        time.sleep(0.1)
+            time.sleep(0.1)
         print(" NVTX annotations work")
     except Exception as exc:
         print(f" NVTX failed: {exc}")

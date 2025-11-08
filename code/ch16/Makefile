@@ -2,11 +2,14 @@
 
 include ../common/cuda_arch.mk
 
-NVCC_FLAGS = $(CUDA_NVCC_ARCH_FLAGS) -lineinfo
+NVCC_FLAGS = $(CUDA_NVCC_ARCH_FLAGS) -lineinfo $(CUDA_NVTX_CFLAGS)
+NVCC_LIBS = -lcuda $(CUDA_NVTX_LDFLAGS)
 SUFFIX = $(TARGET_SUFFIX)
 
 BASE_TARGETS = nvtx_profiling
 TARGETS = $(addsuffix $(SUFFIX), $(BASE_TARGETS))
+
+$(TARGETS): $(CUDA_NVTX_DEPS)
 
 .PHONY: all clean test compare b200 gb10 b300 gb300 profile-nsys profile-ncu profile-hta profile-perf profile-all $(TARGETS)
 
@@ -16,7 +19,7 @@ all: $(TARGETS)
 	@echo "✓ Built $(words $(BASE_TARGETS)) CUDA examples"
 
 nvtx_profiling$(SUFFIX): nvtx_profiling.cu
-	$(NVCC) $(NVCC_FLAGS) -o $@ $< -lcuda
+	$(NVCC) $(NVCC_FLAGS) -o $@ $< $(NVCC_LIBS)
 
 test: all
 	@echo "Testing Chapter 16 examples..."
@@ -95,4 +98,3 @@ clean:
 	rm -f nsys_profile_* ncu_profile_* hta_profile_* perf.data_* comprehensive_*
 	rm -f __pycache__/*.pyc
 	@echo "Cleaned ch16 binaries and profiling artifacts"
-

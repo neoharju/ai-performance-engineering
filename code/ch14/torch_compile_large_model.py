@@ -31,10 +31,10 @@ if _repo_root not in sys.path:
 
 
 import torch
+from common.python.compile_utils import enable_tf32
 import torch.nn as nn
 import triton.testing
 
-from common.python.compile_utils import enable_tf32
 
 
 def configure_for_peak_performance():

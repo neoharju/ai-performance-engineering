@@ -24,6 +24,7 @@ from common.python.benchmark_harness import (
     BenchmarkHarness,
     BenchmarkMode
 )
+from common.python.benchmark_utils import warn_benchmark_scaling
 
 
 def resolve_device() -> torch.device:
@@ -67,9 +68,36 @@ class BaselineMoEBenchmark(Benchmark):
         self.device = resolve_device()
         self.model = None
         self.x = None
-        # Reduced workload size to prevent GPU OOM
-        self.batch_size = 32  # Reduced to prevent OOM
-        self.seq_len = 4096  # Reduced to prevent OOM
+        # Target workload sizes for fair comparison with optimized version
+        original_batch_size = 128
+        original_seq_len = 16384
+        
+        # Scale down based on available GPU memory to prevent OOM
+        # Match optimized version scaling for fair comparison
+        if torch.cuda.is_available():
+            total_memory_gb = torch.cuda.get_device_properties(0).total_memory / 1e9
+            if total_memory_gb >= 80:  # Large GPU - can use larger workload
+                self.batch_size = 64
+                self.seq_len = 8192
+            elif total_memory_gb >= 40:  # Medium GPU
+                self.batch_size = 32
+                self.seq_len = 4096
+            else:  # Smaller GPU
+                self.batch_size = 16
+                self.seq_len = 2048
+        else:
+            self.batch_size = 32
+            self.seq_len = 4096
+        
+        # Warn if workload was reduced
+        warn_benchmark_scaling(
+            scaling_type="MoE workload size",
+            original_values={"batch_size": original_batch_size, "seq_len": original_seq_len},
+            scaled_values={"batch_size": self.batch_size, "seq_len": self.seq_len},
+            impact_description="Smaller workloads may not fully demonstrate optimization benefits; speedup ratios may be lower than production-scale",
+            recommendation="For accurate production benchmarks, use GPUs with >=80GB memory or manually increase batch_size/seq_len"
+        )
+        
         self.hidden_dim = 1024
         self.num_experts = 8
     
@@ -134,9 +162,9 @@ def main() -> None:
     print("Routing: Dense (all experts for every token)")
     print("Problem: Inefficient - computes unnecessary experts\n")
     
-    print(f"Average time: {result.mean_ms:.3f} ms")
-    print(f"Median: {result.median_ms:.3f} ms")
-    print(f"Std: {result.std_ms:.3f} ms")
+    print(f"Average time: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")
+    print(f"Median: {result.timing.median_ms if result.timing else 0.0:.3f} ms")
+    print(f"Std: {result.timing.std_ms if result.timing else 0.0:.3f} ms")
     print(f"Experts used: {benchmark.num_experts} (all)")
     print("Status: Dense routing (inefficient)")
     print("\nTip: Use sparse routing (top-k experts) for 2-4x speedup")

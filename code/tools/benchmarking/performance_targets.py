@@ -8,13 +8,17 @@ if available (created during setup.sh). If not found, falls back to hardcoded
 baseline values.
 """
 
+from common.python import compile_utils as _compile_utils_patch  # noqa: F401
 import json
 import copy
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 # Default baseline targets (used as fallback if benchmark_peak hasn't run)
-_DEFAULT_TARGETS: Dict[str, Dict[str, Dict[str, Any]]] = {
+# Each chapter can have "description" (str) and "metrics" (dict) keys.
+TargetsDict = Dict[str, Dict[str, Any]]
+
+_DEFAULT_TARGETS: TargetsDict = {
     "overall": {
         "hbm3e_bandwidth_tbs": {"min": 3.0, "target": 3.5, "unit": "TB/s", "realistic_max": 4.0},
         "fp16_compute_tflops": {"min": 1000, "target": 2000, "unit": "TFLOPS", "realistic_max": 1300},
@@ -30,8 +34,14 @@ _DEFAULT_TARGETS: Dict[str, Dict[str, Dict[str, Any]]] = {
     "ch2": {
         "description": "Hardware Overview",
         "metrics": {
+            # NVLink-C2C bandwidth: ~900 GB/s between Grace and Blackwell (book/ch2.md:41-47)
             "nvlink_bandwidth_gbs": {"min": 650, "target": 725, "unit": "GB/s"},
-            "hbm3e_bandwidth_tbs": {"min": 5.0, "target": 5.5, "unit": "TB/s"},
+            # HBM3e bandwidth: ~8 TB/s per GPU (book/ch2.md:194-199)
+            # Note: NSYS reports in GB/s, so targets converted (5.5 TB/s = 5500 GB/s)
+            "hbm3e_bandwidth_tbs": {"min": 5000, "target": 5500, "unit": "GB/s"},
+            # NVLink 5 aggregate: 1.8 TB/s per GPU for NVSwitch fabric (book/ch2.md:392-399)
+            # TODO: Counter name TBD - metric disabled until NCU counter name is confirmed
+            # "nvswitch_bandwidth_tbs": {"min": 1500, "target": 1800, "unit": "GB/s"},
         }
     },
     "ch3": {
@@ -41,10 +51,16 @@ _DEFAULT_TARGETS: Dict[str, Dict[str, Dict[str, Any]]] = {
     "ch4": {
         "description": "Distributed Networking",
         "metrics": {
+            # NCCL all-reduce: 100 GB/s on 800 Gb/s InfiniBand (book/ch4.md:760-779)
             "allreduce_bandwidth_gbs": {"min": 700, "target": 800, "unit": "GB/s"},
+            # P2P bandwidth: NVLink 5 provides 900 GB/s per direction (book/ch4.md:392-399)
             "p2p_bandwidth_gbs": {"min": 800, "target": 900, "unit": "GB/s"},
+            # Small message latency: single-digit microseconds (book/ch4.md:551-552)
             "small_message_latency_us": {"min": 0, "target": 2, "unit": "μs", "lower_is_better": True},
+            # Scaling efficiency: near-linear scaling goal (book/ch4.md:494-504)
             "scaling_efficiency_percent": {"min": 85, "target": 95, "unit": "%"},
+            # Topology-aware efficiency: hierarchical NCCL patterns (book/ch4.md:1088-1105)
+            "topology_efficiency_percent": {"min": 90, "target": 95, "unit": "%"},
         }
     },
     "ch5": {
@@ -58,7 +74,15 @@ _DEFAULT_TARGETS: Dict[str, Dict[str, Dict[str, Any]]] = {
     "ch7": {
         "description": "Memory Access Patterns",
         "metrics": {
-            "utilization_percent": {"min": 60, "target": 68, "unit": "%"},
+            # DRAM throughput: 25% → 90% improvement shown (book/ch7.md:633-643, Table 7-2)
+            "dram_throughput_percent": {"min": 80, "target": 90, "unit": "%"},
+            # Global Memory Load Efficiency: 28% → 97% improvement (book/ch7.md:633-643, Table 7-2)
+            # TODO: Counter name TBD - metric disabled until NCU counter name is confirmed
+            # "global_memory_load_efficiency_percent": {"min": 85, "target": 97, "unit": "%"},
+            # Achieved occupancy: 42% → 89% improvement (book/ch7.md:993-997, Table 7-4)
+            "achieved_occupancy_percent": {"min": 75, "target": 89, "unit": "%"},
+            # Shared memory throughput: 52% → 100% improvement (book/ch7.md:1395, Table 7-5)
+            "shared_memory_throughput_percent": {"min": 90, "target": 100, "unit": "%"},
         }
     },
     "ch8": {
@@ -72,9 +96,12 @@ _DEFAULT_TARGETS: Dict[str, Dict[str, Dict[str, Any]]] = {
     "ch10": {
         "description": "Tensor Cores",
         "metrics": {
+            # FP8 TFLOPS target (book/ch10.md:75-78)
             "fp8_tflops": {"min": 500, "target": 550, "unit": "TFLOPS"},
+            # FP16 TFLOPS target (book/ch10.md:75-78)
             "fp16_tflops": {"min": 500, "target": 550, "unit": "TFLOPS"},
-            "tensor_core_utilization_percent": {"min": 20, "target": 30, "unit": "%"},
+            # Tensor Core utilization: FlashAttention-3 achieves ~75% of peak FP16 FLOPs (book/ch10.md:119-123)
+            "tensor_core_utilization_percent": {"min": 60, "target": 75, "unit": "%"},
         }
     },
     "ch11": {
@@ -102,22 +129,33 @@ _DEFAULT_TARGETS: Dict[str, Dict[str, Dict[str, Any]]] = {
     },
     "ch15": {
         "description": "Disaggregated Inference",
-        "metrics": {
-            "resource_utilization_improvement_percent": {"min": 15, "target": 30, "unit": "%"},
-        }
+        # No explicit performance targets documented in book/ch15.md
+        "metrics": {}
     },
     "ch16": {
         "description": "Inference Optimization",
         "metrics": {
-            "speedup": {"min": 1.05, "target": 1.10, "unit": "x"},
+            # GPTQ/AWQ: ~2x inference speedups documented (book/ch16.md:1370-1394)
+            "speedup": {"min": 1.5, "target": 2.0, "unit": "x"},
+            # FP8 speedup: maintain performance with lower precision
             "fp8_speedup": {"min": 0.90, "target": 1.00, "unit": "x"},
+            # Quantization memory reduction: 4x footprint reduction = 75% savings (book/ch16.md:1370-1394)
+            "quantization_memory_reduction_percent": {"min": 60, "target": 75, "unit": "%"},
         }
     },
     "ch17": {
         "description": "Dynamic Routing",
         "metrics": {
+            # Routing overhead: target < 1.0 ms (book/ch17.md:119)
             "routing_overhead_ms": {"min": 0, "target": 1.0, "unit": "ms", "lower_is_better": True},
+            # Load balance variance: target < 0.1 (book/ch17.md:120)
             "load_balance_variance": {"min": 0, "target": 0.1, "unit": "", "lower_is_better": True},
+            # TTFT p99 SLO: < 200-300 ms for interactive services (book/ch17.md:81-88)
+            "ttft_p99_ms": {"min": 0, "target": 300, "unit": "ms", "lower_is_better": True},
+            # TTFT p99 MLPerf: 450 ms for Llama2 70B (book/ch17.md:86-87)
+            "ttft_p99_mlperf_ms": {"min": 0, "target": 450, "unit": "ms", "lower_is_better": True},
+            # TPOT p99 MLPerf: 40 ms for Llama2 70B (book/ch17.md:87)
+            "tpot_p99_ms": {"min": 0, "target": 40, "unit": "ms", "lower_is_better": True},
         }
     },
     "ch18": {
@@ -138,7 +176,7 @@ _DEFAULT_TARGETS: Dict[str, Dict[str, Dict[str, Any]]] = {
 }
 
 
-def _load_peak_benchmark_results(search_dir: Path = None) -> Optional[Dict[str, Any]]:
+def _load_peak_benchmark_results(search_dir: Optional[Path] = None) -> Optional[Dict[str, Any]]:
     """Load peak performance results from benchmark_peak_results_*.json."""
     if search_dir is None:
         # Try to find the project root (assume we're in tools/benchmarking/)
@@ -159,7 +197,8 @@ def _load_peak_benchmark_results(search_dir: Path = None) -> Optional[Dict[str, 
     
     try:
         with open(json_files[0]) as f:
-            return json.load(f)
+            data: Dict[str, Any] = json.load(f)
+            return data
     except Exception:
         return None
 
@@ -195,6 +234,10 @@ def _get_peak_values() -> Dict[str, float]:
     if "fp16_compute" in benchmark_data and "peak_tflops" in benchmark_data["fp16_compute"]:
         peak_values["fp16_compute_tflops"] = benchmark_data["fp16_compute"]["peak_tflops"]
     
+    # Extract BF16 compute
+    if "bf16_compute" in benchmark_data and "peak_tflops" in benchmark_data["bf16_compute"]:
+        peak_values["bf16_compute_tflops"] = benchmark_data["bf16_compute"]["peak_tflops"]
+    
     # Extract torch.compile speedup
     if "torch_compile" in benchmark_data and "speedup" in benchmark_data["torch_compile"]:
         peak_values["torch_compile_speedup"] = benchmark_data["torch_compile"]["speedup"]
@@ -202,7 +245,24 @@ def _get_peak_values() -> Dict[str, float]:
     return peak_values
 
 
-def _build_targets() -> Dict[str, Dict[str, Dict[str, Any]]]:
+def _get_metrics_section(chapter_entry: Dict[str, Any]) -> Optional[Dict[str, Dict[str, Any]]]:
+    """Return the metrics sub-dictionary for a chapter if it exists."""
+    metrics_section = chapter_entry.get("metrics")
+    if isinstance(metrics_section, dict):
+        return metrics_section
+    return None
+
+
+def _ensure_metrics_section(chapter_entry: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    """Ensure a chapter entry has a metrics dict and return it."""
+    metrics_section = _get_metrics_section(chapter_entry)
+    if metrics_section is None:
+        metrics_section = {}
+        chapter_entry["metrics"] = metrics_section
+    return metrics_section
+
+
+def _build_targets() -> TargetsDict:
     """Build TARGETS dict with measured peak values if available."""
     targets = copy.deepcopy(_DEFAULT_TARGETS)
     peak_values = _get_peak_values()
@@ -214,85 +274,119 @@ def _build_targets() -> Dict[str, Dict[str, Dict[str, Any]]]:
     # Use peak as target, and set min to 85% of peak
     if "hbm_bandwidth_tbs" in peak_values or "hbm3e_bandwidth_tbs" in peak_values:
         peak_tbs = peak_values.get("hbm_bandwidth_tbs") or peak_values.get("hbm3e_bandwidth_tbs")
-        targets["overall"]["hbm3e_bandwidth_tbs"] = {
-            "min": peak_tbs * 0.85,
-            "target": peak_tbs,
-            "unit": "TB/s",
-            "realistic_max": peak_tbs * 1.1,  # Allow 10% overhead
-        }
-        # Also update ch2 target
-        if "ch2" in targets and "metrics" in targets["ch2"]:
-            targets["ch2"]["metrics"]["hbm3e_bandwidth_tbs"] = {
-                "min": peak_tbs * 0.85,
-                "target": peak_tbs,
-                "unit": "TB/s",
+        if peak_tbs is not None:
+            # Convert TB/s to GB/s to match NSYS output format and chapter target units
+            peak_gbs = peak_tbs * 1000.0
+            
+            targets["overall"]["hbm3e_bandwidth_tbs"] = {
+                "min": peak_gbs * 0.85,
+                "target": peak_gbs,
+                "unit": "GB/s",
+                "realistic_max": peak_gbs * 1.1,  # Allow 10% overhead
             }
+            # Also update ch2 target (now in GB/s to match NSYS)
+            ch2_entry = targets.get("ch2")
+            if isinstance(ch2_entry, dict):
+                ch2_metrics = _ensure_metrics_section(ch2_entry)
+                ch2_metrics["hbm3e_bandwidth_tbs"] = {
+                    "min": peak_gbs * 0.85,
+                    "target": peak_gbs,
+                    "unit": "GB/s",
+                }
     
     if "fp4_compute_tflops" in peak_values:
         peak_tflops = peak_values["fp4_compute_tflops"]
-        # Update ch10 FP4 target if it exists, or add to overall
-        if "ch10" in targets and "metrics" in targets["ch10"]:
-            targets["ch10"]["metrics"]["fp4_tflops"] = {
-                "min": peak_tflops * 0.85,
-                "target": peak_tflops,
-                "unit": "TFLOPS",
-            }
+        if peak_tflops is not None:
+            ch10_entry = targets.get("ch10")
+            if isinstance(ch10_entry, dict):
+                ch10_metrics = _ensure_metrics_section(ch10_entry)
+                ch10_metrics["fp4_tflops"] = {
+                    "min": peak_tflops * 0.85,
+                    "target": peak_tflops,
+                    "unit": "TFLOPS",
+                }
     
     if "fp6_compute_tflops" in peak_values:
         peak_tflops = peak_values["fp6_compute_tflops"]
-        # Update ch10 FP6 target if it exists, or add to overall
-        if "ch10" in targets and "metrics" in targets["ch10"]:
-            targets["ch10"]["metrics"]["fp6_tflops"] = {
-                "min": peak_tflops * 0.85,
-                "target": peak_tflops,
-                "unit": "TFLOPS",
-            }
+        if peak_tflops is not None:
+            ch10_entry = targets.get("ch10")
+            if isinstance(ch10_entry, dict):
+                ch10_metrics = _ensure_metrics_section(ch10_entry)
+                ch10_metrics["fp6_tflops"] = {
+                    "min": peak_tflops * 0.85,
+                    "target": peak_tflops,
+                    "unit": "TFLOPS",
+                }
     
     if "fp16_compute_tflops" in peak_values:
         peak_tflops = peak_values["fp16_compute_tflops"]
-        targets["overall"]["fp16_compute_tflops"] = {
-            "min": peak_tflops * 0.85,
-            "target": peak_tflops,
-            "unit": "TFLOPS",
-            "realistic_max": peak_tflops * 1.1,
-        }
-        # Also update ch10 target
-        if "ch10" in targets and "metrics" in targets["ch10"]:
-            targets["ch10"]["metrics"]["fp16_tflops"] = {
+        if peak_tflops is not None:
+            targets["overall"]["fp16_compute_tflops"] = {
                 "min": peak_tflops * 0.85,
                 "target": peak_tflops,
                 "unit": "TFLOPS",
+                "realistic_max": peak_tflops * 1.1,
             }
+            ch10_entry = targets.get("ch10")
+            if isinstance(ch10_entry, dict):
+                ch10_metrics = _ensure_metrics_section(ch10_entry)
+                ch10_metrics["fp16_tflops"] = {
+                    "min": peak_tflops * 0.85,
+                    "target": peak_tflops,
+                    "unit": "TFLOPS",
+                }
+    
+    if "bf16_compute_tflops" in peak_values:
+        peak_tflops = peak_values["bf16_compute_tflops"]
+        if peak_tflops is not None:
+            targets["overall"]["bf16_compute_tflops"] = {
+                "min": peak_tflops * 0.85,
+                "target": peak_tflops,
+                "unit": "TFLOPS",
+                "realistic_max": peak_tflops * 1.1,
+            }
+            ch10_entry = targets.get("ch10")
+            if isinstance(ch10_entry, dict):
+                ch10_metrics = _ensure_metrics_section(ch10_entry)
+                ch10_metrics["bf16_tflops"] = {
+                    "min": peak_tflops * 0.85,
+                    "target": peak_tflops,
+                    "unit": "TFLOPS",
+                }
     
     if "fp8_compute_tflops" in peak_values:
         peak_tflops = peak_values["fp8_compute_tflops"]
-        # Update ch10 FP8 target
-        if "ch10" in targets and "metrics" in targets["ch10"]:
-            targets["ch10"]["metrics"]["fp8_tflops"] = {
-                "min": peak_tflops * 0.85,
-                "target": peak_tflops,
-                "unit": "TFLOPS",
-            }
+        if peak_tflops is not None:
+            ch10_entry = targets.get("ch10")
+            if isinstance(ch10_entry, dict):
+                ch10_metrics = _ensure_metrics_section(ch10_entry)
+                ch10_metrics["fp8_tflops"] = {
+                    "min": peak_tflops * 0.85,
+                    "target": peak_tflops,
+                    "unit": "TFLOPS",
+                }
     
     if "torch_compile_speedup" in peak_values:
         peak_speedup = peak_values["torch_compile_speedup"]
-        targets["overall"]["torch_compile_speedup_small"] = {
-            "min": peak_speedup * 0.85,
-            "target": peak_speedup,
-            "unit": "x",
-        }
-        targets["overall"]["torch_compile_speedup_large"] = {
-            "min": peak_speedup * 0.85,
-            "target": peak_speedup,
-            "unit": "x",
-        }
-        # Also update ch14 target
-        if "ch14" in targets and "metrics" in targets["ch14"]:
-            targets["ch14"]["metrics"]["torch_compile_speedup_large"] = {
+        if peak_speedup is not None:
+            targets["overall"]["torch_compile_speedup_small"] = {
                 "min": peak_speedup * 0.85,
                 "target": peak_speedup,
                 "unit": "x",
             }
+            targets["overall"]["torch_compile_speedup_large"] = {
+                "min": peak_speedup * 0.85,
+                "target": peak_speedup,
+                "unit": "x",
+            }
+            ch14_entry = targets.get("ch14")
+            if isinstance(ch14_entry, dict):
+                ch14_metrics = _ensure_metrics_section(ch14_entry)
+                ch14_metrics["torch_compile_speedup_large"] = {
+                    "min": peak_speedup * 0.85,
+                    "target": peak_speedup,
+                    "unit": "x",
+                }
     
     return targets
 
@@ -301,22 +395,32 @@ def _build_targets() -> Dict[str, Dict[str, Dict[str, Any]]]:
 TARGETS = _build_targets()
 
 
+def _read_only_metrics(chapter: str) -> Dict[str, Dict[str, Any]]:
+    """Helper to access a chapter's metrics as a plain dict."""
+    chapter_lower = chapter.lower()
+    chapter_entry = TARGETS.get(chapter_lower)
+    if not isinstance(chapter_entry, dict):
+        return {}
+    if chapter_lower == "overall":
+        return {
+            key: value
+            for key, value in chapter_entry.items()
+            if key != "description" and isinstance(value, dict)
+        }
+    metrics_section = _get_metrics_section(chapter_entry)
+    return dict(metrics_section) if metrics_section else {}
+
+
 def get_target(chapter: str, metric: str) -> Dict[str, Any]:
     """Get target definition for a specific chapter/metric."""
-    chapter_lower = chapter.lower()
-    if chapter_lower not in TARGETS:
-        return {}
-    
-    chapter_data = TARGETS[chapter_lower]
-    if "metrics" not in chapter_data:
-        return {}
-    
-    return chapter_data["metrics"].get(metric, {})
+    metrics_section = _read_only_metrics(chapter)
+    result = metrics_section.get(metric)
+    return dict(result) if isinstance(result, dict) else {}
 
 
-def get_all_chapters() -> list:
+def get_all_chapters() -> List[str]:
     """Get list of all chapters with targets."""
-    return [ch for ch in TARGETS.keys() if ch != "overall"]
+    return [chapter for chapter in TARGETS.keys() if chapter != "overall"]
 
 
 def get_chapter_description(chapter: str) -> str:
@@ -326,18 +430,14 @@ def get_chapter_description(chapter: str) -> str:
         return ""
     if chapter_lower == "overall":
         return "Overall System Performance"
-    return TARGETS[chapter_lower].get("description", "")
+    desc = TARGETS[chapter_lower].get("description", "")
+    # desc can be str or other types, but we always return str
+    return str(desc) if desc else ""
 
 
 def get_chapter_metrics(chapter: str) -> Dict[str, Dict[str, Any]]:
     """Get all metrics for a chapter."""
-    chapter_lower = chapter.lower()
-    if chapter_lower not in TARGETS:
-        return {}
-    # Overall stores metrics directly, not in a "metrics" sub-dict
-    if chapter_lower == "overall":
-        return TARGETS[chapter_lower]
-    return TARGETS[chapter_lower].get("metrics", {})
+    return _read_only_metrics(chapter)
 
 
 def compute_status(actual: float, target_def: Dict[str, Any]) -> str:

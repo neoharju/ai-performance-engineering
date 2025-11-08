@@ -1,0 +1,526 @@
+"""Run manifest schema for capturing complete environment state.
+
+Captures hardware, software, environment, and git state for reproducibility and debugging.
+"""
+
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, Optional, TypedDict
+
+import torch
+
+try:
+    import triton
+    TRITON_VERSION = triton.__version__
+except ImportError:
+    TRITON_VERSION = None
+
+from pydantic import BaseModel, Field
+
+PROJECT_ROOT = Path(__file__).parent.parent.parent
+SCHEMA_VERSION = "1.0"
+
+
+class GitStatusDict(TypedDict):
+    commit: Optional[str]
+    branch: Optional[str]
+    dirty: bool
+
+
+class CudaInfoDict(TypedDict):
+    version: Optional[str]
+    driver_version: Optional[str]
+
+
+class GpuInfoDict(TypedDict):
+    model: Optional[str]
+    compute_capability: Optional[str]
+
+
+class GpuStateDict(TypedDict):
+    gpu_clock_mhz: Optional[int]
+    memory_clock_mhz: Optional[int]
+    persistence_mode: Optional[bool]
+    power_limit_w: Optional[float]
+
+
+def get_git_info() -> GitStatusDict:
+    """Get git commit hash, branch, and dirty flag.
+    
+    Returns:
+        Dictionary with 'commit', 'branch', and 'dirty' keys.
+    """
+    git_info: GitStatusDict = {
+        "commit": None,
+        "branch": None,
+        "dirty": False,
+    }
+    
+    try:
+        # Get commit hash
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            cwd=PROJECT_ROOT,
+        )
+        if result.returncode == 0:
+            git_info["commit"] = result.stdout.strip()
+        
+        # Get branch name
+        result = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            cwd=PROJECT_ROOT,
+        )
+        if result.returncode == 0:
+            git_info["branch"] = result.stdout.strip()
+        
+        # Check if working directory is dirty
+        result = subprocess.run(
+            ["git", "diff", "--quiet"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            cwd=PROJECT_ROOT,
+        )
+        git_info["dirty"] = result.returncode != 0
+        
+    except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError):
+        # Git not available or not a git repo
+        pass
+    
+    return git_info
+
+
+def get_cuda_info() -> CudaInfoDict:
+    """Get CUDA version and driver version.
+    
+    Returns:
+        Dictionary with 'version' and 'driver_version' keys.
+    """
+    cuda_info: CudaInfoDict = {
+        "version": None,
+        "driver_version": None,
+    }
+    
+    try:
+        # Get CUDA version from PyTorch
+        if torch.cuda.is_available():
+            cuda_info["version"] = torch.version.cuda
+        
+        # Get driver version
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            driver_versions = result.stdout.strip().split("\n")
+            if driver_versions:
+                cuda_info["driver_version"] = driver_versions[0].strip()
+    except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError):
+        pass
+    
+    return cuda_info
+
+
+def get_gpu_info() -> GpuInfoDict:
+    """Get GPU model and compute capability.
+    
+    Returns:
+        Dictionary with 'model' and 'compute_capability' keys.
+    """
+    gpu_info: GpuInfoDict = {
+        "model": None,
+        "compute_capability": None,
+    }
+    
+    try:
+        if torch.cuda.is_available():
+            # Get GPU model
+            result = subprocess.run(
+                ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                models = result.stdout.strip().split("\n")
+                if models:
+                    gpu_info["model"] = models[0].strip()
+            
+            # Get compute capability
+            if torch.cuda.device_count() > 0:
+                device = torch.cuda.current_device()
+                major, minor = torch.cuda.get_device_capability(device)
+                gpu_info["compute_capability"] = f"{major}.{minor}"
+    except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError):
+        pass
+    
+    return gpu_info
+
+
+def get_gpu_state() -> GpuStateDict:
+    """Get GPU state information (clocks, persistence mode, power limit).
+    
+    Returns:
+        Dictionary with 'gpu_clock_mhz', 'memory_clock_mhz', 'persistence_mode', 'power_limit_w' keys.
+    """
+    gpu_state: GpuStateDict = {
+        "gpu_clock_mhz": None,
+        "memory_clock_mhz": None,
+        "persistence_mode": None,
+        "power_limit_w": None,
+    }
+    
+    try:
+        if torch.cuda.is_available():
+            # Get GPU clock
+            result = subprocess.run(
+                ["nvidia-smi", "--query-gpu=clocks.current.graphics", "--format=csv,noheader"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                clocks = result.stdout.strip().split("\n")
+                if clocks and clocks[0]:
+                    # Parse "1234 MHz" format
+                    clock_str = clocks[0].strip().replace(" MHz", "")
+                    try:
+                        gpu_state["gpu_clock_mhz"] = int(clock_str)
+                    except ValueError:
+                        pass
+            
+            # Get memory clock
+            result = subprocess.run(
+                ["nvidia-smi", "--query-gpu=clocks.current.memory", "--format=csv,noheader"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                clocks = result.stdout.strip().split("\n")
+                if clocks and clocks[0]:
+                    clock_str = clocks[0].strip().replace(" MHz", "")
+                    try:
+                        gpu_state["memory_clock_mhz"] = int(clock_str)
+                    except ValueError:
+                        pass
+            
+            # Get persistence mode
+            result = subprocess.run(
+                ["nvidia-smi", "-q", "-d", "PERSISTENCE_MODE"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                # Parse "Persistence Mode : Enabled" or "Persistence Mode : Disabled"
+                if "Persistence Mode" in result.stdout:
+                    gpu_state["persistence_mode"] = "Enabled" in result.stdout
+            
+            # Get power limit
+            result = subprocess.run(
+                ["nvidia-smi", "--query-gpu=power.limit", "--format=csv,noheader"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                limits = result.stdout.strip().split("\n")
+                if limits and limits[0]:
+                    # Parse "250.00 W" format
+                    limit_str = limits[0].strip().replace(" W", "")
+                    try:
+                        gpu_state["power_limit_w"] = float(limit_str)
+                    except ValueError:
+                        pass
+    except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError):
+        pass
+    
+    return gpu_state
+
+
+def reset_gpu_state() -> None:
+    """Reset GPU state for cold start (clears cache, resets memory stats).
+    
+    This function performs a "cold start" by:
+    - Clearing CUDA cache
+    - Resetting peak memory statistics
+    - Synchronizing CUDA operations
+    
+    Note: This does not reset GPU clocks or power limits (requires root/admin).
+    For full GPU reset, use: sudo nvidia-smi --gpu-reset
+    """
+    if not torch.cuda.is_available():
+        return
+    
+    try:
+        # Clear CUDA cache
+        torch.cuda.empty_cache()
+        
+        # Reset peak memory statistics
+        torch.cuda.reset_peak_memory_stats()
+        
+        # Synchronize to ensure all operations complete
+        torch.cuda.synchronize()
+        
+        # Force garbage collection
+        import gc
+        gc.collect()
+    except Exception:
+        # Silently fail if CUDA operations fail
+        pass
+
+
+class HardwareInfo(BaseModel):
+    """Hardware information."""
+    
+    gpu_model: Optional[str] = Field(None, description="GPU model name")
+    cuda_version: Optional[str] = Field(None, description="CUDA toolkit version")
+    driver_version: Optional[str] = Field(None, description="NVIDIA driver version")
+    compute_capability: Optional[str] = Field(None, description="GPU compute capability (e.g., '9.0')")
+    
+    # GPU state for reproducibility
+    gpu_clock_mhz: Optional[int] = Field(None, description="GPU clock frequency in MHz")
+    memory_clock_mhz: Optional[int] = Field(None, description="Memory clock frequency in MHz")
+    persistence_mode: Optional[bool] = Field(None, description="GPU persistence mode enabled")
+    power_limit_w: Optional[float] = Field(None, description="GPU power limit in watts")
+    
+    schemaVersion: str = Field(SCHEMA_VERSION, description="Schema version for forward compatibility")
+
+
+class SoftwareInfo(BaseModel):
+    """Software version information."""
+    
+    pytorch_version: str = Field(..., description="PyTorch version")
+    triton_version: Optional[str] = Field(None, description="Triton version")
+    python_version: str = Field(..., description="Python version")
+    os: str = Field(..., description="Operating system")
+    
+    schemaVersion: str = Field(SCHEMA_VERSION, description="Schema version for forward compatibility")
+
+
+class EnvironmentInfo(BaseModel):
+    """Environment variable information."""
+    
+    cuda_visible_devices: Optional[str] = Field(None, description="CUDA_VISIBLE_DEVICES value")
+    relevant_env_vars: Dict[str, str] = Field(default_factory=dict, description="Other relevant environment variables")
+    
+    schemaVersion: str = Field(SCHEMA_VERSION, description="Schema version for forward compatibility")
+
+
+class GitInfo(BaseModel):
+    """Git repository information."""
+    
+    commit: Optional[str] = Field(None, description="Git commit hash")
+    branch: Optional[str] = Field(None, description="Git branch name")
+    dirty: bool = Field(False, description="Whether working directory has uncommitted changes")
+    
+    schemaVersion: str = Field(SCHEMA_VERSION, description="Schema version for forward compatibility")
+
+
+class SeedInfo(BaseModel):
+    """Random seed information for reproducibility."""
+    
+    random_seed: Optional[int] = Field(None, description="Python random.seed() value")
+    numpy_seed: Optional[int] = Field(None, description="numpy.random.seed() value")
+    torch_seed: Optional[int] = Field(None, description="torch.manual_seed() value")
+    cuda_seed: Optional[int] = Field(None, description="torch.cuda.manual_seed_all() value")
+    deterministic_mode: bool = Field(False, description="Whether deterministic algorithms were enabled")
+    
+    schemaVersion: str = Field(SCHEMA_VERSION, description="Schema version for forward compatibility")
+
+
+class RunManifest(BaseModel):
+    """Complete run manifest capturing environment state.
+    
+    This manifest is generated at the start of each benchmark run and included
+    in all result files for reproducibility and debugging.
+    """
+    
+    # Hardware information
+    hardware: HardwareInfo = Field(..., description="Hardware configuration")
+    
+    # Software information
+    software: SoftwareInfo = Field(..., description="Software versions")
+    
+    # Environment information
+    environment: EnvironmentInfo = Field(..., description="Environment variables")
+    
+    # Git information
+    git: GitInfo = Field(..., description="Git repository state")
+    
+    # Seed information for reproducibility
+    seeds: Optional[SeedInfo] = Field(None, description="Random seed values used for reproducibility")
+    
+    # Timestamps
+    start_time: datetime = Field(..., description="Run start timestamp")
+    end_time: Optional[datetime] = Field(None, description="Run end timestamp")
+    duration_seconds: Optional[float] = Field(None, description="Run duration in seconds")
+    
+    # Configuration (serialized BenchmarkConfig)
+    config: Optional[Dict] = Field(None, description="Serialized BenchmarkConfig used for this run")
+    
+    schemaVersion: str = Field(SCHEMA_VERSION, description="Schema version for forward compatibility")
+    
+    @classmethod
+    def create(cls, config: Optional[Dict] = None, start_time: Optional[datetime] = None) -> RunManifest:
+        """Create a RunManifest with current environment state.
+        
+        Args:
+            config: Optional serialized BenchmarkConfig dictionary
+            start_time: Optional start time (defaults to now)
+        
+        Returns:
+            RunManifest instance with current environment captured
+        """
+        if start_time is None:
+            start_time = datetime.now()
+        
+        # Get hardware info
+        cuda_info = get_cuda_info()
+        gpu_info = get_gpu_info()
+        gpu_state = get_gpu_state()
+        hardware = HardwareInfo(
+            gpu_model=gpu_info.get("model"),
+            cuda_version=cuda_info.get("version"),
+            driver_version=cuda_info.get("driver_version"),
+            compute_capability=gpu_info.get("compute_capability"),
+            gpu_clock_mhz=gpu_state.get("gpu_clock_mhz"),
+            memory_clock_mhz=gpu_state.get("memory_clock_mhz"),
+            persistence_mode=gpu_state.get("persistence_mode"),
+            power_limit_w=gpu_state.get("power_limit_w"),
+            schemaVersion=SCHEMA_VERSION,
+        )
+        
+        # Get software info
+        software = SoftwareInfo(
+            pytorch_version=torch.__version__,
+            triton_version=TRITON_VERSION,
+            python_version=sys.version.split()[0],
+            os=sys.platform,
+            schemaVersion=SCHEMA_VERSION,
+        )
+        
+        # Get environment info
+        env_vars: Dict[str, str] = {}
+        cuda_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES")
+        
+        # Capture other relevant environment variables
+        relevant_vars = [
+            "CUDA_DEVICE_ORDER",
+            "OMP_NUM_THREADS",
+            "MKL_NUM_THREADS",
+            "TORCH_COMPILE_DEBUG",
+            "TRITON_CACHE_DIR",
+        ]
+        for var in relevant_vars:
+            value = os.environ.get(var)
+            if value is not None:
+                env_vars[var] = value
+        
+        environment = EnvironmentInfo(
+            cuda_visible_devices=cuda_visible_devices,
+            relevant_env_vars=env_vars,
+            schemaVersion=SCHEMA_VERSION,
+        )
+        
+        # Get git info
+        git_info_dict = get_git_info()
+        git = GitInfo(
+            commit=git_info_dict.get("commit"),
+            branch=git_info_dict.get("branch"),
+            dirty=bool(git_info_dict.get("dirty", False)),
+            schemaVersion=SCHEMA_VERSION,
+        )
+        
+        # Extract seed info from config if present
+        seeds = None
+        if config:
+            seed = config.get("seed")
+            deterministic = config.get("deterministic", False)
+            if seed is not None or deterministic:
+                seeds = SeedInfo(
+                    random_seed=seed,
+                    numpy_seed=seed,
+                    torch_seed=seed,
+                    cuda_seed=seed,
+                    deterministic_mode=deterministic,
+                    schemaVersion=SCHEMA_VERSION,
+                )
+        
+        return cls(
+            hardware=hardware,
+            software=software,
+            environment=environment,
+            git=git,
+            seeds=seeds,
+            start_time=start_time,
+            end_time=None,
+            duration_seconds=None,
+            config=config,
+            schemaVersion=SCHEMA_VERSION,
+        )
+    
+    def finalize(self, end_time: Optional[datetime] = None) -> None:
+        """Finalize the manifest with end time and duration.
+        
+        Args:
+            end_time: Optional end time (defaults to now)
+        """
+        if end_time is None:
+            end_time = datetime.now()
+        
+        self.end_time = end_time
+        if self.start_time:
+            delta = end_time - self.start_time
+            self.duration_seconds = delta.total_seconds()
+    
+    class Config:
+        """Pydantic configuration."""
+        json_encoders = {
+            datetime: lambda v: v.isoformat(),
+        }
+        json_schema_extra = {
+            "example": {
+                "hardware": {
+                    "gpu_model": "NVIDIA A100-SXM4-40GB",
+                    "cuda_version": "12.1",
+                    "driver_version": "535.54.03",
+                    "compute_capability": "8.0",
+                    "schemaVersion": "1.0"
+                },
+                "software": {
+                    "pytorch_version": "2.9.0+cu130",
+                    "triton_version": "3.5.0",
+                    "python_version": "3.11.0",
+                    "os": "linux",
+                    "schemaVersion": "1.0"
+                },
+                "environment": {
+                    "cuda_visible_devices": "0",
+                    "relevant_env_vars": {},
+                    "schemaVersion": "1.0"
+                },
+                "git": {
+                    "commit": "abc123def456",
+                    "branch": "main",
+                    "dirty": False,
+                    "schemaVersion": "1.0"
+                },
+                "start_time": "2024-01-01T12:00:00",
+                "schemaVersion": "1.0"
+            }
+        }

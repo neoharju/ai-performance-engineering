@@ -20,12 +20,14 @@ from torch.utils.checkpoint import checkpoint
 
 from typing import Optional
 
+from common.python.compile_utils import enable_tf32
 from common.python.benchmark_harness import (
     Benchmark,
     BenchmarkConfig,
     BenchmarkHarness,
     BenchmarkMode
 )
+from common.python.benchmark_utils import warn_benchmark_scaling
 
 def resolve_device() -> torch.device:
     """Return CUDA device if available."""
@@ -60,21 +62,41 @@ class OptimizedCheckpointBenchmark(Benchmark):
         self.device = resolve_device()
         self.model = None
         # Optimization: Compile model for kernel fusion and optimization
-        try:
 
         # Optimization: Compile model for kernel fusion and optimization
-        try:
 
         self.inputs = None
         self.targets = None
         self.optimizer = None
         self.criterion = None
-        # Match baseline size for fair comparison
+        # Target model size for optimal demonstration of checkpointing benefits
         # Checkpointing trades speed for memory - more layers = bigger memory savings
-        # Reduced to 40 layers to match baseline and avoid GPU OOM
+        original_num_layers = 50  # Target: 50 layers (~75GB params+gradients)
+        
+        # Scale down based on available GPU memory to prevent OOM
+        # Match baseline scaling for fair comparison
+        if torch.cuda.is_available():
+            total_memory_gb = torch.cuda.get_device_properties(0).total_memory / 1e9
+            if total_memory_gb >= 80:  # Large GPU - can use target size
+                self.num_layers = 50
+            elif total_memory_gb >= 60:  # Medium-large GPU
+                self.num_layers = 40  # ~60GB params+gradients
+            else:  # Smaller GPU
+                self.num_layers = 30  # ~45GB params+gradients
+        else:
+            self.num_layers = 40  # Fallback
+        
+        # Warn if model size was reduced
+        warn_benchmark_scaling(
+            scaling_type="Training model size",
+            original_values={"num_layers": original_num_layers},
+            scaled_values={"num_layers": self.num_layers},
+            impact_description="Fewer layers may reduce the memory savings benefit demonstrated by checkpointing; speedup ratios may differ",
+            recommendation="For accurate production benchmarks, use GPUs with >=80GB memory"
+        )
+        
         self.batch_size = 8
         self.hidden_dim = 4096
-        self.num_layers = 40  # Match baseline for fair comparison
     
     def setup(self) -> None:
         """Setup: initialize model and data."""
@@ -84,19 +106,14 @@ class OptimizedCheckpointBenchmark(Benchmark):
             torch.backends.cudnn.benchmark = True
             torch.backends.cudnn.deterministic = False
             # Enable TF32 for faster matmul on Ampere+ GPUs
-            torch.backends.cuda.matmul.allow_tf32 = True
-            torch.backends.cudnn.allow_tf32 = True
+            enable_tf32()
         self.model = DeepModel(hidden_dim=self.hidden_dim, num_layers=self.num_layers, use_checkpoint=True)
         self.model = self.model.to(self.device)
-        # Optimization: Use FP16 for faster computation
-        if self.device.type == "cuda":
-            try:
-                self.model = self.model.half()
-            except Exception:
-                pass  # Fallback to FP32 if FP16 not supported
+        # Keep model in FP32 - checkpointing is about memory, not precision
+        # Converting to FP16 would require matching input dtype
         self.model.train()
-        self.inputs = torch.randn(self.batch_size, self.hidden_dim, device=self.device)
-        self.targets = torch.randn(self.batch_size, self.hidden_dim, device=self.device)
+        self.inputs = torch.randn(self.batch_size, self.hidden_dim, device=self.device, dtype=torch.float32)
+        self.targets = torch.randn(self.batch_size, self.hidden_dim, device=self.device, dtype=torch.float32)
         self.optimizer = torch.optim.SGD(self.model.parameters(), lr=0.01)
         self.criterion = nn.MSELoss()
     
@@ -171,9 +188,9 @@ def main() -> None:
     print("Mode: Checkpointing (recomputes activations)")
     print("Note: Same workload size as baseline\n")
     
-    print(f"Average time per iteration: {result.mean_ms:.3f} ms")
-    print(f"Median: {result.median_ms:.3f} ms")
-    print(f"Std: {result.std_ms:.3f} ms")
+    print(f"Average time per iteration: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")
+    print(f"Median: {result.timing.median_ms if result.timing else 0.0:.3f} ms")
+    print(f"Std: {result.timing.std_ms if result.timing else 0.0:.3f} ms")
     print("Status: Checkpointing (30-50% memory reduction, 10-30% slower)")
     print("Benefit: Enables training larger models")
 

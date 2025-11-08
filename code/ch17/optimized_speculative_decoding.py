@@ -42,12 +42,17 @@ class OptimizedSpeculativeDecodingBenchmark(Benchmark):
         self.device = resolve_device()
         self.target_model = None
         # Optimization: Compile model for kernel fusion and optimization
-        try:
 
         self.draft_model = None
+        self.embedding = None
         self.input_ids = None
         self.max_length = 20
         self.speculative_length = 4  # Number of tokens to predict speculatively
+        self.hidden_dim = 256
+        self.vocab_size = 1000
+        self.batch_size = 4
+        self.seq_len = 10
+        self.memory = None
     
     def setup(self) -> None:
         """Setup: Initialize target and draft models."""
@@ -61,25 +66,45 @@ class OptimizedSpeculativeDecodingBenchmark(Benchmark):
         # Draft model predicts multiple tokens in parallel
         # Target model verifies predictions for correctness
         
-        hidden_dim = 256
-        vocab_size = 1000
-        
         # Target model (slower, more accurate)
         self.target_model = nn.TransformerDecoder(
-            nn.TransformerDecoderLayer(d_model=hidden_dim, nhead=8, batch_first=True),
+            nn.TransformerDecoderLayer(d_model=self.hidden_dim, nhead=8, batch_first=True),
             num_layers=4  # Larger model
-        ).to(self.device).eval()
+        ).to(self.device)
+        if self.device.type == "cuda":
+            self.target_model = self.target_model.half()
+        self.target_model.eval()
         
         # Draft model (faster, less accurate) for speculative decoding
         self.draft_model = nn.TransformerDecoder(
-            nn.TransformerDecoderLayer(d_model=hidden_dim, nhead=8, batch_first=True),
+            nn.TransformerDecoderLayer(d_model=self.hidden_dim, nhead=8, batch_first=True),
             num_layers=2  # Smaller model
-        ).to(self.device).eval()
+        ).to(self.device)
+        if self.device.type == "cuda":
+            self.draft_model = self.draft_model.half()
+        self.draft_model.eval()
+        
+        self.embedding = nn.Embedding(self.vocab_size, self.hidden_dim).to(self.device)
+        if self.device.type == "cuda":
+            self.embedding = self.embedding.half()
+        
+        target_dtype = next(self.target_model.parameters()).dtype
         
         # Input
-        batch_size = 4
-        seq_len = 10
-        self.input_ids = torch.randint(0, vocab_size, (batch_size, seq_len), device=self.device)
+        self.input_ids = torch.randint(
+            0,
+            self.vocab_size,
+            (self.batch_size, self.seq_len),
+            device=self.device,
+            dtype=torch.long,
+        )
+        self.memory = torch.randn(
+            self.batch_size,
+            self.seq_len,
+            self.hidden_dim,
+            device=self.device,
+            dtype=target_dtype,
+        )
         torch.cuda.synchronize()
     
     def benchmark_fn(self) -> None:
@@ -100,22 +125,29 @@ class OptimizedSpeculativeDecodingBenchmark(Benchmark):
                 
                 current_ids = self.input_ids.clone()
                 
+                target_dtype = next(self.target_model.parameters()).dtype
+                
                 while current_ids.size(1) < self.input_ids.size(1) + self.max_length:
                     # Draft model: Predict multiple tokens speculatively
-                    draft_output = self.draft_model(current_ids)
+                    draft_embeds = self.embedding(current_ids).to(target_dtype)
+                    draft_output = self.draft_model(draft_embeds, self.memory)
                     draft_tokens = draft_output[:, -self.speculative_length:, :].argmax(dim=-1)
                     
                     # Target model: Verify draft predictions (speculative decoding verification)
-                    # In practice, would verify each token sequentially and accept/reject
-                    verified_tokens = draft_tokens  # Simplified: accept all draft tokens
-                    
-                    # Append verified tokens (speculative decoding: parallel generation)
-                    current_ids = torch.cat([current_ids, verified_tokens], dim=1)
+                    for j in range(draft_tokens.size(1)):
+                        candidate = torch.cat([current_ids, draft_tokens[:, j:j+1]], dim=1)
+                        candidate_embeds = self.embedding(candidate).to(target_dtype)
+                        target_output = self.target_model(candidate_embeds, self.memory)
+                        accepted_token = target_output[:, -1, :].argmax(dim=-1, keepdim=True)
+                        
+                        current_ids = torch.cat([current_ids, accepted_token], dim=1)
+                        if current_ids.size(1) >= self.input_ids.size(1) + self.max_length:
+                            break
                     
                     # Optimization: Speculative decoding benefits
-                    # - Parallel token prediction (draft model)
-                    # - Faster generation compared to sequential decoding
-                    # - Target model verification ensures correctness
+                    # - Draft model proposes multiple candidates per iteration
+                    # - Target model still verifies correctness to maintain quality
+                    # Loop continues until desired length is reached
                     if current_ids.size(1) >= self.input_ids.size(1) + self.max_length:
                         break
 
@@ -124,7 +156,9 @@ class OptimizedSpeculativeDecodingBenchmark(Benchmark):
         """Teardown: Clean up resources."""
         self.target_model = None
         self.draft_model = None
+        self.embedding = None
         self.input_ids = None
+        self.memory = None
         torch.cuda.empty_cache()
     
     def get_config(self) -> BenchmarkConfig:
@@ -160,9 +194,9 @@ def main() -> None:
     print("=" * 70)
     print(f"Optimized: speculative_decoding")
     print("=" * 70)
-    print(f"Average time: {result.mean_ms:.3f} ms")
-    print(f"Median: {result.median_ms:.3f} ms")
-    print(f"Std: {result.std_ms:.3f} ms")
+    print(f"Average time: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")
+    print(f"Median: {result.timing.median_ms if result.timing else 0.0:.3f} ms")
+    print(f"Std: {result.timing.std_ms if result.timing else 0.0:.3f} ms")
 
 if __name__ == "__main__":
     main()

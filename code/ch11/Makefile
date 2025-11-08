@@ -4,7 +4,7 @@ NVCC_FLAGS = $(CUDA_NVCC_ARCH_FLAGS)
 SUFFIX = $(TARGET_SUFFIX)
 
 # Base targets
-BASE_TARGETS = baseline_streams optimized_streams_ordered optimized_streams_warp_specialized basic_streams stream_ordered_allocator warp_specialized_pipeline_multistream warp_specialized_two_pipelines_multistream
+BASE_TARGETS = baseline_streams optimized_streams_ordered optimized_streams_warp_specialized warp_specialized_two_pipelines_multistream warp_specialized_cluster_pipeline_multistream
 TARGETS = $(addsuffix $(SUFFIX), $(BASE_TARGETS))
 
 # Default target

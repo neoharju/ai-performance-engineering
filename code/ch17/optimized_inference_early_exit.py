@@ -90,10 +90,8 @@ class OptimizedEarlyExitBenchmark(Benchmark):
         self.device = resolve_device()
         self.model = None
         # Optimization: Compile model for kernel fusion and optimization
-        try:
 
         # Optimization: Compile model for kernel fusion and optimization
-        try:
 
         self.x = None
         self.batch_size = 16
@@ -120,7 +118,13 @@ class OptimizedEarlyExitBenchmark(Benchmark):
             except Exception:
                 pass  # Fallback to FP32 if FP16 not supported
         self.model.eval()
-        self.x = torch.randn(self.batch_size, self.hidden_dim, device=self.device)
+        input_dtype = next(self.model.parameters()).dtype
+        self.x = torch.randn(
+            self.batch_size,
+            self.hidden_dim,
+            device=self.device,
+            dtype=input_dtype,
+        )
         
         # Set random seed for reproducibility
         import random
@@ -139,7 +143,7 @@ class OptimizedEarlyExitBenchmark(Benchmark):
 
         with nvtx_range("inference_early_exit", enable=enable_nvtx):
             with torch.no_grad():
-                        _ = self.model.forward_early_exit(self.x, exit_distribution=self.exit_distribution)
+                _ = self.model.forward_early_exit(self.x, exit_distribution=self.exit_distribution)
 
     def teardown(self) -> None:
         """Cleanup."""
@@ -183,15 +187,14 @@ def main() -> None:
                  12 * benchmark.exit_distribution[1] + \
                  24 * benchmark.exit_distribution[2]
     
-    print(f"Average time: {result.mean_ms:.3f} ms")
-    print(f"Median: {result.median_ms:.3f} ms")
-    print(f"Std: {result.std_ms:.3f} ms")
-    print(f"Min: {result.min_ms:.3f} ms")
-    print(f"Max: {result.max_ms:.3f} ms")
+    print(f"Average time: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")
+    print(f"Median: {result.timing.median_ms if result.timing else 0.0:.3f} ms")
+    print(f"Std: {result.timing.std_ms if result.timing else 0.0:.3f} ms")
+    print(f"Min: {result.timing.min_ms if result.timing else 0.0:.3f} ms")
+    print(f"Max: {result.timing.max_ms if result.timing else 0.0:.3f} ms")
     print(f"Average layers executed: {avg_layers:.1f} (vs {benchmark.num_layers} full)")
     print("Status: Early exit (adaptive, efficient)")
     print(f"Expected speedup: ~{benchmark.num_layers / avg_layers:.2f}x for mixed-difficulty workloads")
 
 if __name__ == "__main__":
     main()
-

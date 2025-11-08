@@ -2,12 +2,14 @@
 
 include ../common/cuda_arch.mk
 
-NVCC_FLAGS = $(CUDA_NVCC_ARCH_FLAGS)
-NVCC_LIBS = -lcuda
+NVCC_FLAGS = $(CUDA_NVCC_ARCH_FLAGS) $(CUDA_NVTX_CFLAGS)
+NVCC_LIBS = -lcuda $(CUDA_NVTX_LDFLAGS)
 SUFFIX = $(TARGET_SUFFIX)
 
 BASE_TARGETS = baseline_work_queue optimized_work_queue baseline_cuda_graphs optimized_cuda_graphs baseline_cuda_graphs_conditional optimized_cuda_graphs_conditional baseline_cuda_graphs_conditional_enhanced optimized_cuda_graphs_conditional_enhanced dynamic_parallelism baseline_kernel_fusion optimized_kernel_fusion baseline_graph_bandwidth optimized_graph_bandwidth baseline_uneven_partition optimized_uneven_partition baseline_dynamic_parallelism optimized_dynamic_parallelism
 TARGETS = $(addsuffix $(SUFFIX), $(BASE_TARGETS))
+
+$(TARGETS): $(CUDA_NVTX_DEPS)
 
 .PHONY: all clean compare b200 gb10 b300 gb300 profile-nsys profile-ncu profile-hta profile-perf profile-all $(TARGETS)
 

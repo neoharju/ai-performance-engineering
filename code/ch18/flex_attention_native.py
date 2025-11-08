@@ -37,6 +37,8 @@ import torch.nn as nn
 from torch.nn.attention.flex_attention import flex_attention, create_block_mask
 import time
 
+from common.python.compile_utils import enable_tf32
+
 assert torch.cuda.is_available(), "CUDA required for FlexAttention examples"
 _major, _minor = torch.cuda.get_device_capability()
 assert _major >= 12, f"Blackwell expected (sm_120); got sm_{_major}{_minor}"
@@ -80,8 +82,7 @@ def configure_for_flex_attention():
         print(" Quick mode active (reduced problem size / iterations)")
     
     # PyTorch 2.9 TF32 controls (deprecates allow_tf32 flags)
-    torch.set_float32_matmul_precision("high")
-    torch.backends.cudnn.conv.fp32_precision = "tf32"
+    enable_tf32()
     
     # Enable Flash Attention (FlexAttention builds on this)
     torch.backends.cuda.enable_flash_sdp(True)

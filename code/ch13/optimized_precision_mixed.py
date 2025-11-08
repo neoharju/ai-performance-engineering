@@ -22,6 +22,7 @@ from torch.amp import autocast, GradScaler
 
 from typing import Optional
 
+from common.python.compile_utils import enable_tf32
 from common.python.benchmark_harness import (
     Benchmark,
     BenchmarkConfig,
@@ -56,10 +57,8 @@ class OptimizedPrecisionMixedBenchmark(Benchmark):
         self.device = resolve_device()
         self.model = None
         # Optimization: Compile model for kernel fusion and optimization
-        try:
 
         # Optimization: Compile model for kernel fusion and optimization
-        try:
 
         self.inputs = None
         self.targets = None
@@ -77,28 +76,33 @@ class OptimizedPrecisionMixedBenchmark(Benchmark):
             torch.backends.cudnn.benchmark = True
             torch.backends.cudnn.deterministic = False
             # Enable TF32 for faster matmul on Ampere+ GPUs
-            torch.backends.cuda.matmul.allow_tf32 = True
-            torch.backends.cudnn.allow_tf32 = True
+            enable_tf32()
         torch.manual_seed(42)
         
-        # Model (can be FP32, autocast handles conversion)
-        self.model = SimpleModel(hidden_dim=self.hidden_dim).to(self.device)
-        # Optimization: Use FP16 for faster computation
-        if self.device.type == "cuda":
-            try:
-                self.model = self.model.half()
-            except Exception:
-                pass  # Fallback to FP32 if FP16 not supported
+        # Model stays FP32 - autocast handles FP16 conversion
+        # Use torch.compile to fuse operations and optimize FP16 kernels
+        model = SimpleModel(hidden_dim=self.hidden_dim).to(self.device)
+        model.train()
         
-        self.model.train()
+        # Compile model to optimize mixed precision path (disable on CUDA 12.1+ where torch.compile is unstable)
+        major, _ = torch.cuda.get_device_capability(self.device)
+        compile_safe = major < 12
+        if compile_safe:
+            try:
+                self.model = torch.compile(model, mode='reduce-overhead')
+            except Exception:
+                self.model = model
+        else:
+            self.model = model
+        
         self.inputs = torch.randn(self.batch_size, self.hidden_dim, device=self.device, dtype=torch.float32)
         self.targets = torch.randn(self.batch_size, self.hidden_dim, device=self.device, dtype=torch.float32)
         self.optimizer = torch.optim.SGD(self.model.parameters(), lr=0.01)
         self.criterion = nn.MSELoss()
         self.scaler = GradScaler('cuda')  # For mixed precision gradient scaling
         
-        # Warmup
-        for _ in range(3):
+        # Warmup to ensure compilation completes
+        for _ in range(10):
             self.optimizer.zero_grad()
             with autocast('cuda'):
                 _ = self.model(self.inputs)
@@ -157,5 +161,4 @@ if __name__ == "__main__":
         config=benchmark.get_config()
     )
     result = harness.benchmark(benchmark)
-    print(f"\nOptimized Precision Mixed: {result.mean_ms:.3f} ms")
-
+    print(f"\nOptimized Precision Mixed: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")

@@ -4,6 +4,7 @@
 #include <torch/extension.h>
 #include <cuda_runtime.h>
 #include <ATen/cuda/CUDAContext.h>
+#include <c10/cuda/CUDAGuard.h>
 
 namespace {
 
@@ -58,12 +59,13 @@ void launch_bounds_baseline(torch::Tensor input, torch::Tensor output, int itera
     int num_blocks = (n + threads_per_block - 1) / threads_per_block;
     
     // Use PyTorch's current CUDA stream for consistency
+    c10::cuda::CUDAGuard guard(input.device());
     at::cuda::CUDAStream stream = at::cuda::getCurrentCUDAStream(input.device().index());
     cudaStream_t stream_handle = stream.stream();
     
     for (int i = 0; i < iterations; ++i) {
         kernel_no_launch_bounds<<<num_blocks, threads_per_block, 0, stream_handle>>>(
-            input.data_ptr<const float>(),
+            const_cast<float*>(input.data_ptr<float>()),
             output.data_ptr<float>(),
             n
         );
@@ -84,12 +86,13 @@ void launch_bounds_optimized(torch::Tensor input, torch::Tensor output, int iter
     int num_blocks = (n + threads_per_block - 1) / threads_per_block;
     
     // Use PyTorch's current CUDA stream for consistency
+    c10::cuda::CUDAGuard guard(input.device());
     at::cuda::CUDAStream stream = at::cuda::getCurrentCUDAStream(input.device().index());
     cudaStream_t stream_handle = stream.stream();
     
     for (int i = 0; i < iterations; ++i) {
         kernel_with_launch_bounds<<<num_blocks, threads_per_block, 0, stream_handle>>>(
-            input.data_ptr<const float>(),
+            const_cast<float*>(input.data_ptr<float>()),
             output.data_ptr<float>(),
             n
         );

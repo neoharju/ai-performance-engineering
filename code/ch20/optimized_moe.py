@@ -8,6 +8,7 @@ Implements Benchmark protocol for harness integration.
 
 from __future__ import annotations
 
+from common.python import compile_utils as _compile_utils_patch  # noqa: F401
 import sys
 from pathlib import Path
 
@@ -19,9 +20,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from common.python.compile_utils import compile_model
-
 from typing import Optional
+
+from ch20.inductor_guard import (
+    disable_inductor_cudagraph_features,
+    restore_inductor_cudagraph_features,
+    InductorCudagraphState,
+)
 
 from common.python.benchmark_harness import (
     Benchmark,
@@ -102,44 +107,60 @@ class OptimizedMoeBenchmark(Benchmark):
         self.device = resolve_device()
         self.model = None
         # Optimization: Compile model for kernel fusion and optimization
-        try:
 
         # Optimization: Compile model for kernel fusion and optimization
-        try:
 
         self.input = None
         self.hidden_dim = 256
+        self._inductor_cfg_state: InductorCudagraphState = None
     
     def setup(self) -> None:
         """Setup: Initialize MoE model."""
         
-        # Optimization: Enable cuDNN benchmarking for optimal kernel selection
-        if torch.cuda.is_available():
-            torch.backends.cudnn.benchmark = True
-            torch.backends.cudnn.deterministic = False
-        torch.manual_seed(42)
-        # Optimization: MoE architecture
-        # Only subset of experts activate per input (sparse activation)
-        # Reduces computation while maintaining model capacity
-        
-        self.model = nn.Sequential(
-            MoELayer(self.hidden_dim, num_experts=4, top_k=2),  # MoE layer
-            nn.ReLU(),
-            nn.Linear(self.hidden_dim, self.hidden_dim),
-        )
-        
-        self.model = compile_model(self.model)
-        self.model = self.model.to(self.device)
-        # Optimization: Use FP16 for faster computation
-        if self.device.type == "cuda":
-            try:
-                self.model = self.model.half()
-            except Exception:
-                pass  # Fallback to FP32 if FP16 not supported
-        self.model.eval()
-        
-        self.input = torch.randn(4, 32, self.hidden_dim, device=self.device)
-        torch.cuda.synchronize()
+        self._inductor_cfg_state = disable_inductor_cudagraph_features()
+        try:
+            # Optimization: Enable cuDNN benchmarking for optimal kernel selection
+            if torch.cuda.is_available():
+                torch.backends.cudnn.benchmark = True
+                torch.backends.cudnn.deterministic = False
+            torch.manual_seed(42)
+            # Optimization: MoE architecture
+            # Only subset of experts activate per input (sparse activation)
+            # Reduces computation while maintaining model capacity
+            
+            self.model = nn.Sequential(
+                MoELayer(self.hidden_dim, num_experts=4, top_k=2),  # MoE layer
+                nn.ReLU(),
+                nn.Linear(self.hidden_dim, self.hidden_dim),
+            )
+            
+            self.model = self.model.to(self.device)
+            # Optimization: Use FP16 for faster computation - FAIL FAST if not supported
+            if self.device.type != "cuda":
+                raise RuntimeError("CUDA required for optimized_moe benchmark")
+            self.model = self.model.half()
+            
+            # Compile model for kernel fusion and optimization
+            self.model = torch.compile(self.model, mode="reduce-overhead")
+            # Warmup to trigger compilation and catch errors early
+            test_input = torch.randn(4, 32, self.hidden_dim, device=self.device, dtype=torch.float16)
+            for _ in range(3):
+                with torch.no_grad():
+                    _ = self.model(test_input)
+            torch.cuda.synchronize()
+            self.model.eval()
+            
+            # Get model dtype - FAIL FAST if model has no parameters
+            params = list(self.model.parameters())
+            if not params:
+                raise RuntimeError("Model has no parameters - cannot determine dtype")
+            input_dtype = params[0].dtype
+            self.input = torch.randn(4, 32, self.hidden_dim, device=self.device, dtype=input_dtype)
+            torch.cuda.synchronize()
+        except Exception:
+            restore_inductor_cudagraph_features(self._inductor_cfg_state)
+            self._inductor_cfg_state = None
+            raise
     
     def benchmark_fn(self) -> None:
         """Benchmark: MoE model inference."""
@@ -164,12 +185,15 @@ class OptimizedMoeBenchmark(Benchmark):
         self.model = None
         self.input = None
         torch.cuda.empty_cache()
+        restore_inductor_cudagraph_features(self._inductor_cfg_state)
+        self._inductor_cfg_state = None
     
     def get_config(self) -> BenchmarkConfig:
         """Return benchmark configuration."""
         return BenchmarkConfig(
             iterations=10,
             warmup=2,
+            use_subprocess=False,
         )
     
     def validate_result(self) -> Optional[str]:
@@ -198,9 +222,9 @@ def main() -> None:
     print("=" * 70)
     print(f"Optimized: moe")
     print("=" * 70)
-    print(f"Average time: {result.mean_ms:.3f} ms")
-    print(f"Median: {result.median_ms:.3f} ms")
-    print(f"Std: {result.std_ms:.3f} ms")
+    print(f"Average time: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")
+    print(f"Median: {result.timing.median_ms if result.timing else 0.0:.3f} ms")
+    print(f"Std: {result.timing.std_ms if result.timing else 0.0:.3f} ms")
 
 if __name__ == "__main__":
     main()

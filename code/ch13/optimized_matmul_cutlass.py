@@ -25,6 +25,7 @@ except ImportError:
     pass  # Continue if arch_config not available
 from typing import Optional
 
+from common.python.compile_utils import enable_tf32
 from common.python.benchmark_harness import (
     Benchmark,
     BenchmarkConfig,
@@ -67,8 +68,7 @@ class OptimizedMatmulCUTLASSBenchmark(Benchmark):
             torch.backends.cudnn.benchmark = True
             torch.backends.cudnn.deterministic = False
             # Enable TF32 for faster matmul on Ampere+ GPUs
-            torch.backends.cuda.matmul.allow_tf32 = True
-            torch.backends.cudnn.allow_tf32 = True
+            enable_tf32()
         torch.manual_seed(42)
         
         self.A = torch.randn(self.m, self.k, device=self.device, dtype=torch.float16)
@@ -78,14 +78,30 @@ class OptimizedMatmulCUTLASSBenchmark(Benchmark):
         # Compile matmul function for CUTLASS optimization
         try:
             self.compiled_matmul = torch.compile(optimized_matmul, mode="reduce-overhead")
+            # Warmup (includes compilation if needed)
+            # Catch compilation errors during warmup
+            try:
+                for _ in range(10):
+                    _ = self.compiled_matmul(self.A, self.B)
+                torch.cuda.synchronize()
+            except (RuntimeError, Exception) as e:
+                # If warmup fails, fallback to uncompiled
+                error_msg = str(e)
+                if "generator" in error_msg.lower() or "SavedTensorHooks" in error_msg or "CppCompileError" in error_msg:
+                    self.compiled_matmul = optimized_matmul
+                    # Retry warmup with uncompiled version
+                    for _ in range(10):
+                        _ = self.compiled_matmul(self.A, self.B)
+                    torch.cuda.synchronize()
+                else:
+                    raise
         except Exception:
             # Fallback to uncompiled if compilation fails
             self.compiled_matmul = optimized_matmul
-        
-        # Warmup (includes compilation if needed)
-        for _ in range(10):
-            _ = self.compiled_matmul(self.A, self.B)
-        torch.cuda.synchronize()
+            # Warmup with uncompiled version
+            for _ in range(10):
+                _ = self.compiled_matmul(self.A, self.B)
+            torch.cuda.synchronize()
     
     def benchmark_fn(self) -> None:
         """Function to benchmark - CUTLASS-optimized matmul."""
@@ -114,6 +130,7 @@ class OptimizedMatmulCUTLASSBenchmark(Benchmark):
             warmup=10,
             enable_memory_tracking=False,
             enable_profiling=False,
+            setup_timeout_seconds=180,  # torch.compile compilation can take 60-120 seconds
         )
     def validate_result(self) -> Optional[str]:
         """Validate benchmark result."""
@@ -134,5 +151,4 @@ if __name__ == "__main__":
         config=benchmark.get_config()
     )
     result = harness.benchmark(benchmark)
-    print(f"\nOptimized CUTLASS Matmul: {result.mean_ms:.3f} ms")
-
+    print(f"\nOptimized CUTLASS Matmul: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")

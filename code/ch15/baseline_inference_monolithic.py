@@ -84,21 +84,64 @@ class BaselineInferenceMonolithicBenchmark(Benchmark):
             self.kv_cache = self.model.prefill(self.prompt)
         torch.cuda.synchronize()
     
-    def benchmark_fn(self) -> None:
-        """Function to benchmark - monolithic (prefill blocks decode)."""
+    def benchmark_fn(self) -> Optional[dict]:
+        """Function to benchmark - monolithic (prefill blocks decode).
+        
+        Returns:
+            Optional dict with 'ttft_times_ms' and 'tpot_times_ms' keys for inference timing,
+            or None if not measuring inference timing.
+        """
         # Use conditional NVTX ranges - only enabled when profiling
 
         from common.python.nvtx_helper import nvtx_range, get_nvtx_enabled
+        import time
 
         config = self.get_config()
 
         enable_nvtx = get_nvtx_enabled(config) if config else False
 
-
         with nvtx_range("baseline_inference_monolithic", enable=enable_nvtx):
             with torch.no_grad():
-                # Simulate: prefill blocks decode (sequential)
-                _ = self.model.decode(self.kv_cache, num_tokens=16)
+                # Measure TTFT: Time from request start to first token generation
+                request_start = time.perf_counter()
+                
+                # Prefill phase (simulates processing prompt to get first token)
+                # In real inference, this would be the prefill computation
+                torch.cuda.synchronize()
+                prefill_start = time.perf_counter()
+                kv_cache = self.model.prefill(self.prompt)
+                torch.cuda.synchronize()
+                prefill_end = time.perf_counter()
+                
+                # TTFT is the time from request start to first token ready
+                ttft_ms = (prefill_end - request_start) * 1000
+                
+                # Measure TPOT: Time per token during decode phase
+                num_tokens = 16
+                tpot_times_ms = []
+                
+                decode_start = time.perf_counter()
+                for i in range(num_tokens):
+                    token_start = time.perf_counter()
+                    # Simulate generating one token
+                    if i == 0:
+                        # First token uses kv_cache from prefill
+                        token_output = self.model.decode(kv_cache, num_tokens=1)
+                    else:
+                        # Subsequent tokens use previous output
+                        token_output = self.model.decode(token_output[:, -1:, :], num_tokens=1)
+                    torch.cuda.synchronize()
+                    token_end = time.perf_counter()
+                    
+                    # TPOT is the time per token during decode
+                    tpot_ms = (token_end - token_start) * 1000
+                    tpot_times_ms.append(tpot_ms)
+                
+                # Return inference timing data
+                return {
+                    "ttft_times_ms": [ttft_ms],
+                    "tpot_times_ms": tpot_times_ms,
+                }
 
     def teardown(self) -> None:
         """Cleanup."""
@@ -136,9 +179,9 @@ def main() -> None:
     print("=" * 70)
     print("Baseline: Monolithic Inference")
     print("=" * 70)
-    print(f"Average time: {result.mean_ms:.3f} ms")
-    print(f"Median: {result.median_ms:.3f} ms")
-    print(f"Std: {result.std_ms:.3f} ms")
+    print(f"Average time: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")
+    print(f"Median: {result.timing.median_ms if result.timing else 0.0:.3f} ms")
+    print(f"Std: {result.timing.std_ms if result.timing else 0.0:.3f} ms")
 
 
 if __name__ == "__main__":

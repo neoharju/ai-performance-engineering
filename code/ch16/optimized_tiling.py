@@ -44,7 +44,8 @@ class OptimizedTilingBenchmark(Benchmark):
     
     def __init__(self):
         self.device = resolve_device()
-        self.model = None        self.input = None
+        self.model = None
+        self.input = None
         self.tile_size = 256
     
     def setup(self) -> None:
@@ -61,16 +62,18 @@ class OptimizedTilingBenchmark(Benchmark):
         
         # Large linear layer (will use tiling)
         self.model = nn.Linear(2048, 2048).to(self.device)
-        # Optimization: Use FP16 for faster computation
-        if self.device.type == "cuda":
-            try:
-                self.model = self.model.half()
-            except Exception:
-                pass  # Fallback to FP32 if FP16 not supported
+        # Optimization: Use FP16 for faster computation - FAIL FAST if not supported
+        if self.device.type != "cuda":
+            raise RuntimeError("CUDA required for optimized_tiling benchmark")
+        self.model = self.model.half()
         self.model.eval()
         
-        # Large input (will be processed with tiling)
-        self.input = torch.randn(64, 2048, device=self.device)
+        # Large input (will be processed with tiling) - FAIL FAST if model has no parameters
+        params = list(self.model.parameters())
+        if not params:
+            raise RuntimeError("Model has no parameters - cannot determine dtype")
+        input_dtype = params[0].dtype
+        self.input = torch.randn(64, 2048, device=self.device, dtype=input_dtype)
         torch.cuda.synchronize()
     
     def benchmark_fn(self) -> None:
@@ -156,9 +159,9 @@ def main() -> None:
     print("=" * 70)
     print(f"Optimized: tiling")
     print("=" * 70)
-    print(f"Average time: {result.mean_ms:.3f} ms")
-    print(f"Median: {result.median_ms:.3f} ms")
-    print(f"Std: {result.std_ms:.3f} ms")
+    print(f"Average time: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")
+    print(f"Median: {result.timing.median_ms if result.timing else 0.0:.3f} ms")
+    print(f"Std: {result.timing.std_ms if result.timing else 0.0:.3f} ms")
 
 
 if __name__ == "__main__":

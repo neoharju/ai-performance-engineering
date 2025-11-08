@@ -31,6 +31,8 @@ from torch.nn.attention.flex_attention import flex_attention, create_block_mask
 import time
 from typing import Optional, Tuple
 
+from common.python.compile_utils import enable_tf32
+
 QUICK_MODE = any(
     os.getenv(flag, "0") == "1"
     for flag in ("QUICK_PROFILE", "BENCHMARK_QUICK", "RUN_ALL_CHAPTERS")
@@ -69,8 +71,7 @@ def configure_for_enhanced_flex_attention():
     if QUICK_MODE:
         print(" Quick mode active (reduced sizes / iterations)")
     
-    torch.set_float32_matmul_precision("high")
-    torch.backends.cudnn.conv.fp32_precision = "tf32"
+    enable_tf32()
     
     # Enable all attention backends
     torch.backends.cuda.enable_flash_sdp(True)

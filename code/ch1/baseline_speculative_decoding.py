@@ -128,6 +128,10 @@ if __name__ == '__main__':
         config=benchmark.get_config()
     )
     result = harness.benchmark(benchmark)
-    print(f"\nBaseline Speculative Decoding (Standard): {result.mean_ms:.3f} ms")
+    timing = result.timing
+    if timing:
+        print(f"\nBaseline Speculative Decoding (Standard): {timing.mean_ms:.3f} ms")
+    else:
+        print("\nBaseline Speculative Decoding (Standard): No timing data available")
     print("NOTE: Standard autoregressive decoding - tokens generated sequentially, no speculation")
 

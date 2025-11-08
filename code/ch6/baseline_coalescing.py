@@ -74,12 +74,13 @@ class BaselineCoalescingBenchmark(Benchmark):
         with nvtx_range("baseline_coalescing_uncoalesced", enable=enable_nvtx):
             # Call CUDA extension kernel with stride
             # The kernel accesses input[access_idx] where access_idx = idx * stride
-            # Output size matches number of threads
-            num_threads = (self.N + self.stride - 1) // self.stride
-            output = torch.empty(num_threads, device=self.device, dtype=torch.float32)
+            # Output must be same size as input (N) because kernel writes to output[access_idx]
+            output = torch.empty(self.N, device=self.device, dtype=torch.float32)
             
             # Call kernel with stride parameter
             self._extension.uncoalesced_copy(output, self.input, self.stride)
+            # Synchronize to catch any CUDA errors immediately
+            torch.cuda.synchronize()
             
             self.output = output
 
@@ -97,6 +98,7 @@ class BaselineCoalescingBenchmark(Benchmark):
             warmup=10,
             enable_memory_tracking=False,
             enable_profiling=False,
+            setup_timeout_seconds=120,  # CUDA extension compilation can take time
         )
     
     def validate_result(self) -> Optional[str]:
@@ -105,9 +107,9 @@ class BaselineCoalescingBenchmark(Benchmark):
             return "Output tensor not initialized"
         if self.input is None:
             return "Input tensor not initialized"
-        expected_shape = (self.N + self.stride - 1) // self.stride
-        if self.output.shape[0] != expected_shape:
-            return f"Output shape mismatch: expected {expected_shape}, got {self.output.shape[0]}"
+        # Output should be same size as input (kernel writes to output[access_idx] where access_idx can be up to N-1)
+        if self.output.shape[0] != self.N:
+            return f"Output shape mismatch: expected {self.N}, got {self.output.shape[0]}"
         if not torch.isfinite(self.output).all():
             return "Output contains non-finite values"
         return None
@@ -125,4 +127,4 @@ if __name__ == '__main__':
         config=benchmark.get_config()
     )
     result = harness.benchmark(benchmark)
-    print(f"\nBaseline Coalescing (CUDA Extension): {result.mean_ms:.3f} ms")
+    print(f"\nBaseline Coalescing (CUDA Extension): {result.timing.mean_ms if result.timing else 0.0:.3f} ms")

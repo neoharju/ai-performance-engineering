@@ -25,6 +25,8 @@ from typing import Dict, List, Tuple
 import torch
 import torch.nn.functional as F
 
+from common.python.compile_utils import enable_tf32
+
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
@@ -127,9 +129,7 @@ class TokenPrecisionController:
 # Optional global toggles (B200 best practices)
 # ----------------------------
 # NEW PyTorch 2.9 API (no warnings!)
-torch.set_float32_matmul_precision('high')
-torch.backends.cudnn.conv.fp32_precision = 'tf32'
-torch.backends.cuda.matmul.fp32_precision = 'tf32'
+enable_tf32()
 # If you compile models elsewhere, keep it outside this loop; don't pay compile cost per-step.
 
 # ----------------------------

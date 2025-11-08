@@ -6,7 +6,10 @@ and custom CUDA Events. Supports nsys, ncu, and PyTorch profiler integration.
 
 from __future__ import annotations
 
+from common.python import compile_utils as _compile_utils_patch  # noqa: F401
+import copy
 import gc
+import json
 import importlib
 import inspect
 import os
@@ -19,28 +22,105 @@ import sys
 import tempfile
 import threading
 import time
+import traceback
 import warnings
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FuturesTimeoutError
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Protocol
+from typing import Any, Callable, Dict, List, Optional, Protocol, TYPE_CHECKING, Union, cast
 
 import numpy as np
 import torch
 
-# Import metrics extractor (lazy import to avoid circular dependencies)
-try:
-    from common.python.metrics_extractor import (
-        extract_nsys_metrics,
-        extract_ncu_metrics,
-        get_ncu_metric_description,
+if TYPE_CHECKING:
+    from common.python.benchmark_models import (
+        BenchmarkResult as PydanticBenchmarkResult,
+        BenchmarkRun,
+        MemoryStats,
+        TimingStats,
+        InferenceTimingStats,
+        ProfilerArtifacts,
+        ProfilerMetrics,
+        NsysMetrics,
+        NcuMetrics,
+        TorchMetrics,
     )
+
+# Pydantic is required - fail fast if not available
+from common.python.benchmark_models import (
+    BenchmarkResult as PydanticBenchmarkResult,
+    BenchmarkRun,
+    MemoryStats,
+    TimingStats,
+    InferenceTimingStats,
+    ProfilerArtifacts,
+    ProfilerMetrics,
+    NsysMetrics,
+    NcuMetrics,
+    TorchMetrics,
+)
+
+PYDANTIC_AVAILABLE = True
+
+# Import unified profiling runner
+try:
+    from common.python.profiling_runner import (
+        run_nsys_profiling,
+        run_ncu_profiling,
+        check_nsys_available,
+        check_ncu_available,
+    )
+    PROFILING_RUNNER_AVAILABLE = True
 except ImportError:
-    # Fallback if metrics_extractor not available (shouldn't happen in production)
-    extract_nsys_metrics = None
-    extract_ncu_metrics = None
-    get_ncu_metric_description = None
+    PROFILING_RUNNER_AVAILABLE = False
+    def run_nsys_profiling(
+        benchmark: Any,
+        benchmark_module: Any,
+        benchmark_class: str,
+        output_dir: Path,
+        config: Any,
+        profiler_config: Optional[Any] = None,
+        timeout_seconds: Optional[int] = None,
+        metrics: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        raise ImportError("profiling_runner not available")
+    
+    def run_ncu_profiling(
+        benchmark: Any,
+        benchmark_module: Any,
+        benchmark_class: str,
+        output_dir: Path,
+        config: Any,
+        profiler_config: Optional[Any] = None,
+        timeout_seconds: Optional[int] = None,
+        metrics: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        raise ImportError("profiling_runner not available")
+    
+    def check_nsys_available() -> bool:
+        return False
+    
+    def check_ncu_available() -> bool:
+        return False
+
+# Import profiler wrapper
+try:
+    from common.python.profiler_wrapper import create_benchmark_wrapper
+    PROFILER_WRAPPER_AVAILABLE = True
+except ImportError:
+    PROFILER_WRAPPER_AVAILABLE = False
+
+# Import logger
+try:
+    from common.python.logger import get_logger
+    logger = get_logger(__name__)
+    LOGGER_AVAILABLE = True
+except ImportError:
+    LOGGER_AVAILABLE = False
+    import logging
+    logger = logging.getLogger(__name__)
 
 
 class BenchmarkMode(Enum):
@@ -50,57 +130,183 @@ class BenchmarkMode(Enum):
     CUSTOM = "custom"  # Use CUDA Events / time.perf_counter
 
 
+class ExecutionMode(str, Enum):
+    """How the harness executes benchmarks."""
+    SUBPROCESS = "subprocess"
+    THREAD = "thread"
+
+
+# Import BenchmarkDefaults to use as source of truth for defaults
+try:
+    from common.python.benchmark_defaults import BenchmarkDefaults, get_defaults
+    _get_defaults_fn: Optional[Callable[[], BenchmarkDefaults]] = get_defaults
+except ImportError:
+    # Fallback if benchmark_defaults not available (shouldn't happen in normal usage)
+    _get_defaults_fn = None
+
+
+def _get_default_value(attr_name: str, fallback):
+    """Get default value from BenchmarkDefaults, with fallback."""
+    if _get_defaults_fn is None:
+        return fallback
+    defaults = _get_defaults_fn()
+    return getattr(defaults, attr_name, fallback)
+
+
 @dataclass
 class BenchmarkConfig:
-    """Configuration for a benchmark run."""
-    iterations: int = 100
-    warmup: int = 10
-    min_run_time_ms: float = 100.0  # Minimum total runtime for PyTorch Timer
-    percentiles: List[float] = field(default_factory=lambda: [25, 50, 75, 99])
-    enable_memory_tracking: bool = False
-    deterministic: bool = False
-    seed: Optional[int] = None
-    device: Optional[torch.device] = None
-    enable_profiling: bool = True  # Enable nsys/ncu/PyTorch profiler (default: True - core experience, gracefully degrades if tools unavailable)
-    enable_nsys: bool = True  # Enable nsys profiling (requires CUDA, wraps entire process) - default: True (gracefully degrades if unavailable)
-    enable_ncu: bool = True  # Enable ncu profiling (requires CUDA, wraps entire process) - default: True (gracefully degrades if unavailable)
-    profiling_output_dir: Optional[str] = None  # Directory for profiling outputs
-    enable_nvtx: Optional[bool] = None  # Enable NVTX ranges (None = auto: True if profiling, False otherwise)
-    enable_cleanup: bool = False  # Enable gc.collect() and torch.cuda.empty_cache() after each run (default: False to avoid distorting timings)
-    use_subprocess: bool = True  # Run benchmark in subprocess for reliable timeout cancellation (default: True for production-grade harness)
-    timeout_seconds: int = 15  # Required timeout for benchmark execution in seconds (prevents hangs) - DEFAULT 15s
-    # Note: Setup/teardown (including compilation) are not subject to timeout,
-    # but should complete within reasonable time or fail with error
-    # nsys/ncu profiling timeout is separate and typically longer (60-120s)
-    nsys_timeout_seconds: int = 120  # Timeout for nsys profiling runs
-    ncu_timeout_seconds: int = 180  # Timeout for ncu profiling runs (ncu can be slow)
+    """Configuration for a benchmark run.
+    
+    Default values are loaded from BenchmarkDefaults, which provides hardcoded defaults.
+    This ensures a single source of truth for all configuration defaults.
+    Configuration can be overridden via CLI flags or by passing values directly.
+    
+    Reproducibility Notes:
+        - deterministic=True: Enables deterministic algorithms (torch.use_deterministic_algorithms).
+          This ensures bitwise reproducibility but may impact performance:
+          * cuDNN algorithms may be slower (no autotuning)
+          * Some operations may use less efficient deterministic implementations
+          * Performance impact typically 5-20% depending on workload
+          * Use only when reproducibility is more important than performance
+        
+        - seed: Sets random seeds for Python random, numpy, torch, and CUDA.
+          When combined with deterministic=True, ensures reproducible results.
+          Without deterministic=True, results may still vary due to non-deterministic algorithms.
+    """
+    # Use field(default_factory=...) to get defaults from BenchmarkDefaults at instance creation time
+    # Each lambda calls _get_default_value() which calls get_defaults() to get current defaults
+    iterations: int = field(default_factory=lambda: _get_default_value("iterations", 100))
+    warmup: int = field(default_factory=lambda: _get_default_value("warmup", 10))
+    min_run_time_ms: float = field(default_factory=lambda: _get_default_value("min_run_time_ms", 100.0))
+    percentiles: List[float] = field(default_factory=lambda: (_get_default_value("percentiles", [25, 50, 75, 99]) or [25, 50, 75, 99]).copy())
+    enable_memory_tracking: bool = field(default_factory=lambda: _get_default_value("enable_memory_tracking", False))
+    deterministic: bool = field(default_factory=lambda: _get_default_value("deterministic", False))
+    seed: Optional[int] = field(default_factory=lambda: _get_default_value("seed", None))
+    device: Optional[torch.device] = None  # Not in BenchmarkDefaults (runtime-specific)
+    enable_profiling: bool = field(default_factory=lambda: _get_default_value("enable_profiling", False))
+    enable_nsys: bool = field(default_factory=lambda: _get_default_value("enable_nsys", False))
+    enable_ncu: bool = field(default_factory=lambda: _get_default_value("enable_ncu", False))
+    profiling_output_dir: Optional[str] = field(default_factory=lambda: _get_default_value("profiling_output_dir", None))
+    enable_nvtx: Optional[bool] = field(default_factory=lambda: _get_default_value("enable_nvtx", None))
+    enable_cleanup: bool = field(default_factory=lambda: _get_default_value("enable_cleanup", False))
+    use_subprocess: bool = field(default_factory=lambda: _get_default_value("use_subprocess", True))
+    execution_mode: Union[ExecutionMode, str, None] = field(default_factory=lambda: _get_default_value("execution_mode", None))
+    _execution_mode_overridden: bool = field(init=False, repr=False, default=False)
+    
+    # Per-stage timeouts (in seconds)
+    setup_timeout_seconds: Optional[int] = field(default_factory=lambda: _get_default_value("setup_timeout_seconds", 30))
+    warmup_timeout_seconds: Optional[int] = field(default_factory=lambda: _get_default_value("warmup_timeout_seconds", None))
+    measurement_timeout_seconds: int = field(default_factory=lambda: _get_default_value("measurement_timeout_seconds", 15))
+    profiling_timeout_seconds: Optional[int] = field(default_factory=lambda: _get_default_value("profiling_timeout_seconds", None))
+    
+    # Legacy timeout field (deprecated, use measurement_timeout_seconds)
+    timeout_seconds: int = field(default_factory=lambda: _get_default_value("timeout_seconds", 15))
+    
+    # Profiler-specific timeouts
+    nsys_timeout_seconds: int = field(default_factory=lambda: _get_default_value("nsys_timeout_seconds", 120))
+    ncu_timeout_seconds: int = field(default_factory=lambda: _get_default_value("ncu_timeout_seconds", 180))
+    
+    # Timeout multiplier
+    timeout_multiplier: float = field(default_factory=lambda: _get_default_value("timeout_multiplier", 1.0))
     
     def __post_init__(self):
-        """Set enable_nvtx based on profiling if not explicitly set."""
+        """Set enable_nvtx based on profiling if not explicitly set, apply timeout multiplier, and ensure percentiles is never None."""
+        # CRITICAL: Ensure percentiles is always a list, never None (fixes comparison errors)
+        if self.percentiles is None:
+            self.percentiles = [25, 50, 75, 99]
+        
         if self.enable_nvtx is None:
-            # Auto-enable NVTX when profiling is enabled (for nsys traces)
-            # Since enable_profiling=True by default, NVTX will be enabled by default
+            # Auto-enable NVTX whenever profiling is requested (for nsys traces)
             self.enable_nvtx = self.enable_profiling
+        
+        # Apply timeout multiplier to all timeout fields
+        if self.timeout_multiplier != 1.0:
+            def _apply_timeout_multiplier(field_name: str) -> None:
+                current_value = getattr(self, field_name)
+                if current_value is None:
+                    return
+                default_value = _get_default_value(field_name, current_value)
+                if current_value == default_value:
+                    setattr(
+                        self,
+                        field_name,
+                        int(current_value * self.timeout_multiplier),
+                    )
+            
+            _apply_timeout_multiplier("setup_timeout_seconds")
+            _apply_timeout_multiplier("warmup_timeout_seconds")
+            _apply_timeout_multiplier("measurement_timeout_seconds")
+            _apply_timeout_multiplier("profiling_timeout_seconds")
+            _apply_timeout_multiplier("nsys_timeout_seconds")
+            _apply_timeout_multiplier("ncu_timeout_seconds")
+            _apply_timeout_multiplier("timeout_seconds")  # Legacy field
+        
+        # Set defaults for None timeouts
+        if self.warmup_timeout_seconds is None:
+            # Warmup timeout defaults to measurement timeout
+            self.warmup_timeout_seconds = self.measurement_timeout_seconds
+        if self.profiling_timeout_seconds is None:
+            # Profiling timeout defaults to max of nsys/ncu timeouts
+            self.profiling_timeout_seconds = max(self.nsys_timeout_seconds, self.ncu_timeout_seconds)
+
+        self._execution_mode_overridden = self.execution_mode is not None
+        self._sync_execution_mode()
+
+    def _sync_execution_mode(self) -> None:
+        """Ensure execution_mode and use_subprocess remain consistent."""
+        override = getattr(self, "_execution_mode_overridden", False)
+        mode = self.execution_mode
+        if not override:
+            mode = ExecutionMode.SUBPROCESS if self.use_subprocess else ExecutionMode.THREAD
+        else:
+            if isinstance(mode, str):
+                try:
+                    mode = ExecutionMode(mode.lower())
+                except ValueError as exc:
+                    raise ValueError(
+                        f"Invalid execution_mode '{mode}'. Expected 'subprocess' or 'thread'."
+                    ) from exc
+            elif not isinstance(mode, ExecutionMode):
+                raise TypeError(
+                    f"execution_mode must be a string or ExecutionMode, got {type(mode).__name__}"
+                )
+            self.use_subprocess = (mode == ExecutionMode.SUBPROCESS)
+        self.execution_mode = mode
+
+    def set_execution_mode(self, mode: Union[ExecutionMode, str]) -> None:
+        """Explicitly set execution mode and mark it as user-overridden."""
+        self.execution_mode = mode
+        self._execution_mode_overridden = True
+        self._sync_execution_mode()
+        
+        # Backward compatibility: sync timeout_seconds with measurement_timeout_seconds
+        # (This ensures legacy code using timeout_seconds still works)
+        if self.timeout_seconds == 15 and self.measurement_timeout_seconds != 15:
+            # If timeout_seconds wasn't explicitly changed, sync it
+            self.timeout_seconds = self.measurement_timeout_seconds
+    
+    def get_effective_timeout(self, stage: str) -> Optional[int]:
+        """Get effective timeout for a given stage, accounting for multiplier.
+        
+        Args:
+            stage: One of 'setup', 'warmup', 'measurement', 'profiling', 'nsys', 'ncu'
+            
+        Returns:
+            Timeout in seconds, or None if no timeout for this stage
+        """
+        timeouts = {
+            'setup': self.setup_timeout_seconds,
+            'warmup': self.warmup_timeout_seconds,
+            'measurement': self.measurement_timeout_seconds,
+            'profiling': self.profiling_timeout_seconds,
+            'nsys': self.nsys_timeout_seconds,
+            'ncu': self.ncu_timeout_seconds,
+        }
+        return timeouts.get(stage)
 
 
-@dataclass
-class BenchmarkResult:
-    """Statistical results from benchmarking."""
-    mean_ms: float
-    median_ms: float
-    std_ms: float
-    min_ms: float
-    max_ms: float
-    percentiles: Dict[float, float]  # e.g., {25.0: 1.23, 50.0: 1.45, ...}
-    iterations: int
-    warmup_iterations: int
-    raw_times_ms: Optional[List[float]] = None  # Raw timing measurements (for subprocess IPC)
-    memory_peak_mb: Optional[float] = None
-    memory_allocated_mb: Optional[float] = None
-    errors: List[str] = field(default_factory=list)
-    profiling_outputs: Dict[str, str] = field(default_factory=dict)  # Paths to profiling files
-    nsys_metrics: Dict[str, float] = field(default_factory=dict)  # Extracted nsys metrics
-    ncu_metrics: Dict[str, float] = field(default_factory=dict)  # Extracted ncu metrics
+# BenchmarkResult is provided by benchmark_models.py
+BenchmarkResult = PydanticBenchmarkResult
 
 
 class Benchmark(Protocol):
@@ -131,8 +337,8 @@ class BaseBenchmark:
     """Base class for benchmarks with shared functionality.
     
     Provides common patterns for device resolution, setup, teardown, validation,
-    NVTX ranges, and synchronization. Benchmarks can inherit from this class or
-    implement the Benchmark Protocol directly.
+    NVTX range management (_nvtx_range()), and CUDA synchronization (_synchronize()).
+    Benchmarks can inherit from this class or implement the Benchmark Protocol directly.
     
     Usage:
         class MyBenchmark(BaseBenchmark):
@@ -282,35 +488,132 @@ class BenchmarkHarness:
     ):
         self.mode = mode
         self.config = config or BenchmarkConfig()
+        self.config._sync_execution_mode()
         self.device = self.config.device or torch.device(
             "cuda" if torch.cuda.is_available() else "cpu"
         )
-        self._setup_reproducibility()
+        self._seed_info = self._setup_reproducibility()  # Store seed info for manifest
+        self._thread_executor: Optional[ThreadPoolExecutor] = None
     
-    def _setup_reproducibility(self) -> None:
-        """Setup for reproducible benchmarks."""
+    def _setup_reproducibility(self) -> Dict[str, Any]:
+        """Setup for reproducible benchmarks.
+        
+        Returns:
+            Dictionary with seed values that were set (for manifest capture).
+        """
+        seed_info: Dict[str, Any] = {
+            "random_seed": None,
+            "numpy_seed": None,
+            "torch_seed": None,
+            "cuda_seed": None,
+            "deterministic_mode": self.config.deterministic,
+        }
+        
         if self.config.deterministic:
             torch.backends.cudnn.deterministic = True
             torch.backends.cudnn.benchmark = False
             torch.use_deterministic_algorithms(True, warn_only=True)
         
         if self.config.seed is not None:
-            random.seed(self.config.seed)
-            np.random.seed(self.config.seed)
-            torch.manual_seed(self.config.seed)
+            seed = self.config.seed
+            random.seed(seed)
+            np.random.seed(seed)
+            torch.manual_seed(seed)
+            seed_info["random_seed"] = seed
+            seed_info["numpy_seed"] = seed
+            seed_info["torch_seed"] = seed
+            
             if torch.cuda.is_available():
-                torch.cuda.manual_seed_all(self.config.seed)
+                torch.cuda.manual_seed_all(seed)
+                seed_info["cuda_seed"] = seed
+            
+            if LOGGER_AVAILABLE:
+                logger.info(f"Seeds set to {seed} (random, numpy, torch, cuda)")
+        
+        # Log deterministic mode warning if enabled
+        if self.config.deterministic and LOGGER_AVAILABLE:
+            logger.info(
+                "Deterministic mode enabled (may impact performance by 5-20%). "
+                "This ensures bitwise reproducibility but uses slower deterministic algorithms."
+            )
+        
+        return seed_info
+    
+    def _create_timeout_result(
+        self,
+        *,
+        stage: str,
+        duration: float,
+        limit: Optional[float],
+        errors: List[str],
+        benchmark_name: str,
+        config: BenchmarkConfig,
+        watchdog: Optional[Dict[str, Any]] = None,
+    ) -> PydanticBenchmarkResult:
+        """Helper to build a timeout result with consistent schema."""
+        timeout_timing = TimingStats(
+            mean_ms=0.0,
+            median_ms=0.0,
+            std_ms=0.0,
+            min_ms=0.0,
+            max_ms=0.0,
+            p50_ms=None,
+            p90_ms=None,
+            p95_ms=None,
+            p99_ms=None,
+            percentiles={},
+            iterations=0,
+            warmup_iterations=config.warmup,
+            raw_times_ms=[],
+            schemaVersion="1.0",
+        )
+        return PydanticBenchmarkResult(
+            timing=timeout_timing,
+            errors=errors,
+            timeout_stage=stage,
+            timeout_duration_seconds=duration,
+            timeout_limit_seconds=int(limit) if limit is not None else None,
+            inference_timing=None,
+            memory=None,
+            artifacts=None,
+            profiler_metrics=None,
+            validation_status=None,
+            validation_message=json.dumps(watchdog) if watchdog else None,
+            benchmark_name=benchmark_name,
+            device=str(self.device),
+            mode=self.mode.value,
+            schemaVersion="1.0",
+        )
+    
+    def _ensure_thread_executor(self) -> None:
+        """Initialize thread executor for threaded execution mode."""
+        if self._thread_executor is None:
+            self._thread_executor = ThreadPoolExecutor(
+                max_workers=1,
+                thread_name_prefix="benchmark-thread",
+            )
+    
+    def _reset_thread_executor(self) -> None:
+        """Shutdown and reset thread executor."""
+        if self._thread_executor is not None:
+            self._thread_executor.shutdown(wait=False, cancel_futures=True)
+            self._thread_executor = None
     
     @contextmanager
     def _memory_tracking(self, config: Optional[BenchmarkConfig] = None):
         """Context manager for memory tracking.
         
-        Yields a list that will contain [peak_mb, allocated_mb] after the context exits.
-        If memory tracking is disabled, yields None.
+        Yields a MemoryStats pydantic model (or None if tracking disabled).
         
         Args:
             config: BenchmarkConfig to check for enable_memory_tracking. If None, uses self.config.
+        
+        Yields:
+            MemoryStats pydantic model if tracking enabled, None otherwise.
         """
+        if not PYDANTIC_AVAILABLE:
+            raise ImportError("pydantic is required for memory tracking. Install with: pip install pydantic")
+        
         # Use provided config or fall back to instance config
         check_config = config if config is not None else self.config
         
@@ -318,54 +621,132 @@ class BenchmarkHarness:
             yield None
             return
         
-        # Use a mutable list to return values from context manager
-        result = [None, None]
+        # Create MemoryStats model
+        result = MemoryStats(peak_mb=None, allocated_mb=None, reserved_mb=None, schemaVersion="1.0")
         
         torch.cuda.reset_peak_memory_stats(self.device)
         torch.cuda.synchronize(self.device)
         yield result
         torch.cuda.synchronize(self.device)
-        result[0] = torch.cuda.max_memory_allocated(self.device) / (1024**2)
-        result[1] = torch.cuda.memory_allocated(self.device) / (1024**2)
+        
+        # Set memory values
+        result.peak_mb = torch.cuda.max_memory_allocated(self.device) / (1024**2)
+        result.allocated_mb = torch.cuda.memory_allocated(self.device) / (1024**2)
+        
+        # Try to get reserved memory if available
+        try:
+            result.reserved_mb = torch.cuda.memory_reserved(self.device) / (1024**2)
+        except AttributeError:
+            # memory_reserved may not be available in all PyTorch versions
+            result.reserved_mb = None
     
-    def benchmark(self, benchmark: Benchmark) -> BenchmarkResult:
+    def benchmark(self, benchmark: Benchmark) -> PydanticBenchmarkResult:
         """Run benchmark and return statistical results.
         
         Uses subprocess isolation (if enabled) or threading timeout to prevent hangs.
         Default timeout is 15 seconds.
         """
-        # Clone config to avoid mutating shared instance
-        from dataclasses import replace
-        config = replace(self.config)
+        # Clone config to avoid mutating shared instance; deepcopy prevents
+        # dataclasses.replace from re-running __post_init__ (which re-applies multipliers)
+        config = copy.deepcopy(self.config)
         bench_config = benchmark.get_config()
         if bench_config:
             # Override with benchmark-specific settings
             for key, value in bench_config.__dict__.items():
                 if value is not None:
                     setattr(config, key, value)
+        config._sync_execution_mode()
+        
+        # CRITICAL: Ensure percentiles is always a list (never None)
+        # This handles cases where benchmark.get_config() returns a config with percentiles=None
+        # or where the config was created before __post_init__ could fix it
+        if config.percentiles is None or not isinstance(config.percentiles, list):
+            config.percentiles = [25, 50, 75, 99]
         
         # Use subprocess isolation if enabled (default: True for production-grade harness)
-        if config.use_subprocess:
+        if config.execution_mode == ExecutionMode.SUBPROCESS:
             return self._benchmark_with_subprocess(benchmark, config)
         else:
             return self._benchmark_with_threading(benchmark, config)
     
-    def _benchmark_with_subprocess(self, benchmark: Benchmark, config: BenchmarkConfig) -> BenchmarkResult:
+    def benchmark_with_manifest(
+        self, 
+        benchmark: Benchmark,
+        run_id: Optional[str] = None
+    ) -> BenchmarkRun:
+        """Run benchmark with manifest and return BenchmarkRun.
+        
+        This method creates a RunManifest at the start, runs the benchmark,
+        and returns a BenchmarkRun containing both the manifest and result.
+        
+        Args:
+            benchmark: Benchmark instance to run
+            run_id: Optional run identifier (defaults to timestamp)
+        
+        Returns:
+            BenchmarkRun with manifest and result
+        """
+        if not PYDANTIC_AVAILABLE or BenchmarkRun is None:
+            raise ImportError("pydantic and BenchmarkRun are required for benchmark_with_manifest")
+        
+        from datetime import datetime
+        from common.python.run_manifest import RunManifest
+        
+        # Create manifest at start
+        start_time = datetime.now()
+        config_dict = self.config.__dict__.copy()
+        manifest = RunManifest.create(config=config_dict, start_time=start_time)
+        
+        # Add seed information to manifest
+        from common.python.run_manifest import SeedInfo
+        if self._seed_info:
+            manifest.seeds = SeedInfo(
+                random_seed=self._seed_info.get("random_seed"),
+                numpy_seed=self._seed_info.get("numpy_seed"),
+                torch_seed=self._seed_info.get("torch_seed"),
+                cuda_seed=self._seed_info.get("cuda_seed"),
+                deterministic_mode=bool(self._seed_info.get("deterministic_mode", False)),
+                schemaVersion="1.0",
+            )
+        
+        # Run benchmark
+        result = self.benchmark(benchmark)
+        
+        # Finalize manifest
+        end_time = datetime.now()
+        manifest.finalize(end_time=end_time)
+        
+        # Generate run_id if not provided
+        if run_id is None:
+            run_id = start_time.strftime("run_%Y%m%d_%H%M%S")
+        
+        # Create BenchmarkRun
+        return BenchmarkRun(
+            manifest=manifest.model_dump(),
+            result=result,
+            run_id=run_id,
+            timestamp=start_time.isoformat(),
+            schemaVersion="1.0",
+        )
+    
+    def _benchmark_with_subprocess(self, benchmark: Benchmark, config: BenchmarkConfig) -> PydanticBenchmarkResult:
         """Run benchmark in subprocess for reliable timeout cancellation."""
         import json
         import inspect
         
-        errors = []
-        memory_peak_mb = None
-        memory_allocated_mb = None
-        profiling_outputs = {}
-        nsys_metrics = {}
-        ncu_metrics = {}
-        times_ms = []
+        errors: List[str] = []
+        memory_peak_mb: Optional[float] = None
+        memory_allocated_mb: Optional[float] = None
+        profiling_outputs: Dict[str, str] = {}
+        nsys_metrics: Dict[str, float] = {}
+        ncu_metrics: Dict[str, float] = {}
+        times_ms: List[float] = []
+        inference_timing_data: Optional[Dict[str, List[float]]] = None
         
-        # Get benchmark module and class info
+        # Get benchmark name and module info for error messages
         benchmark_module = inspect.getmodule(benchmark)
         benchmark_class = benchmark.__class__.__name__
+        benchmark_name = getattr(benchmark, '__name__', None) or getattr(benchmark, 'name', None) or benchmark_class
         
         if benchmark_module is None:
             benchmark_module = inspect.getmodule(benchmark.__class__)
@@ -391,13 +772,29 @@ class BenchmarkHarness:
         
         # Prepare config dict (serialize only simple types)
         config_dict = {}
-        for key in ['iterations', 'warmup', 'min_run_time_ms', 'enable_memory_tracking',
+        for key in ['iterations', 'warmup', 'min_run_time_ms', 'percentiles', 'enable_memory_tracking',
                    'deterministic', 'seed', 'enable_profiling', 'enable_nsys', 'enable_ncu',
-                   'profiling_output_dir', 'enable_nvtx', 'enable_cleanup', 'timeout_seconds',
-                   'nsys_timeout_seconds', 'ncu_timeout_seconds']:
+                   'profiling_output_dir', 'enable_nvtx', 'enable_cleanup', 
+                   'timeout_seconds', 'measurement_timeout_seconds', 'setup_timeout_seconds',
+                   'warmup_timeout_seconds', 'profiling_timeout_seconds',
+                   'nsys_timeout_seconds', 'ncu_timeout_seconds', 'timeout_multiplier',
+                   'execution_mode']:
             value = getattr(config, key, None)
-            if value is not None:
+            # For percentiles, CRITICAL: always include it and ensure it's a list (never None)
+            if key == 'percentiles':
+                # Ensure percentiles is always a list before serialization
+                if value is None or not isinstance(value, list):
+                    value = [25, 50, 75, 99]
                 config_dict[key] = value
+            elif key == 'execution_mode':
+                if value is not None:
+                    config_dict[key] = value.value if isinstance(value, ExecutionMode) else value
+            elif value is not None:
+                config_dict[key] = value
+        
+        # CRITICAL: Ensure percentiles is always in config_dict
+        if 'percentiles' not in config_dict:
+            config_dict['percentiles'] = [25, 50, 75, 99]
         
         # Prepare input JSON
         input_data = {
@@ -407,11 +804,15 @@ class BenchmarkHarness:
             "device": str(self.device) if self.device else None,
         }
         
-        # Spawn subprocess
-        runner_script = Path(__file__).parent / "benchmark_runner.py"
+        # Spawn subprocess using isolated runner
+        runner_script = Path(__file__).parent / "isolated_runner.py"
         if not runner_script.exists():
-            errors.append("benchmark_runner.py not found - falling back to threading")
+            errors.append("isolated_runner.py not found - falling back to threading")
             return self._benchmark_with_threading(benchmark, config)
+        
+        # Use measurement_timeout_seconds (or fallback to timeout_seconds for backward compatibility)
+        measurement_timeout = getattr(config, 'measurement_timeout_seconds', config.timeout_seconds)
+        start_time = time.time()
         
         try:
             import signal
@@ -426,61 +827,106 @@ class BenchmarkHarness:
             
             # Send input JSON
             input_json = json.dumps(input_data)
-            stdout, stderr = process.communicate(input=input_json, timeout=config.timeout_seconds)
+            stdout, stderr = process.communicate(input=input_json, timeout=measurement_timeout)
             
             if process.returncode != 0:
-                errors.append(f"Subprocess exited with code {process.returncode}")
+                error_msg = f"Subprocess exited with code {process.returncode}"
+                errors.append(error_msg)
                 if stderr:
-                    errors.append(f"Stderr: {stderr[:500]}")  # Limit error message length
-                times_ms = []
+                    stderr_preview = stderr[:500] if len(stderr) > 500 else stderr
+                    errors.append(f"Stderr: {stderr_preview}")
+                    if LOGGER_AVAILABLE:
+                        logger.error(f"Benchmark '{benchmark_name}' subprocess failed with return code {process.returncode}")
+                        logger.error(f"Stderr preview: {stderr_preview}")
+                times_ms = cast(List[float], [])
             else:
-                # Parse JSON result
+                # Parse JSON result from isolated runner
                 try:
                     result_dict = json.loads(stdout)
-                    if result_dict.get("success"):
-                        # Extract raw timing measurements (preferred)
-                        times_ms = result_dict.get("times_ms", [])
-                        if not times_ms:
-                            # Fallback: reconstruct from statistics if raw times not available
-                            if result_dict.get("mean_ms"):
-                                mean_time = result_dict.get("mean_ms", 0)
-                                std_time = result_dict.get("std_ms", mean_time * 0.1)
-                                iterations = result_dict.get("iterations", config.iterations)
-                                import numpy as np
-                                synthetic_times = np.random.normal(mean_time, std_time, iterations)
-                                synthetic_times = np.clip(
-                                    synthetic_times,
-                                    result_dict.get("min_ms", mean_time * 0.5),
-                                    result_dict.get("max_ms", mean_time * 1.5)
-                                )
-                                times_ms = synthetic_times.tolist()
-                        memory_peak_mb = result_dict.get("memory_peak_mb")
-                        memory_allocated_mb = result_dict.get("memory_allocated_mb")
-                        errors.extend(result_dict.get("errors", []))
-                        profiling_outputs = result_dict.get("profiling_outputs", {})
-                        nsys_metrics = result_dict.get("nsys_metrics", {})
-                        ncu_metrics = result_dict.get("ncu_metrics", {})
+                    if result_dict.get("success") and result_dict.get("result_json"):
+                        # Deserialize Pydantic BenchmarkResult from JSON
+                        result_json_str = result_dict["result_json"]
+                        benchmark_result = PydanticBenchmarkResult.model_validate_json(result_json_str)
+                        
+                        # Extract timing data
+                        if benchmark_result.timing.raw_times_ms:
+                            times_ms = benchmark_result.timing.raw_times_ms
+                        else:
+                            # Reconstruct from statistics if raw times not available
+                            mean_time = benchmark_result.timing.mean_ms
+                            std_time = benchmark_result.timing.std_ms
+                            iterations = benchmark_result.timing.iterations
+                            import numpy as np
+                            synthetic_times = np.random.normal(mean_time, std_time, iterations)
+                            synthetic_times = np.clip(
+                                synthetic_times,
+                                benchmark_result.timing.min_ms,
+                                benchmark_result.timing.max_ms
+                            )
+                            times_ms = synthetic_times.tolist()
+                        
+                        # Extract memory data
+                        if benchmark_result.memory:
+                            memory_peak_mb = benchmark_result.memory.peak_mb
+                            memory_allocated_mb = benchmark_result.memory.allocated_mb
+                        
+                        # Extract errors
+                        errors.extend(benchmark_result.errors)
+                        
+                        # Extract profiling artifacts
+                        if benchmark_result.artifacts:
+                            if benchmark_result.artifacts.nsys_rep:
+                                profiling_outputs['nsys'] = benchmark_result.artifacts.nsys_rep
+                            if benchmark_result.artifacts.ncu_rep:
+                                profiling_outputs['ncu'] = benchmark_result.artifacts.ncu_rep
+                            if benchmark_result.artifacts.torch_trace_json:
+                                profiling_outputs['torch'] = benchmark_result.artifacts.torch_trace_json
+                        
+                        # Extract profiler metrics
+                        if benchmark_result.profiler_metrics:
+                            if benchmark_result.profiler_metrics.nsys:
+                                nsys_metrics = benchmark_result.profiler_metrics.nsys.to_dict()
+                            if benchmark_result.profiler_metrics.ncu:
+                                ncu_metrics = benchmark_result.profiler_metrics.ncu.to_dict()
                     else:
                         errors.extend(result_dict.get("errors", ["Subprocess execution failed"]))
-                        times_ms = []
+                        times_ms = cast(List[float], [])
                 except json.JSONDecodeError as e:
                     errors.append(f"Failed to parse subprocess output: {e}")
                     errors.append(f"Output: {stdout[:500]}")
-                    times_ms = []
+                    times_ms = cast(List[float], [])
                 except Exception as e:
                     errors.append(f"Error processing subprocess result: {e}")
-                    times_ms = []
+                    errors.append(f"Traceback: {traceback.format_exc()}")
+                    times_ms = cast(List[float], [])
         
         except subprocess.TimeoutExpired:
             # TIMEOUT - kill the process group
-            print("\n" + "=" * 80)
-            print("TIMEOUT: Benchmark execution exceeded timeout limit")
-            print("=" * 80)
-            print(f"   Timeout limit: {config.timeout_seconds} seconds")
-            print(f"   Status: Benchmark subprocess did not complete within timeout period")
-            print(f"   Action: Terminating subprocess to free GPU resources")
-            print("=" * 80)
-            print()
+            elapsed_time = time.time() - start_time
+            
+            logger.error("=" * 80)
+            logger.error("TIMEOUT: Benchmark execution exceeded timeout limit")
+            logger.error("=" * 80)
+            logger.error(f"   Benchmark: {benchmark_name}")
+            logger.error(f"   Stage: measurement (benchmark iterations)")
+            logger.error(f"   Timeout limit: {measurement_timeout} seconds")
+            logger.error(f"   Elapsed time: {elapsed_time:.2f} seconds")
+            logger.error(f"   Config: iterations={config.iterations}, warmup={config.warmup}")
+            logger.error(f"   Status: Benchmark subprocess did not complete within timeout period")
+            logger.error("")
+            logger.error("   Possible causes:")
+            logger.error("   - Benchmark is too slow for current timeout")
+            logger.error("   - Benchmark is hanging or deadlocked")
+            logger.error("   - GPU is under heavy load from other processes")
+            logger.error("")
+            logger.error("   Suggested actions:")
+            logger.error(f"   - Increase timeout: config.measurement_timeout_seconds = {measurement_timeout * 2}")
+            logger.error(f"   - Use timeout multiplier: config.timeout_multiplier = 2.0")
+            logger.error("   - Check for GPU resource contention")
+            logger.error("   - Review benchmark code for potential deadlocks")
+            logger.error("")
+            logger.error("   Action: Terminating subprocess to free GPU resources")
+            logger.error("=" * 80)
             
             try:
                 # Kill the process group (only the child, not parent)
@@ -496,29 +942,134 @@ class BenchmarkHarness:
                 # Process already terminated
                 pass
             
-            errors.append(f"TIMEOUT: Benchmark exceeded timeout of {config.timeout_seconds} seconds")
-            times_ms = []
+            timeout_error_msg = (
+                f"TIMEOUT: Benchmark measurement stage exceeded timeout of {measurement_timeout} seconds "
+                f"(ran for {elapsed_time:.2f}s). "
+                f"Consider increasing measurement_timeout_seconds or using timeout_multiplier."
+            )
+            errors.append(timeout_error_msg)
+            times_ms = cast(List[float], [])
+            
+            # Create a result with timeout information even though we failed
+            if not times_ms:
+                return self._create_timeout_result(
+                    stage="measurement",
+                    duration=elapsed_time,
+                    limit=measurement_timeout,
+                    errors=errors,
+                    benchmark_name=benchmark_name,
+                    config=config,
+                )
         
         except Exception as e:
-            errors.append(f"Subprocess execution failed: {str(e)}")
-            times_ms = []
+            error_msg = f"Subprocess execution failed: {str(e)}"
+            errors.append(error_msg)
+            if LOGGER_AVAILABLE:
+                logger.error(f"Benchmark '{benchmark_name}' failed during subprocess execution")
+                logger.error(f"Error: {error_msg}")
+            times_ms = cast(List[float], [])
         
-        if not times_ms:
-            raise RuntimeError(f"Benchmark failed: {', '.join(errors)}")
+        # Don't raise if we already returned a timeout result
+        if not times_ms and 'timeout_result' not in locals():
+            # Build comprehensive error message with context
+            config_summary = (
+                f"iterations={config.iterations}, warmup={config.warmup}, "
+                f"timeout={getattr(config, 'measurement_timeout_seconds', config.timeout_seconds)}s"
+            )
+            error_details = [
+                f"Benchmark: {benchmark_name}",
+                f"Config: {config_summary}",
+                f"Errors: {', '.join(errors)}",
+            ]
+            # Include partial results if we have any
+            if memory_peak_mb is not None:
+                error_details.append(f"Partial memory stats: peak={memory_peak_mb:.2f}MB")
+            if profiling_outputs:
+                error_details.append(f"Profiling artifacts collected: {list(profiling_outputs.keys())}")
+            
+            error_message = "\n".join(error_details)
+            if LOGGER_AVAILABLE:
+                logger.error("=" * 80)
+                logger.error("BENCHMARK FAILED")
+                logger.error("=" * 80)
+                for detail in error_details:
+                    logger.error(f"  {detail}")
+                logger.error("=" * 80)
+            
+            raise RuntimeError(error_message)
         
         # Compute statistics
         result = self._compute_stats(times_ms, config)
-        result.memory_peak_mb = memory_peak_mb
-        result.memory_allocated_mb = memory_allocated_mb
+        
+        # Add inference timing if available
+        if inference_timing_data and inference_timing_data.get("ttft_times_ms") and inference_timing_data.get("tpot_times_ms"):
+            inference_timing = self._capture_inference_timing(
+                inference_timing_data["ttft_times_ms"],
+                inference_timing_data["tpot_times_ms"],
+                config
+            )
+            if inference_timing:
+                result.inference_timing = inference_timing
+        
+        # Add memory stats
+        if memory_peak_mb is not None or memory_allocated_mb is not None:
+            result.memory = MemoryStats(
+                peak_mb=memory_peak_mb,
+                allocated_mb=memory_allocated_mb,
+                reserved_mb=None,
+                schemaVersion="1.0",
+            )
+        
+        # Add errors
         result.errors = errors
-        result.profiling_outputs = profiling_outputs
-        result.nsys_metrics = nsys_metrics
-        result.ncu_metrics = ncu_metrics
+        
+        # Add profiling artifacts
+        if profiling_outputs:
+            result.artifacts = ProfilerArtifacts(
+                nsys_rep=profiling_outputs.get('nsys_rep') or profiling_outputs.get('nsys'),
+                ncu_rep=profiling_outputs.get('ncu_rep') or profiling_outputs.get('ncu'),
+                torch_trace_json=profiling_outputs.get('torch') or profiling_outputs.get('pytorch_trace'),
+                schemaVersion="1.0",
+            )
+        
+        # Add profiler metrics
+        nsys_metrics_obj = None
+        ncu_metrics_obj = None
+        
+        if nsys_metrics:
+            nsys_metrics_obj = NsysMetrics(
+                total_gpu_time_ms=nsys_metrics.get('nsys_total_gpu_time_ms'),
+                raw_metrics={k.replace('nsys_', ''): v for k, v in nsys_metrics.items() 
+                            if not k.startswith('nsys_total_gpu_time_ms')},
+                schemaVersion="1.0",
+            )
+        
+        if ncu_metrics:
+            ncu_metrics_obj = NcuMetrics(
+                kernel_time_ms=ncu_metrics.get('ncu_kernel_time_ms'),
+                sm_throughput_pct=ncu_metrics.get('ncu_sm_throughput_pct'),
+                dram_throughput_pct=ncu_metrics.get('ncu_dram_throughput_pct'),
+                l2_throughput_pct=ncu_metrics.get('ncu_l2_throughput_pct'),
+                occupancy_pct=ncu_metrics.get('ncu_occupancy_pct'),
+                raw_metrics={k.replace('ncu_', ''): v for k, v in ncu_metrics.items() 
+                            if not k.startswith(('ncu_kernel_time_ms', 'ncu_sm_throughput_pct', 
+                                                'ncu_dram_throughput_pct', 'ncu_l2_throughput_pct', 'ncu_occupancy_pct'))},
+                schemaVersion="1.0",
+            )
+        
+        if nsys_metrics_obj or ncu_metrics_obj:
+            result.profiler_metrics = ProfilerMetrics(
+                nsys=nsys_metrics_obj,
+                ncu=ncu_metrics_obj,
+                torch=None,
+                schemaVersion="1.0",
+            )
         
         return result
     
-    def _benchmark_with_threading(self, benchmark: Benchmark, config: BenchmarkConfig) -> BenchmarkResult:
-        """Run benchmark using threading (legacy method, kept for compatibility)."""
+    def _benchmark_with_threading(self, benchmark: Benchmark, config: BenchmarkConfig) -> PydanticBenchmarkResult:
+        """Run benchmark using threading (alternative to subprocess method)."""
+        import inspect
         
         errors = []
         memory_peak_mb = None
@@ -526,69 +1077,311 @@ class BenchmarkHarness:
         profiling_outputs = {}
         nsys_metrics = {}
         ncu_metrics = {}
-        times_ms = []
+        times_ms = cast(List[float], [])
+        inference_timing_data = None
+        
+        # Get benchmark name for error messages (same as subprocess path)
+        benchmark_class = benchmark.__class__.__name__
+        benchmark_name = getattr(benchmark, '__name__', None) or getattr(benchmark, 'name', None) or benchmark_class
         
         # Use a lock to prevent teardown from running while benchmark is executing
         execution_lock = threading.Lock()
         execution_complete = threading.Event()
         teardown_called = threading.Event()  # Track if teardown has been called
         
+        # Store timeout result if one occurs (needs to be accessible from outer scope)
+        timeout_result_storage: List[Optional[PydanticBenchmarkResult]] = [None]
+        stage_watchdog: Dict[str, Dict[str, Any]] = {
+            'setup': {'status': 'pending', 'duration': 0.0},
+            'warmup': {'status': 'pending', 'duration': 0.0},
+            'measurement': {'status': 'pending', 'duration': 0.0},
+            'profiling': {'status': 'pending', 'duration': 0.0},
+        }
+        stage_start_times: Dict[str, float] = {}
+
+        def start_stage(stage: str) -> None:
+            stage_start_times[stage] = time.time()
+            stage_watchdog[stage] = {'status': 'running'}
+
+        def finish_stage(stage: str, status: str = "completed") -> None:
+            start = stage_start_times.get(stage)
+            duration = time.time() - start if start else 0.0
+            stage_watchdog[stage] = {'status': status, 'duration': duration}
+
+        def mark_stage(stage: str, status: str) -> None:
+            entry = stage_watchdog.get(stage, {})
+            entry['status'] = status
+            stage_watchdog[stage] = entry
+        
         def run_benchmark_internal():
             """Internal benchmark execution function."""
-            nonlocal times_ms, memory_peak_mb, memory_allocated_mb, profiling_outputs, errors, nsys_metrics, ncu_metrics
+            nonlocal times_ms, memory_peak_mb, memory_allocated_mb, profiling_outputs, errors, nsys_metrics, ncu_metrics, timeout_result_storage, inference_timing_data
             
             with execution_lock:  # Acquire lock during execution
                 try:
                     # Setup - this may include CUDA extension compilation OR torch.compile()
-                    # IMPORTANT: Setup MUST complete quickly or timeout will occur
-                    # torch.compile() compilation can hang - timeout will catch it
-                    # If setup takes longer than timeout, it will be killed by the outer timeout
+                    # IMPORTANT: Setup can hang, so we need actual timeout enforcement
                     import time
-                    start_time = time.time()
-                    benchmark.setup()
-                    setup_time = time.time() - start_time
-                    if setup_time > config.timeout_seconds * 0.8:  # Warn if setup takes >80% of timeout
-                        print(f"  WARNING: Setup took {setup_time:.1f}s (near timeout limit)")
+                    setup_start_time = time.time()
+                    setup_timeout = config.get_effective_timeout('setup')
                     
-                    # Warmup
-                    self._warmup(benchmark.benchmark_fn, config.warmup)
+                    if setup_timeout is not None:
+                        # Setup has explicit timeout - enforce it with threading timeout
+                        setup_complete = threading.Event()
+                        setup_error: List[Optional[Exception]] = [None]
+                        
+                        def run_setup():
+                            try:
+                                start_stage('setup')
+                                benchmark.setup()
+                                finish_stage('setup')
+                                setup_complete.set()
+                            except Exception as e:
+                                setup_error[0] = e
+                                finish_stage('setup', status='error')
+                                setup_complete.set()
+                        
+                        setup_thread = threading.Thread(target=run_setup, daemon=True)
+                        setup_thread.start()
+                        setup_thread.join(timeout=setup_timeout)
+                        
+                        if not setup_complete.is_set():
+                            # Setup timed out
+                            setup_time = time.time() - setup_start_time
+                            finish_stage('setup', status='timeout')
+                            timeout_error = TimeoutError(
+                                f"Setup exceeded timeout of {setup_timeout}s (ran for {setup_time:.1f}s)"
+                            )
+                            errors.append(str(timeout_error))
+                            # Create timeout result
+                            timeout_result_storage[0] = self._create_timeout_result(
+                                stage="setup",
+                                duration=setup_time,
+                                limit=setup_timeout,
+                                errors=errors,
+                                benchmark_name=benchmark_name,
+                                config=config,
+                                watchdog=stage_watchdog,
+                            )
+                            return  # Exit early, timeout_result will be checked outside
+                        
+                        if setup_error[0]:
+                            raise setup_error[0]
+                        
+                        setup_time = time.time() - setup_start_time
+                        if setup_time > setup_timeout * 0.8:  # Warn if setup takes >80% of timeout
+                            logger.warning(f"Setup took {setup_time:.1f}s (near timeout limit of {setup_timeout}s)")
+                    else:
+                        # No explicit setup timeout - just run it
+                        start_stage('setup')
+                        benchmark.setup()
+                        finish_stage('setup')
+                        setup_time = time.time() - setup_start_time
+                        # Warn if setup is suspiciously long (even without timeout)
+                        measurement_timeout = config.get_effective_timeout('measurement')
+                        if measurement_timeout and setup_time > measurement_timeout * 0.5:
+                            logger.warning(f"Setup took {setup_time:.1f}s (consider setting setup_timeout_seconds)")
+                    
+                    # Warmup with timeout enforcement
+                    warmup_timeout = config.get_effective_timeout('warmup')
+                    if warmup_timeout is not None and config.warmup > 0:
+                        warmup_start_time = time.time()
+                        warmup_complete = threading.Event()
+                        warmup_error: List[Optional[Exception]] = [None]
+                        
+                        def run_warmup():
+                            try:
+                                start_stage('warmup')
+                                self._warmup(benchmark.benchmark_fn, config.warmup)
+                                finish_stage('warmup')
+                                warmup_complete.set()
+                            except Exception as e:
+                                warmup_error[0] = e
+                                finish_stage('warmup', status='error')
+                                warmup_complete.set()
+                        
+                        warmup_thread = threading.Thread(target=run_warmup, daemon=True)
+                        warmup_thread.start()
+                        warmup_thread.join(timeout=warmup_timeout)
+                        
+                        if not warmup_complete.is_set():
+                            # Warmup timed out
+                            warmup_time = time.time() - warmup_start_time
+                            finish_stage('warmup', status='timeout')
+                            timeout_error = TimeoutError(
+                                f"Warmup exceeded timeout of {warmup_timeout}s (ran for {warmup_time:.1f}s)"
+                            )
+                            errors.append(str(timeout_error))
+                            # Create timeout result
+                            timeout_result_storage[0] = self._create_timeout_result(
+                                stage="warmup",
+                                duration=warmup_time,
+                                limit=warmup_timeout,
+                                errors=errors,
+                                benchmark_name=benchmark_name,
+                                config=config,
+                                watchdog=stage_watchdog,
+                            )
+                            return  # Exit early, timeout_result will be checked outside
+                        
+                        if warmup_error[0]:
+                            raise warmup_error[0]
+                    else:
+                        # No warmup timeout - just run it
+                        if config.warmup > 0:
+                            start_stage('warmup')
+                            self._warmup(benchmark.benchmark_fn, config.warmup)
+                            finish_stage('warmup')
+                        else:
+                            mark_stage('warmup', 'skipped')
                     
                     # Memory tracking: Use context manager to track peak memory during benchmark execution
+                    start_stage('measurement')
                     with self._memory_tracking(config) as mem_result:
                         # Benchmark using selected mode
                         # Note: nsys/ncu profiling wraps the entire process, so it's handled separately
-                        if config.enable_nsys or config.enable_ncu:
-                            # Run nsys/ncu profiling (these wrap the entire process)
-                            result = self._benchmark_with_nsys_ncu(benchmark, config)
-                            times_ms = result.get("times_ms", [])
-                            profiling_outputs = result.get("profiling_outputs", {})
-                            nsys_metrics = result.get("nsys_metrics", {})
-                            ncu_metrics = result.get("ncu_metrics", {})
+                        if config.enable_profiling and (config.enable_nsys or config.enable_ncu):
+                            if stage_watchdog['profiling']['status'] == 'pending':
+                                start_stage('profiling')
+                            # Delegate to unified profiling orchestration with timeout enforcement
+                            profiling_timeout = config.get_effective_timeout('profiling')
+                            if PROFILING_RUNNER_AVAILABLE:
+                                try:
+                                    from common.python.profiling_runner import run_profiling_orchestration
+                                    import time
+                                    profiling_start_time = time.time()
+                                    
+                                    # Run profiling with timeout enforcement
+                                    if profiling_timeout is not None:
+                                        profiling_complete = threading.Event()
+                                        profiling_result: List[Optional[Dict[str, Any]]] = [None]
+                                        profiling_error: List[Optional[Exception]] = [None]
+                                        
+                                        def run_profiling():
+                                            try:
+                                                # Wrap _benchmark_without_profiling to match expected signature
+                                                def timing_wrapper(fn: Callable, cfg: BenchmarkConfig) -> List[float]:
+                                                    times, _ = self._benchmark_without_profiling(fn, cfg)
+                                                    return times
+                                                
+                                                result = run_profiling_orchestration(
+                                                    benchmark, config,
+                                                    timing_fn=timing_wrapper,
+                                                    output_dir=Path(config.profiling_output_dir) if config.profiling_output_dir else None
+                                                )
+                                                profiling_result[0] = result
+                                                profiling_complete.set()
+                                            except Exception as e:
+                                                profiling_error[0] = e
+                                                profiling_complete.set()
+                                        
+                                        profiling_thread = threading.Thread(target=run_profiling, daemon=True)
+                                        profiling_thread.start()
+                                        profiling_thread.join(timeout=profiling_timeout)
+                                        
+                                        if not profiling_complete.is_set():
+                                            # Profiling timed out
+                                            profiling_time = time.time() - profiling_start_time
+                                            timeout_error = TimeoutError(
+                                                f"Profiling exceeded timeout of {profiling_timeout}s (ran for {profiling_time:.1f}s)"
+                                            )
+                                            errors.append(str(timeout_error))
+                                            finish_stage('profiling', status='timeout')
+                                            # Create timeout result
+                                            timeout_result_storage[0] = self._create_timeout_result(
+                                                stage="profiling",
+                                                duration=profiling_time,
+                                                limit=profiling_timeout,
+                                                errors=errors,
+                                                benchmark_name=benchmark_name,
+                                                config=config,
+                                                watchdog=stage_watchdog,
+                                            )
+                                            return  # Exit early, timeout_result will be checked outside
+                                        
+                                        if profiling_error[0]:
+                                            finish_stage('profiling', status='error')
+                                            raise profiling_error[0]
+                                        
+                                        prof_result = profiling_result[0]
+                                        if stage_watchdog['profiling']['status'] == 'running':
+                                            finish_stage('profiling')
+                                    else:
+                                        # No profiling timeout - just run it
+                                        # Wrap _benchmark_without_profiling to match expected signature
+                                        def timing_wrapper_no_timeout(fn: Callable, cfg: BenchmarkConfig) -> List[float]:
+                                            times, _ = self._benchmark_without_profiling(fn, cfg)
+                                            return times
+                                        
+                                        prof_result = run_profiling_orchestration(
+                                            benchmark, config,
+                                            timing_fn=timing_wrapper_no_timeout,
+                                            output_dir=Path(config.profiling_output_dir) if config.profiling_output_dir else None
+                                        )
+                                        finish_stage('profiling')
+                                    
+                                    if prof_result:
+                                        times_ms = prof_result.get("times_ms", [])
+                                        if "profiling_outputs" in prof_result:
+                                            profiling_outputs.update(prof_result.get("profiling_outputs", {}))
+                                        nsys_metrics = prof_result.get("nsys_metrics", {})
+                                        ncu_metrics = prof_result.get("ncu_metrics", {})
+                                except ImportError:
+                                    # Fallback if orchestration function not available
+                                    if stage_watchdog['profiling']['status'] == 'pending':
+                                        start_stage('profiling')
+                                    times_ms, profiling_outputs = self._benchmark_with_profiling(
+                                        benchmark.benchmark_fn, config
+                                    )
+                                    finish_stage('profiling')
+                                    nsys_metrics = {}
+                                    ncu_metrics = {}
+                            else:
+                                # Fallback to PyTorch profiler if profiling runner not available
+                                if stage_watchdog['profiling']['status'] == 'pending':
+                                    start_stage('profiling')
+                                times_ms, profiling_outputs = self._benchmark_with_profiling(
+                                    benchmark.benchmark_fn, config
+                                )
+                                finish_stage('profiling')
+                                nsys_metrics = {}
+                                ncu_metrics = {}
                         elif config.enable_profiling:
+                            start_stage('profiling')
                             times_ms, profiling_outputs = self._benchmark_with_profiling(
                                 benchmark.benchmark_fn, config
                             )
+                            finish_stage('profiling')
                         else:
-                            times_ms = self._benchmark_without_profiling(benchmark.benchmark_fn, config)
+                            mark_stage('profiling', 'skipped')
+                            times_ms, inference_timing_data = self._benchmark_without_profiling(benchmark.benchmark_fn, config)
                     
                     # Extract memory tracking results from context manager
                     if mem_result is not None:
-                        memory_peak_mb = mem_result[0]
-                        memory_allocated_mb = mem_result[1]
+                        if not isinstance(mem_result, MemoryStats):
+                            raise TypeError(f"Expected MemoryStats, got {type(mem_result)}")
+                        memory_peak_mb = mem_result.peak_mb
+                        memory_allocated_mb = mem_result.allocated_mb
                     
                     # Validate result
                     validation_error = benchmark.validate_result()
                     if validation_error:
                         errors.append(f"Validation failed: {validation_error}")
                     
+                    if stage_watchdog['measurement']['status'] == 'running':
+                        finish_stage('measurement')
+                
                 except Exception as e:
-                    error_msg = str(e)
+                    error_msg = str(e) or repr(e)
                     # Handle generator errors gracefully (common with torch.compile)
                     if "generator didn't stop after throw" in error_msg:
                         errors.append(f"Benchmark execution failed: Generator error (likely from torch.compile or async operations)")
                     else:
                         errors.append(f"Benchmark execution failed: {error_msg}")
-                    times_ms = []
+                        errors.append(f"Traceback: {traceback.format_exc()}")
+                    times_ms = cast(List[float], [])
+                    if stage_watchdog['measurement']['status'] == 'running':
+                        finish_stage('measurement', status='error')
                 finally:
                     # Mark execution as complete before teardown
                     execution_complete.set()
@@ -609,76 +1402,87 @@ class BenchmarkHarness:
                             torch.cuda.empty_cache()
                         gc.collect()
         
-        # ALWAYS run with timeout (required, default 15 seconds)
-        # Use a regular (non-daemon) thread so we can properly synchronize teardown
-        # NOTE: If a CUDA kernel hangs, we cannot interrupt it from Python - the GPU will be stuck
-        # until the kernel completes or the process is killed. This timeout mechanism prevents
-        # teardown from running while work is active, but cannot force-stop a hung CUDA kernel.
-        thread = threading.Thread(target=run_benchmark_internal)
-        thread.start()
-        thread.join(timeout=config.timeout_seconds)
+        # ALWAYS run with timeout (required, default 15 seconds). Thread-mode benchmarks execute
+        # inside a managed executor so we can recycle workers if a benchmark hangs.
+        measurement_timeout = getattr(config, 'measurement_timeout_seconds', config.timeout_seconds)
+        thread_start_time = time.time()
+        self._ensure_thread_executor()
+        future = self._thread_executor.submit(run_benchmark_internal)
+        try:
+            future.result(timeout=measurement_timeout)
+            elapsed_time = time.time() - thread_start_time
+        except _FuturesTimeoutError:
+            elapsed_time = time.time() - thread_start_time
+            future.cancel()
+            finish_stage('measurement', status='timeout')
+            
+            if timeout_result_storage[0] is not None:
+                self._reset_thread_executor()
+                return timeout_result_storage[0]
+            
+            logger.error("=" * 80)
+            logger.error("TIMEOUT: Benchmark execution exceeded timeout limit")
+            logger.error("=" * 80)
+            logger.error(f"   Benchmark: {benchmark_name}")
+            logger.error(f"   Stage: measurement (benchmark iterations)")
+            logger.error(f"   Timeout limit: {measurement_timeout} seconds")
+            logger.error(f"   Elapsed time: {elapsed_time:.2f} seconds")
+            logger.error(f"   Config: iterations={config.iterations}, warmup={config.warmup}")
+            logger.error(f"   Status: Benchmark did not complete within timeout period")
+            logger.error("")
+            logger.error("   Possible causes:")
+            logger.error("   - Benchmark is too slow for current timeout")
+            logger.error("   - Benchmark is hanging or deadlocked")
+            logger.error("   - CUDA kernel is hung (cannot be interrupted from Python)")
+            logger.error("   - GPU is under heavy load from other processes")
+            logger.error("")
+            logger.error("   Suggested actions:")
+            logger.error(f"   - Increase timeout: config.measurement_timeout_seconds = {measurement_timeout * 2}")
+            logger.error(f"   - Use timeout multiplier: config.timeout_multiplier = 2.0")
+            logger.error("   - Check for GPU resource contention")
+            logger.error("   - Review benchmark code for potential deadlocks")
+            logger.error("   - Use subprocess mode (more reliable): config.use_subprocess = True")
+            logger.error("")
+            logger.error("   WARNING: Threading timeout cannot force-stop hung CUDA kernels.")
+            logger.error("=" * 80)
+            
+            timeout_error_msg = (
+                f"TIMEOUT: Benchmark measurement stage exceeded timeout of {measurement_timeout} seconds "
+                f"(ran for {elapsed_time:.2f}s). "
+                f"Consider increasing measurement_timeout_seconds or using timeout_multiplier. "
+                f"Thread-mode cannot force-stop hung CUDA kernels - consider subprocess mode for stricter isolation."
+            )
+            errors.append(timeout_error_msg)
+            times_ms = cast(List[float], [])
+            
+            if torch.cuda.is_available():
+                try:
+                    torch.cuda.empty_cache()
+                    torch.cuda.reset_peak_memory_stats()
+                except Exception:
+                    pass
+            gc.collect()
+            gc.collect()
+            
+            timeout_result = self._create_timeout_result(
+                stage="measurement",
+                duration=elapsed_time,
+                limit=measurement_timeout,
+                errors=errors,
+                benchmark_name=benchmark_name,
+                config=config,
+                watchdog=stage_watchdog,
+            )
+            self._reset_thread_executor()
+            return timeout_result
+        finally:
+            self._reset_thread_executor()
         
-        if thread.is_alive():
-            # TIMEOUT OCCURRED - thread is still running
-            print("\n" + "=" * 80)
-            print("TIMEOUT: Benchmark execution exceeded timeout limit")
-            print("=" * 80)
-            print(f"   Timeout limit: {config.timeout_seconds} seconds")
-            print(f"   Status: Benchmark did not complete within timeout period")
-            print(f"   WARNING: If a CUDA kernel is hung, it cannot be interrupted from Python.")
-            print(f"   Action: Waiting for thread to complete before cleanup (prevents double teardown)")
-            print("=" * 80)
-            print()
-            
-            errors.append(f"TIMEOUT: Benchmark exceeded timeout of {config.timeout_seconds} seconds")
-            times_ms = []
-            
-            # Wait for execution to complete (with lock) before calling teardown
-            # This prevents double teardown and ensures cleanup happens after execution
-            # We give it additional time to complete, but if it's truly hung (e.g., stuck CUDA kernel),
-            # there's nothing we can do except wait or kill the process externally
-            lock_acquired = False
-            try:
-                lock_acquired = execution_lock.acquire(timeout=min(config.timeout_seconds * 2, 30))  # Cap at 30s
-                if lock_acquired:
-                    # Thread completed - ensure teardown is called (only if not already called)
-                    if not execution_complete.is_set():
-                        # Thread is still running - wait a bit more
-                        execution_complete.wait(timeout=5)
-                    
-                    # Teardown is safe now - we hold the lock, but only call if not already called
-                    if execution_complete.is_set() and not teardown_called.is_set():
-                        try:
-                            benchmark.teardown()
-                            teardown_called.set()
-                        except Exception as e:
-                            errors.append(f"Teardown after timeout failed: {str(e)}")
-                            teardown_called.set()  # Mark as called even on error
-            except Exception as e:
-                errors.append(f"Error during timeout handling: {str(e)}")
-            finally:
-                if lock_acquired:
-                    execution_lock.release()
-            
-            # If we couldn't acquire the lock, the thread is truly hung (likely stuck CUDA kernel)
-            # DO NOT call torch.cuda.synchronize() here - it will block forever if kernel is stuck
-            # Only do non-blocking cleanup operations
-            if not lock_acquired:
-                if torch.cuda.is_available():
-                    try:
-                        # Only do non-blocking cleanup - synchronize() would hang forever
-                        torch.cuda.empty_cache()
-                        # Skip synchronize() - it will block if kernel is stuck
-                        # Skip ipc_collect() - may also block
-                        torch.cuda.reset_peak_memory_stats()  # This is non-blocking
-                    except Exception:
-                        # Any CUDA operation may fail if kernel is stuck
-                        pass
-                # Always cleanup on timeout regardless of enable_cleanup flag
-                gc.collect()
-                # Force another GC pass to clean up any remaining references
-                gc.collect()
-        elif execution_complete.is_set():
+        # Check if a timeout occurred in setup/warmup/profiling stages
+        if timeout_result_storage[0] is not None:
+            return timeout_result_storage[0]
+        
+        if execution_complete.is_set():
             # Thread completed normally - results are already set
             pass
         else:
@@ -688,16 +1492,99 @@ class BenchmarkHarness:
         # Don't print success message for normal completion - only print on timeout/failure
         
         if not times_ms:
-            raise RuntimeError(f"Benchmark failed: {', '.join(errors)}")
+            # Build comprehensive error message with context
+            config_summary = (
+                f"iterations={config.iterations}, warmup={config.warmup}, "
+                f"timeout={getattr(config, 'measurement_timeout_seconds', config.timeout_seconds)}s"
+            )
+            error_details = [
+                f"Benchmark: {benchmark_name}",
+                f"Config: {config_summary}",
+                f"Errors: {', '.join(errors)}",
+            ]
+            # Include partial results if we have any
+            if memory_peak_mb is not None:
+                error_details.append(f"Partial memory stats: peak={memory_peak_mb:.2f}MB")
+            if profiling_outputs:
+                error_details.append(f"Profiling artifacts collected: {list(profiling_outputs.keys())}")
+            
+            error_message = "\n".join(error_details)
+            if LOGGER_AVAILABLE:
+                logger.error("=" * 80)
+                logger.error("BENCHMARK FAILED")
+                logger.error("=" * 80)
+                for detail in error_details:
+                    logger.error(f"  {detail}")
+                logger.error("=" * 80)
+            
+            raise RuntimeError(error_message)
         
         # Compute statistics
         result = self._compute_stats(times_ms, config)
-        result.memory_peak_mb = memory_peak_mb
-        result.memory_allocated_mb = memory_allocated_mb
+        
+        # Add inference timing if available
+        if inference_timing_data and inference_timing_data.get("ttft_times_ms") and inference_timing_data.get("tpot_times_ms"):
+            inference_timing = self._capture_inference_timing(
+                inference_timing_data["ttft_times_ms"],
+                inference_timing_data["tpot_times_ms"],
+                config
+            )
+            if inference_timing:
+                result.inference_timing = inference_timing
+        
+        # Add memory stats
+        if memory_peak_mb is not None or memory_allocated_mb is not None:
+            result.memory = MemoryStats(
+                peak_mb=memory_peak_mb,
+                allocated_mb=memory_allocated_mb,
+                reserved_mb=None,
+                schemaVersion="1.0",
+            )
+        
+        # Add errors
         result.errors = errors
-        result.profiling_outputs = profiling_outputs
-        result.nsys_metrics = nsys_metrics
-        result.ncu_metrics = ncu_metrics
+        
+        # Add profiling artifacts
+        if profiling_outputs:
+            result.artifacts = ProfilerArtifacts(
+                nsys_rep=profiling_outputs.get('nsys_rep') or profiling_outputs.get('nsys'),
+                ncu_rep=profiling_outputs.get('ncu_rep') or profiling_outputs.get('ncu'),
+                torch_trace_json=profiling_outputs.get('torch') or profiling_outputs.get('pytorch_trace'),
+                schemaVersion="1.0",
+            )
+        
+        # Add profiler metrics
+        nsys_metrics_obj = None
+        ncu_metrics_obj = None
+        
+        if nsys_metrics:
+            nsys_metrics_obj = NsysMetrics(
+                total_gpu_time_ms=nsys_metrics.get('nsys_total_gpu_time_ms'),
+                raw_metrics={k.replace('nsys_', ''): v for k, v in nsys_metrics.items() 
+                            if not k.startswith('nsys_total_gpu_time_ms')},
+                schemaVersion="1.0",
+            )
+        
+        if ncu_metrics:
+            ncu_metrics_obj = NcuMetrics(
+                kernel_time_ms=ncu_metrics.get('ncu_kernel_time_ms'),
+                sm_throughput_pct=ncu_metrics.get('ncu_sm_throughput_pct'),
+                dram_throughput_pct=ncu_metrics.get('ncu_dram_throughput_pct'),
+                l2_throughput_pct=ncu_metrics.get('ncu_l2_throughput_pct'),
+                occupancy_pct=ncu_metrics.get('ncu_occupancy_pct'),
+                raw_metrics={k.replace('ncu_', ''): v for k, v in ncu_metrics.items() 
+                            if not k.startswith(('ncu_kernel_time_ms', 'ncu_sm_throughput_pct', 
+                                                'ncu_dram_throughput_pct', 'ncu_l2_throughput_pct', 'ncu_occupancy_pct'))},
+                schemaVersion="1.0",
+            )
+        
+        if nsys_metrics_obj or ncu_metrics_obj:
+            result.profiler_metrics = ProfilerMetrics(
+                nsys=nsys_metrics_obj,
+                ncu=ncu_metrics_obj,
+                torch=None,
+                schemaVersion="1.0",
+            )
         
         return result
     
@@ -731,7 +1618,7 @@ class BenchmarkHarness:
                 with_flops=True,
             ) as prof:
                 # Run benchmark iterations with minimal overhead
-                times_ms = []
+                times_ms = cast(List[float], [])
                 is_cuda = self.device.type == "cuda"
                 
                 if is_cuda:
@@ -765,470 +1652,30 @@ class BenchmarkHarness:
             
         except Exception as e:
             # Fallback to non-profiling benchmark
-            return self._benchmark_without_profiling(fn, config), {}
+            times, inference_data = self._benchmark_without_profiling(fn, config)
+            return times, {}
     
-    def _check_nsys_available(self) -> bool:
-        """Check if nsys is available on the system."""
-        # First try shutil.which to find the tool
-        if shutil.which("nsys") is None:
-            return False
-        try:
-            result = subprocess.run(
-                ["nsys", "--version"],
-                capture_output=True,
-                timeout=5,
-                check=False,
-                env=os.environ.copy()
-            )
-            return result.returncode == 0
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            return False
     
-    def _check_ncu_available(self) -> bool:
-        """Check if ncu is available on the system."""
-        # First try shutil.which to find the tool
-        if shutil.which("ncu") is None:
-            return False
-        try:
-            result = subprocess.run(
-                ["ncu", "--version"],
-                capture_output=True,
-                timeout=5,
-                check=False,
-                env=os.environ.copy()
-            )
-            return result.returncode == 0
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            return False
-    
-    def _benchmark_with_nsys_ncu(
-        self, benchmark: Benchmark, config: BenchmarkConfig
-    ) -> Dict[str, Any]:
-        """Benchmark with nsys/ncu profiling enabled.
-        
-        Note: nsys and ncu wrap the entire Python process, so we need to create
-        a wrapper script that imports and runs the benchmark.
-        """
-        if not torch.cuda.is_available():
-            # Fallback to regular profiling if CUDA not available
-            if config.enable_nsys or config.enable_ncu:
-                print("  Note: CUDA not available - skipping nsys/ncu profiling (using PyTorch profiler only)")
-            times_ms, profiling_outputs = self._benchmark_with_profiling(
-                benchmark.benchmark_fn, config
-            )
-            return {
-                "times_ms": times_ms,
-                "profiling_outputs": profiling_outputs,
-                "nsys_metrics": {},
-                "ncu_metrics": {},
-            }
-        
-        # Check tool availability early and disable profiling if tools aren't available
-        nsys_available = self._check_nsys_available() if config.enable_nsys else False
-        ncu_available = self._check_ncu_available() if config.enable_ncu else False
-        
-        # Inform user if tools are requested but not available (degraded mode)
-        if config.enable_nsys and not nsys_available:
-            print("  Note: nsys not available - skipping nsys profiling (benchmarks will run normally)")
-        if config.enable_ncu and not ncu_available:
-            print("  Note: ncu not available - skipping ncu profiling (benchmarks will run normally)")
-        
-        # Create profiling output directory only if at least one tool is available
-        if nsys_available or ncu_available:
-            if config.profiling_output_dir:
-                prof_dir = Path(config.profiling_output_dir)
-                prof_dir.mkdir(parents=True, exist_ok=True)
-            else:
-                prof_dir = Path("profiling_results")
-                prof_dir.mkdir(parents=True, exist_ok=True)
-        else:
-            # No tools available, fall back to regular profiling
-            times_ms, profiling_outputs = self._benchmark_with_profiling(
-                benchmark.benchmark_fn, config
-            )
-            return {
-                "times_ms": times_ms,
-                "profiling_outputs": profiling_outputs,
-                "nsys_metrics": {},
-                "ncu_metrics": {},
-            }
-        
-        times_ms = []
-        profiling_outputs = {}
-        nsys_metrics = {}
-        ncu_metrics = {}
-        
-        # Get benchmark module and class info for wrapper script
-        benchmark_module = inspect.getmodule(benchmark)
-        benchmark_class = benchmark.__class__.__name__
-        
-        # If module is None, try to get it from the class
-        if benchmark_module is None:
-            benchmark_module = inspect.getmodule(benchmark.__class__)
-        
-        # If still None, we can't create wrapper script (degraded mode)
-        if benchmark_module is None:
-            # Fall back to regular profiling or non-profiling benchmark
-            # Don't return empty times_ms - that causes benchmark to fail
-            if config.enable_profiling:
-                times_ms, profiling_outputs = self._benchmark_with_profiling(
-                    benchmark.benchmark_fn, config
-                )
-            else:
-                times_ms = self._benchmark_without_profiling(benchmark.benchmark_fn, config)
-                profiling_outputs = {}
-            return {
-                "times_ms": times_ms,
-                "profiling_outputs": profiling_outputs,
-                "nsys_metrics": {},
-                "ncu_metrics": {},
-            }
-        
-        # Run regular benchmark first to get timing (nsys/ncu are for metrics, not timing)
-        times_ms = self._benchmark_without_profiling(benchmark.benchmark_fn, config)
-        
-        # Run nsys profiling if enabled and available
-        if config.enable_nsys and nsys_available:
-            nsys_result = self._run_nsys_profiling(benchmark, benchmark_module, benchmark_class, prof_dir, config)
-            if nsys_result:
-                profiling_outputs.update(nsys_result.get("profiling_outputs", {}))
-                nsys_metrics = nsys_result.get("metrics", {})
-        
-        # Run ncu profiling if enabled and available
-        if config.enable_ncu and ncu_available:
-            ncu_result = self._run_ncu_profiling(benchmark, benchmark_module, benchmark_class, prof_dir, config)
-            if ncu_result:
-                profiling_outputs.update(ncu_result.get("profiling_outputs", {}))
-                ncu_metrics = ncu_result.get("metrics", {})
-        
-        return {
-            "times_ms": times_ms,
-            "profiling_outputs": profiling_outputs,
-            "nsys_metrics": nsys_metrics,
-            "ncu_metrics": ncu_metrics,
-        }
-    
-    def _run_nsys_profiling(
-        self, benchmark: Benchmark, benchmark_module, benchmark_class: str,
-        prof_dir: Path, config: BenchmarkConfig
-    ) -> Optional[Dict[str, Any]]:
-        """Run nsys profiling on benchmark.
-        
-        Note: Tool availability should be checked before calling this method.
-        """
-        # Create wrapper script
-        wrapper_script = self._create_benchmark_wrapper(
-            benchmark, benchmark_module, benchmark_class, config
-        )
-        
-        if not wrapper_script:
-            # Only inform if we actually tried to create the script (tool was available)
-            print(f"  Note: Could not create wrapper script for nsys profiling of {benchmark_class} - skipping nsys profiling")
-            return None
-        
-        try:
-            # Create output path
-            nsys_output = prof_dir / f"nsys_{benchmark_class}"
-            
-            # Build nsys command
-            nsys_command = [
-                "nsys",
-                "profile",
-                "--force-overwrite=true",
-                "-o",
-                str(nsys_output),
-                "-t", "cuda,nvtx,osrt,cublas,cudnn",
-                "-s", "cpu",
-                "--python-sampling=true",
-                "--python-sampling-frequency=1000",
-                "--cudabacktrace=true",
-                "--stats=true",
-                sys.executable,
-                str(wrapper_script)
-            ]
-            
-            # Run nsys
-            result = subprocess.run(
-                nsys_command,
-                capture_output=True,
-                timeout=config.nsys_timeout_seconds,
-                check=False,
-                env=os.environ.copy()
-            )
-            
-            # Find the generated .nsys-rep file
-            nsys_rep_path = Path(f"{nsys_output}.nsys-rep")
-            if not nsys_rep_path.exists():
-                # Try alternative naming
-                for rep_file in prof_dir.glob(f"nsys_{benchmark_class}*.nsys-rep"):
-                    nsys_rep_path = rep_file
-                    break
-            
-            if nsys_rep_path.exists():
-                profiling_outputs = {"nsys_rep": str(nsys_rep_path)}
-                # Extract metrics using metrics_extractor module
-                if extract_nsys_metrics is not None:
-                    nsys_metrics_obj = extract_nsys_metrics(nsys_rep_path, timeout=60)
-                    metrics = nsys_metrics_obj.to_dict()
-                else:
-                    metrics = {}
-                return {
-                    "profiling_outputs": profiling_outputs,
-                    "metrics": metrics,
-                }
-            else:
-                # nsys completed but file not found - skip silently (degraded mode)
-                pass
-        except subprocess.TimeoutExpired:
-            print(f"  Note: nsys profiling timed out for {benchmark_class} - skipping nsys profiling")
-        except Exception as e:
-            # Only log if in debug mode
-            if os.environ.get("BENCHMARK_DEBUG", "").lower() in ("1", "true", "yes"):
-                print(f"  Debug: nsys profiling failed for {benchmark_class}: {e}")
-        finally:
-            # Clean up wrapper script
-            try:
-                if wrapper_script.exists():
-                    wrapper_script.unlink()
-            except:
-                pass
-        
-        return None
-    
-    def _run_ncu_profiling(
-        self, benchmark: Benchmark, benchmark_module, benchmark_class: str,
-        prof_dir: Path, config: BenchmarkConfig
-    ) -> Optional[Dict[str, Any]]:
-        """Run ncu profiling on benchmark.
-        
-        Note: Tool availability should be checked before calling this method.
-        """
-        # Create wrapper script
-        wrapper_script = self._create_benchmark_wrapper(
-            benchmark, benchmark_module, benchmark_class, config
-        )
-        
-        if not wrapper_script:
-            # Only inform if we actually tried to create the script (tool was available)
-            print(f"  Note: Could not create wrapper script for ncu profiling of {benchmark_class} - skipping ncu profiling")
-            return None
-        
-        try:
-            # Create output path
-            ncu_output = prof_dir / f"ncu_{benchmark_class}"
-            
-            # Build ncu command with comprehensive metrics for roofline analysis
-            # Based on book recommendations (ch13.md): roofline analysis metrics
-            # Includes: compute throughput, memory throughput (DRAM/L2), occupancy, and efficiency
-            ncu_metrics = [
-                # Kernel timing
-                "gpu__time_duration.avg",
-                # Compute throughput (SM)
-                "sm__throughput.avg.pct_of_peak_sustained_elapsed",
-                # Memory throughput - DRAM (HBM)
-                "gpu__dram_throughput.avg.pct_of_peak_sustained_elapsed",
-                # Memory throughput - L2 cache
-                "lts__throughput.avg.pct_of_peak_sustained_elapsed",
-                # Compute proxy - FP32 instructions
-                "sm__sass_thread_inst_executed_op_fp32_pred_on.sum",
-                # Occupancy - active warps
-                "sm__warps_active.avg.pct_of_peak_sustained_active",
-                # Memory efficiency metrics (from ch7.md)
-                "dram__sectors_read.sum",
-                "l1tex__t_sectors_pipe_lsu_mem_global_op_ld.sum",
-                "l1tex__t_sectors_pipe_lsu_mem_global_op_st.sum",
-                # Memory load efficiency
-                "l1tex__data_bank_conflicts_pipe_lsu_mem_shared_op_ld.sum",
-                # Tensor Core utilization (if applicable)
-                "sm__inst_executed_pipe_tensor.sum",
-            ]
-            
-            ncu_command = [
-                "ncu",
-                "--set", "full",
-                "--metrics", ",".join(ncu_metrics),
-                "--replay-mode", "kernel",
-                "-o", str(ncu_output),
-                sys.executable,
-                str(wrapper_script)
-            ]
-            
-            # Run ncu
-            result = subprocess.run(
-                ncu_command,
-                capture_output=True,
-                timeout=config.ncu_timeout_seconds,
-                check=False,
-                env=os.environ.copy()
-            )
-            
-            # Find the generated .ncu-rep file
-            ncu_rep_path = Path(f"{ncu_output}.ncu-rep")
-            if not ncu_rep_path.exists():
-                # Try alternative naming
-                for rep_file in prof_dir.glob(f"ncu_{benchmark_class}*.ncu-rep"):
-                    ncu_rep_path = rep_file
-                    break
-            
-            if ncu_rep_path.exists():
-                profiling_outputs = {"ncu_rep": str(ncu_rep_path)}
-                # Extract metrics using metrics_extractor module
-                if extract_ncu_metrics is not None:
-                    ncu_metrics_obj = extract_ncu_metrics(ncu_rep_path, timeout=60)
-                    metrics = ncu_metrics_obj.to_dict()
-                else:
-                    metrics = {}
-                return {
-                    "profiling_outputs": profiling_outputs,
-                    "metrics": metrics,
-                }
-            else:
-                # ncu completed but file not found - skip silently (degraded mode)
-                pass
-        except subprocess.TimeoutExpired:
-            print(f"  Note: ncu profiling timed out for {benchmark_class} - skipping ncu profiling")
-        except Exception as e:
-            # Only log if in debug mode
-            if os.environ.get("BENCHMARK_DEBUG", "").lower() in ("1", "true", "yes"):
-                print(f"  Debug: ncu profiling failed for {benchmark_class}: {e}")
-        finally:
-            # Clean up wrapper script
-            try:
-                if wrapper_script.exists():
-                    wrapper_script.unlink()
-            except:
-                pass
-        
-        return None
-    
-    def _create_benchmark_wrapper(
-        self, benchmark: Benchmark, benchmark_module, benchmark_class: str, config: BenchmarkConfig
-    ) -> Optional[Path]:
-        """Create a temporary Python script that runs the benchmark.
-        
-        The wrapper script imports the benchmark module and recreates the benchmark
-        instance, then runs setup, warmup, and profiling iterations.
-        """
-        try:
-            # Get module path
-            if benchmark_module is None:
-                return None
-            
-            module_name = benchmark_module.__name__
-            module_file = getattr(benchmark_module, "__file__", None)
-            
-            # Try to get file from spec if __file__ is not available
-            if module_file is None:
-                spec = getattr(benchmark_module, "__spec__", None)
-                if spec is not None:
-                    module_file = getattr(spec, "origin", None)
-            
-            if module_file is None:
-                # Can't determine module file - skip wrapper creation (degraded mode)
-                return None
-            
-            module_path = Path(module_file).resolve()
-            if not module_path.exists():
-                # Module file doesn't exist - skip wrapper creation (degraded mode)
-                return None
-            
-            module_dir = module_path.parent
-            
-            # Create temporary wrapper script
-            wrapper_script = tempfile.NamedTemporaryFile(
-                mode='w', suffix='.py', delete=False, dir=tempfile.gettempdir()
-            )
-            
-            # Determine how to instantiate the benchmark
-            # Try common patterns: get_benchmark() function, or class name
-            instantiation_code = f"""# Get benchmark instance (try common patterns)
-benchmark = None
-try:
-    if hasattr({module_name}, "get_benchmark"):
-        benchmark = {module_name}.get_benchmark()
-    elif hasattr({module_name}, "{benchmark_class}"):
-        benchmark_class = getattr({module_name}, "{benchmark_class}")
-        benchmark = benchmark_class()
-    else:
-        # Try to find any class with benchmark_fn method
-        for attr_name in dir({module_name}):
-            attr = getattr({module_name}, attr_name)
-            if isinstance(attr, type) and hasattr(attr, "benchmark_fn") and callable(getattr(attr, "benchmark_fn", None)):
-                benchmark = attr()
-                break
-except Exception as e:
-    import traceback
-    print("Error creating benchmark: " + str(e))
-    traceback.print_exc()
-    raise
-
-if benchmark is None:
-    raise RuntimeError("Could not find or instantiate benchmark instance")
-"""
-            
-            wrapper_content = f'''import sys
-from pathlib import Path
-
-# Add module directory to path
-sys.path.insert(0, r"{module_dir}")
-
-# Import the benchmark module
-import {module_name}
-
-{instantiation_code}
-
-# Run benchmark
-try:
-    benchmark.setup()
-    
-    # Warmup
-    for _ in range({config.warmup}):
-        benchmark.benchmark_fn()
-    
-    # Synchronize before profiling
-    import torch
-    if torch.cuda.is_available():
-        torch.cuda.synchronize()
-    
-    # Run benchmark iterations for profiling (limited for profiling overhead)
-    for _ in range({min(config.iterations, 10)}):
-        benchmark.benchmark_fn()
-    
-    if torch.cuda.is_available():
-        torch.cuda.synchronize()
-    
-    benchmark.teardown()
-except Exception as e:
-    import traceback
-    print("Error running benchmark: " + str(e))
-    traceback.print_exc()
-    raise
-'''
-            
-            wrapper_script.write(wrapper_content)
-            wrapper_script.close()
-            
-            return Path(wrapper_script.name)
-        except Exception as e:
-            # Log the error for debugging but don't raise (caller will handle None return)
-            # Only log if in debug mode, otherwise silently fail (degraded mode is OK)
-            if os.environ.get("BENCHMARK_DEBUG", "").lower() in ("1", "true", "yes"):
-                import traceback
-                print(f"  Debug: Failed to create wrapper script for {benchmark_class}: {e}")
-            return None
-    
-    # Metrics extraction methods removed - now using common.python.metrics_extractor module
-    # See extract_nsys_metrics() and extract_ncu_metrics() in metrics_extractor.py
-    # For metric descriptions, use get_ncu_metric_description() from metrics_extractor module
+    # Profiling methods moved to common.python.profiling_runner module
+    # Use run_nsys_profiling() and run_ncu_profiling() from profiling_runner.py
+    # Wrapper generation moved to common.python.profiler_wrapper module
+    # Use create_benchmark_wrapper() from profiler_wrapper.py
     
     def _benchmark_without_profiling(
         self, fn: Callable, config: BenchmarkConfig
-    ) -> List[float]:
-        """Benchmark without profiling."""
+    ) -> tuple[List[float], Optional[Dict[str, List[float]]]]:
+        """Benchmark without profiling.
+        
+        Returns:
+            Tuple of (times_ms, inference_timing_data) where inference_timing_data is None
+            or a dict with 'ttft_times_ms' and 'tpot_times_ms' keys
+        """
         if self.mode == BenchmarkMode.TRITON:
-            return self._benchmark_triton(fn, config)
+            times_ms = self._benchmark_triton(fn, config)
+            return times_ms, None
         elif self.mode == BenchmarkMode.PYTORCH:
-            return self._benchmark_pytorch(fn, config)
+            times_ms = self._benchmark_pytorch(fn, config)
+            return times_ms, None
         else:
             return self._benchmark_custom(fn, config)
     
@@ -1236,7 +1683,7 @@ except Exception as e:
         """Use Triton's do_bench (returns single value per call)."""
         try:
             import triton.testing as tt
-            times_ms = []
+            times_ms = cast(List[float], [])
             # Triton do_bench handles warmup internally, but we do our own
             for _ in range(config.iterations):
                 time_ms = tt.do_bench(fn, warmup=0, rep=1)  # We handle warmup
@@ -1244,7 +1691,8 @@ except Exception as e:
             return times_ms
         except ImportError:
             # Fallback to custom if Triton not available
-            return self._benchmark_custom(fn, config)
+            times, _ = self._benchmark_custom(fn, config)
+            return times
     
     def _benchmark_pytorch(self, fn: Callable, config: BenchmarkConfig) -> List[float]:
         """Use PyTorch's Timer."""
@@ -1252,10 +1700,9 @@ except Exception as e:
             from torch.utils.benchmark import Timer
             
             timer = Timer(
-                stmt=fn,
-                globals={},
+                stmt="fn()",
+                globals={"fn": fn},
                 num_threads=1,
-                device=self.device.type,
             )
             
             # blocked_autorange runs until min_run_time is met
@@ -1273,17 +1720,26 @@ except Exception as e:
             return times_ms
         except Exception as e:
             # Fallback to custom on error
-            return self._benchmark_custom(fn, config)
+            times, _ = self._benchmark_custom(fn, config)
+            return times
     
-    def _benchmark_custom(self, fn: Callable, config: BenchmarkConfig) -> List[float]:
+    def _benchmark_custom(self, fn: Callable, config: BenchmarkConfig) -> tuple[List[float], Optional[Dict[str, List[float]]]]:
         """Custom benchmarking with CUDA Events for accurate GPU timing.
         
         Optimized for minimal overhead:
         - Uses CUDA Events for accurate GPU timing without blocking
         - Reuses events across iterations for efficiency
         - Synchronizes only when necessary for accurate timing
+        
+        Returns:
+            Tuple of (times_ms, inference_timing_data) where inference_timing_data is None
+            or a dict with 'ttft_times_ms' and 'tpot_times_ms' keys
         """
-        times_ms = []
+        times_ms: List[float] = []
+        inference_timing_data: Optional[Dict[str, List[float]]] = None
+        ttft_times_ms: List[float] = []
+        tpot_times_ms: List[float] = []
+        
         is_cuda = self.device.type == "cuda"
         
         if is_cuda:
@@ -1300,23 +1756,44 @@ except Exception as e:
             for _ in range(config.iterations):
                 # Record start event (non-blocking)
                 start_event.record()
-                # Execute function under test
-                fn()
+                # Execute function under test - may return inference timing data
+                result = fn()
                 # Record end event (non-blocking)
                 end_event.record()
-                # Synchronize to ensure events are recorded, then get elapsed time
-                # Note: Sync is necessary for accurate timing, but CUDA Events minimize overhead
-                torch.cuda.synchronize(self.device)
+                # Synchronize only the end event (not device-wide) for accurate timing
+                # This avoids blocking other CUDA streams and reduces overhead
+                end_event.synchronize()
                 times_ms.append(start_event.elapsed_time(end_event))
+                
+                # Check if function returned inference timing data
+                if isinstance(result, dict):
+                    if "ttft_times_ms" in result and isinstance(result["ttft_times_ms"], list):
+                        ttft_times_ms.extend(result["ttft_times_ms"])
+                    if "tpot_times_ms" in result and isinstance(result["tpot_times_ms"], list):
+                        tpot_times_ms.extend(result["tpot_times_ms"])
         else:
             # CPU: use high-resolution timer
             for _ in range(config.iterations):
                 start_time = time.perf_counter()
-                fn()
+                result = fn()
                 end_time = time.perf_counter()
                 times_ms.append((end_time - start_time) * 1000)
+                
+                # Check if function returned inference timing data
+                if isinstance(result, dict):
+                    if "ttft_times_ms" in result and isinstance(result["ttft_times_ms"], list):
+                        ttft_times_ms.extend(result["ttft_times_ms"])
+                    if "tpot_times_ms" in result and isinstance(result["tpot_times_ms"], list):
+                        tpot_times_ms.extend(result["tpot_times_ms"])
         
-        return times_ms
+        # Build inference timing data if collected
+        if ttft_times_ms or tpot_times_ms:
+            inference_timing_data = {
+                "ttft_times_ms": ttft_times_ms,
+                "tpot_times_ms": tpot_times_ms,
+            }
+        
+        return times_ms, inference_timing_data
     
     def _warmup(self, fn: Callable, warmup_iterations: int) -> None:
         """Perform warmup iterations."""
@@ -1326,33 +1803,168 @@ except Exception as e:
         if is_cuda:
             torch.cuda.synchronize(self.device)
     
+    def _compute_percentiles(self, values: List[float], percentiles: List[float]) -> Dict[float, float]:
+        """Compute percentiles for a list of values.
+        
+        Args:
+            values: List of numeric values
+            percentiles: List of percentile values (e.g., [50.0, 90.0, 95.0, 99.0])
+            
+        Returns:
+            Dictionary mapping percentile to value
+        """
+        if not values:
+            return {}
+        
+        # Ensure percentiles is a list
+        if percentiles is None:
+            percentiles = [25, 50, 75, 99]
+        
+        sorted_values = sorted(values)
+        n = len(sorted_values)
+        percentiles_dict = {}
+        
+        for p in percentiles:
+            idx = int((p / 100.0) * (n - 1))
+            idx = min(idx, n - 1)
+            percentiles_dict[p] = sorted_values[idx]
+        
+        return percentiles_dict
+    
+    def _capture_inference_timing(
+        self,
+        ttft_times_ms: List[float],
+        tpot_times_ms: List[float],
+        config: BenchmarkConfig
+    ) -> Optional[InferenceTimingStats]:
+        """Capture inference timing statistics from raw TTFT and TPOT measurements.
+        
+        Args:
+            ttft_times_ms: List of TTFT measurements (one per request) in milliseconds
+            tpot_times_ms: List of TPOT measurements (one per token) in milliseconds
+            config: BenchmarkConfig for percentile configuration
+            
+        Returns:
+            InferenceTimingStats object or None if no data
+        """
+        if not PYDANTIC_AVAILABLE or InferenceTimingStats is None:
+            return None
+        
+        if not ttft_times_ms or not tpot_times_ms:
+            return None
+        
+        # Compute TTFT percentiles - ensure percentiles is a list
+        percentiles = config.percentiles if config.percentiles is not None else [25, 50, 75, 99]
+        ttft_percentiles = self._compute_percentiles(ttft_times_ms, percentiles)
+        ttft_p50 = ttft_percentiles.get(50.0) or statistics.median(ttft_times_ms)
+        ttft_p90 = ttft_percentiles.get(90.0)
+        ttft_p95 = ttft_percentiles.get(95.0)
+        ttft_p99 = ttft_percentiles.get(99.0)
+        
+        # Compute TPOT percentiles
+        tpot_percentiles = self._compute_percentiles(tpot_times_ms, percentiles)
+        tpot_p50 = tpot_percentiles.get(50.0) or statistics.median(tpot_times_ms)
+        tpot_p90 = tpot_percentiles.get(90.0)
+        tpot_p95 = tpot_percentiles.get(95.0)
+        tpot_p99 = tpot_percentiles.get(99.0)
+        
+        # Count requests and tokens
+        num_requests = len(ttft_times_ms)
+        total_tokens_generated = len(tpot_times_ms)
+        
+        return InferenceTimingStats(
+            ttft_mean_ms=statistics.mean(ttft_times_ms),
+            ttft_p50_ms=ttft_p50,
+            ttft_p90_ms=ttft_p90,
+            ttft_p95_ms=ttft_p95,
+            ttft_p99_ms=ttft_p99,
+            ttft_percentiles=ttft_percentiles,
+            tpot_mean_ms=statistics.mean(tpot_times_ms),
+            tpot_p50_ms=tpot_p50,
+            tpot_p90_ms=tpot_p90,
+            tpot_p95_ms=tpot_p95,
+            tpot_p99_ms=tpot_p99,
+            tpot_percentiles=tpot_percentiles,
+            num_requests=num_requests,
+            total_tokens_generated=total_tokens_generated,
+            raw_ttft_times_ms=ttft_times_ms,
+            raw_tpot_times_ms=tpot_times_ms,
+            schemaVersion="1.0",
+        )
+    
     def _compute_stats(
         self, times_ms: List[float], config: BenchmarkConfig
-    ) -> BenchmarkResult:
-        """Compute statistical measures."""
+    ) -> PydanticBenchmarkResult:
+        """Compute statistical measures and return Pydantic BenchmarkResult."""
+        if not PYDANTIC_AVAILABLE:
+            raise ImportError("pydantic is required. Install with: pip install pydantic")
+        
         if not times_ms:
             raise ValueError("No timing data collected")
         
-        sorted_times = sorted(times_ms)
+        # CRITICAL: Filter out None values and ensure all values are numeric
+        # This prevents "'<' not supported between instances of 'NoneType' and 'list'" errors
+        valid_times_ms: List[float] = []
+        for t in times_ms:
+            if t is not None and isinstance(t, (int, float)):
+                valid_times_ms.append(float(t))
+            elif isinstance(t, list):
+                # If we somehow got a list, extract numeric values from it
+                valid_times_ms.extend([float(x) for x in t if x is not None and isinstance(x, (int, float))])
+        
+        if not valid_times_ms:
+            raise ValueError(f"No valid timing data collected. Original times_ms had {len(times_ms)} entries, but none were valid numbers.")
+        
+        sorted_times = sorted(valid_times_ms)
         n = len(sorted_times)
         
-        # Compute percentiles
+        # Compute percentiles - ensure percentiles is a list
+        percentiles = config.percentiles if config.percentiles is not None else [25, 50, 75, 99]
         percentiles_dict = {}
-        for p in config.percentiles:
+        for p in percentiles:
             idx = int((p / 100.0) * (n - 1))
             idx = min(idx, n - 1)
             percentiles_dict[p] = sorted_times[idx]
         
-        return BenchmarkResult(
-            mean_ms=statistics.mean(times_ms),
-            median_ms=statistics.median(times_ms),
-            std_ms=statistics.stdev(times_ms) if n > 1 else 0.0,
-            min_ms=min(times_ms),
-            max_ms=max(times_ms),
+        # Extract p50/p90/p95/p99 from percentiles
+        p50 = percentiles_dict.get(50.0) or statistics.median(valid_times_ms)
+        p90 = percentiles_dict.get(90.0)
+        p95 = percentiles_dict.get(95.0)
+        p99 = percentiles_dict.get(99.0)
+        
+        timing = TimingStats(
+            mean_ms=statistics.mean(valid_times_ms),
+            median_ms=statistics.median(valid_times_ms),
+            std_ms=statistics.stdev(valid_times_ms) if n > 1 else 0.0,
+            min_ms=min(valid_times_ms),
+            max_ms=max(valid_times_ms),
+            p50_ms=p50,
+            p90_ms=p90,
+            p95_ms=p95,
+            p99_ms=p99,
             percentiles=percentiles_dict,
             iterations=n,
             warmup_iterations=config.warmup,
-            raw_times_ms=times_ms,  # Store raw times for subprocess IPC
+            raw_times_ms=valid_times_ms,  # Store cleaned data, not original
+            schemaVersion="1.0",
+        )
+        
+        return PydanticBenchmarkResult(
+            timing=timing,
+            inference_timing=None,
+            memory=None,
+            artifacts=None,
+            profiler_metrics=None,
+            errors=[],
+            validation_status=None,
+            validation_message=None,
+            benchmark_name=None,
+            device=str(self.device),
+            mode=self.mode.value,
+            timeout_stage=None,
+            timeout_duration_seconds=None,
+            timeout_limit_seconds=None,
+            schemaVersion="1.0",
         )
 
 
@@ -1362,7 +1974,7 @@ def compare_benchmarks(
     harness: Optional[BenchmarkHarness] = None,
     name: str = "Comparison",
     regression_threshold_pct: float = 5.0
-) -> Dict[str, any]:
+) -> Dict[str, Any]:
     """Compare baseline vs optimized benchmarks and return metrics.
     
     Args:
@@ -1381,7 +1993,9 @@ def compare_benchmarks(
     baseline_result = harness.benchmark(baseline)
     optimized_result = harness.benchmark(optimized)
     
-    speedup = baseline_result.mean_ms / optimized_result.mean_ms if optimized_result.mean_ms > 0 else 1.0
+    baseline_mean = baseline_result.timing.mean_ms if baseline_result.timing else 0.0
+    optimized_mean = optimized_result.timing.mean_ms if optimized_result.timing else 0.0
+    speedup = baseline_mean / optimized_mean if optimized_mean > 0 else 1.0
     
     # Detect regression: optimized is slower by threshold
     regression = False
@@ -1393,18 +2007,18 @@ def compare_benchmarks(
     return {
         "name": name,
         "baseline": {
-            "mean_ms": baseline_result.mean_ms,
-            "median_ms": baseline_result.median_ms,
-            "std_ms": baseline_result.std_ms,
-            "min_ms": baseline_result.min_ms,
-            "max_ms": baseline_result.max_ms,
+            "mean_ms": baseline_result.timing.mean_ms if baseline_result.timing else 0.0,
+            "median_ms": baseline_result.timing.median_ms if baseline_result.timing else 0.0,
+            "std_ms": baseline_result.timing.std_ms if baseline_result.timing else 0.0,
+            "min_ms": baseline_result.timing.min_ms if baseline_result.timing else 0.0,
+            "max_ms": baseline_result.timing.max_ms if baseline_result.timing else 0.0,
         },
         "optimized": {
-            "mean_ms": optimized_result.mean_ms,
-            "median_ms": optimized_result.median_ms,
-            "std_ms": optimized_result.std_ms,
-            "min_ms": optimized_result.min_ms,
-            "max_ms": optimized_result.max_ms,
+            "mean_ms": optimized_result.timing.mean_ms if optimized_result.timing else 0.0,
+            "median_ms": optimized_result.timing.median_ms if optimized_result.timing else 0.0,
+            "std_ms": optimized_result.timing.std_ms if optimized_result.timing else 0.0,
+            "min_ms": optimized_result.timing.min_ms if optimized_result.timing else 0.0,
+            "max_ms": optimized_result.timing.max_ms if optimized_result.timing else 0.0,
         },
         "speedup": speedup,
         "regression": regression,
@@ -1412,4 +2026,3 @@ def compare_benchmarks(
         "baseline_result": baseline_result,
         "optimized_result": optimized_result,
     }
-

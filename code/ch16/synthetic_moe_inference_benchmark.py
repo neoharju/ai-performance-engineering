@@ -60,6 +60,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from common.python.compile_utils import enable_tf32
+
 CURRENT_DEVICE_FLAVOR = "unknown"
 
 
@@ -269,11 +271,8 @@ def configure_for_inference():
     """Configure PyTorch for peak inference performance"""
     print("Configuring for Blackwell B200 inference...")
     
-    # TF32 for mixed precision
-    # NEW PyTorch 2.9 API (no warnings!)
-    torch.set_float32_matmul_precision('high')
-    torch.backends.cudnn.conv.fp32_precision = 'tf32'
-    torch.backends.cuda.matmul.fp32_precision = 'tf32'
+    # TF32 for mixed precision (avoids legacy/new API mixing issues)
+    enable_tf32()
     
     # Flash Attention
     torch.backends.cuda.enable_flash_sdp(True)

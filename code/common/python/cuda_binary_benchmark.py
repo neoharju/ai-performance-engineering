@@ -18,6 +18,7 @@ from typing import Optional, Sequence
 import torch
 
 from common.python.benchmark_harness import Benchmark, BenchmarkConfig
+from common.python.cuda_capabilities import pipeline_runtime_allowed
 
 ARCH_SUFFIX = {
     "sm_100": "_sm100",
@@ -86,6 +87,7 @@ class CudaBinaryBenchmark(Benchmark):
         timeout_seconds: int = 15,  # 15 second timeout to prevent hangs
         run_args: Sequence[str] = (),
         time_regex: Optional[str] = r"([0-9]+(?:\.[0-9]+)?)\s*ms",
+        requires_pipeline_api: bool = False,
     ) -> None:
         self.chapter_dir = chapter_dir
         self.binary_name = binary_name
@@ -95,6 +97,7 @@ class CudaBinaryBenchmark(Benchmark):
         self.timeout_seconds = timeout_seconds
         self.run_args = list(run_args)
         self.time_pattern = re.compile(time_regex) if time_regex is not None else None
+        self.requires_pipeline_api = requires_pipeline_api
         
         self.arch: Optional[str] = None
         self.exec_path: Optional[Path] = None
@@ -169,6 +172,10 @@ class CudaBinaryBenchmark(Benchmark):
     # ------------------------------------------------------------------ Benchmark API
     def setup(self) -> None:
         """Build the executable once before benchmarking."""
+        if self.requires_pipeline_api:
+            supported, reason = pipeline_runtime_allowed()
+            if not supported:
+                raise RuntimeError(f"SKIPPED: CUDA Pipeline API unavailable ({reason})")
         self._build_binary()
     
     def benchmark_fn(self) -> None:

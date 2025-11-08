@@ -5,6 +5,14 @@ import torch
 import statistics
 from typing import Callable, List, Optional, Dict, Any
 
+# Import logger
+try:
+    from common.python.logger import get_logger
+    logger = get_logger(__name__)
+except ImportError:
+    import logging
+    logger = logging.getLogger(__name__)
+
 
 def warmup_cuda(func: Callable, iterations: int = 10) -> None:
     """Warmup function to stabilize GPU clocks and caches."""
@@ -80,27 +88,27 @@ def compare_implementations(
         iterations: Number of benchmark iterations
         warmup: Number of warmup iterations
     """
-    print(f"\n{'='*70}")
-    print(f"{name}")
-    print(f"{'='*70}")
+    logger.info(f"\n{'='*70}")
+    logger.info(f"{name}")
+    logger.info(f"{'='*70}")
     
-    print("\nBaseline:")
+    logger.info("\nBaseline:")
     baseline_stats = benchmark_function(baseline, iterations, warmup)
-    print(f"  Mean: {baseline_stats['mean_ms']:.3f} ms")
-    print(f"  Std:  {baseline_stats['std_ms']:.3f} ms")
-    print(f"  Min:  {baseline_stats['min_ms']:.3f} ms")
-    print(f"  Max:  {baseline_stats['max_ms']:.3f} ms")
+    logger.info(f"  Mean: {baseline_stats['mean_ms']:.3f} ms")
+    logger.info(f"  Std:  {baseline_stats['std_ms']:.3f} ms")
+    logger.info(f"  Min:  {baseline_stats['min_ms']:.3f} ms")
+    logger.info(f"  Max:  {baseline_stats['max_ms']:.3f} ms")
     
-    print("\nOptimized:")
+    logger.info("\nOptimized:")
     optimized_stats = benchmark_function(optimized, iterations, warmup)
-    print(f"  Mean: {optimized_stats['mean_ms']:.3f} ms")
-    print(f"  Std:  {optimized_stats['std_ms']:.3f} ms")
-    print(f"  Min:  {optimized_stats['min_ms']:.3f} ms")
-    print(f"  Max:  {optimized_stats['max_ms']:.3f} ms")
+    logger.info(f"  Mean: {optimized_stats['mean_ms']:.3f} ms")
+    logger.info(f"  Std:  {optimized_stats['std_ms']:.3f} ms")
+    logger.info(f"  Min:  {optimized_stats['min_ms']:.3f} ms")
+    logger.info(f"  Max:  {optimized_stats['max_ms']:.3f} ms")
     
     speedup = baseline_stats['mean_ms'] / optimized_stats['mean_ms']
-    print(f"\nSpeedup: {speedup:.2f}x")
-    print(f"{'='*70}\n")
+    logger.info(f"\nSpeedup: {speedup:.2f}x")
+    logger.info(f"{'='*70}\n")
 
 
 def calculate_bandwidth_gbs(bytes_transferred: int, time_ms: float) -> float:
@@ -114,18 +122,18 @@ def calculate_tflops(flops: int, time_ms: float) -> float:
 
 
 def print_gpu_info(device: int = 0) -> None:
-    """Print GPU information for the specified device."""
+    """Print GPU information for the specified device using structured logging."""
     if not torch.cuda.is_available():
-        print("CUDA not available")
+        logger.info("CUDA not available")
         return
     
     prop = torch.cuda.get_device_properties(device)
-    print(f"\nGPU {device}: {prop.name}")
-    print(f"  Compute capability: {prop.major}.{prop.minor}")
-    print(f"  Total memory: {prop.total_memory / (1024**3):.2f} GB")
-    print(f"  Multi-processors: {prop.multi_processor_count}")
-    print(f"  CUDA cores: ~{prop.multi_processor_count * 128}")  # Approximate
-    print()
+    logger.info(f"\nGPU {device}: {prop.name}")
+    logger.info(f"  Compute capability: {prop.major}.{prop.minor}")
+    logger.info(f"  Total memory: {prop.total_memory / (1024**3):.2f} GB")
+    logger.info(f"  Multi-processors: {prop.multi_processor_count}")
+    logger.info(f"  CUDA cores: ~{prop.multi_processor_count * 128}")  # Approximate
+    logger.info("")
 
 
 def format_comparison_table(results: Dict[str, Dict[str, float]]) -> str:
@@ -150,4 +158,93 @@ def format_comparison_table(results: Dict[str, Dict[str, float]]) -> str:
         )
     
     return "\n".join(lines)
+
+
+def warn_benchmark_scaling(
+    scaling_type: str,
+    original_values: Dict[str, Any],
+    scaled_values: Dict[str, Any],
+    impact_description: Optional[str] = None,
+    recommendation: Optional[str] = None
+) -> None:
+    """
+    Print a standardized warning when benchmark parameters are automatically scaled.
+    
+    This function provides consistent warning messages across all benchmarks when
+    automatic scaling occurs to prevent OOM or other resource constraints. The warnings
+    inform users that scaling may affect measured speedup of optimizations.
+    
+    Args:
+        scaling_type: Type of scaling (e.g., "Model size", "Workload size", "Batch size")
+        original_values: Dictionary of original parameter values (e.g., {"layers": 48, "d_model": 8192})
+        scaled_values: Dictionary of scaled parameter values (e.g., {"layers": 32, "d_model": 6144})
+        impact_description: Optional custom description of how scaling affects benchmarks
+        recommendation: Optional recommendation for accurate benchmarks (e.g., "use GPUs with >=80GB memory")
+    
+    Example:
+        warn_benchmark_scaling(
+            scaling_type="Model size",
+            original_values={"layers": 48, "d_model": 8192, "d_ff": 32768},
+            scaled_values={"layers": 32, "d_model": 6144, "d_ff": 24576},
+            impact_description="Smaller models may compile faster (reducing timeout benefit)",
+            recommendation="For accurate production benchmarks, use GPUs with >=80GB memory"
+        )
+    """
+    # Check if any scaling actually occurred
+    any_scaled = False
+    for key in original_values:
+        if key in scaled_values:
+            orig_val = original_values[key]
+            scaled_val = scaled_values[key]
+            # Handle numeric comparisons
+            if isinstance(orig_val, (int, float)) and isinstance(scaled_val, (int, float)):
+                if scaled_val < orig_val:
+                    any_scaled = True
+                    break
+            # Handle string/other comparisons
+            elif scaled_val != orig_val:
+                any_scaled = True
+                break
+    
+    if not any_scaled:
+        return  # No scaling occurred, no warning needed
+    
+    # Build warning message
+    print("\n" + "!" * 80)
+    print(f"⚠️  WARNING: {scaling_type} has been REDUCED to prevent OOM (Out of Memory) kills")
+    print("!" * 80)
+    
+    # Show original vs scaled values
+    print("   Original values:")
+    for key, value in original_values.items():
+        print(f"      {key}: {value}")
+    
+    print("   Using scaled values:")
+    for key, value in scaled_values.items():
+        if key in original_values:
+            orig_val = original_values[key]
+            if isinstance(orig_val, (int, float)) and isinstance(value, (int, float)):
+                if value < orig_val:
+                    print(f"      {key}: {value} (reduced from {orig_val})")
+                else:
+                    print(f"      {key}: {value}")
+            else:
+                print(f"      {key}: {value}")
+        else:
+            print(f"      {key}: {value}")
+    
+    # Impact description
+    print("\n   ⚠️  IMPORTANT: This scaling may affect measured speedup of optimizations!")
+    if impact_description:
+        print(f"      - {impact_description}")
+    else:
+        print("      - Smaller workloads may not fully demonstrate optimization benefits")
+        print("      - Speedup ratios may differ from production-scale workloads")
+    
+    if recommendation:
+        print(f"      - {recommendation}")
+    else:
+        print("      - For accurate production benchmarks, use larger GPUs or reduce batch sizes manually")
+    
+    print("!" * 80 + "\n")
 

@@ -19,8 +19,10 @@ import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 
+from collections.abc import Iterator
 from typing import Optional
 
+from common.python.compile_utils import enable_tf32
 from common.python.benchmark_harness import (
     Benchmark,
     BenchmarkConfig,
@@ -72,10 +74,8 @@ class OptimizedDataloaderTunedBenchmark(Benchmark):
         self.device = resolve_device()
         self.model = None
         # Optimization: Compile model for kernel fusion and optimization
-        try:
 
         # Optimization: Compile model for kernel fusion and optimization
-        try:
 
         self.dataloader = None
         self.optimizer = None
@@ -83,6 +83,7 @@ class OptimizedDataloaderTunedBenchmark(Benchmark):
         self.dataset_size = 500
         self.batch_size = 32
         self.feature_dim = 1024
+        self._data_iter: Optional[Iterator] = None
     
     def setup(self) -> None:
         """Setup: Initialize model and optimized DataLoader."""
@@ -92,32 +93,40 @@ class OptimizedDataloaderTunedBenchmark(Benchmark):
             torch.backends.cudnn.benchmark = True
             torch.backends.cudnn.deterministic = False
             # Enable TF32 for faster matmul on Ampere+ GPUs
-            torch.backends.cuda.matmul.allow_tf32 = True
-            torch.backends.cudnn.allow_tf32 = True
+            enable_tf32()
         torch.manual_seed(42)
         
-        self.model = SimpleModel(input_dim=self.feature_dim).to(self.device)
-        # Optimization: Use FP16 for faster computation
-        if self.device.type == "cuda":
+        # Compile model for better performance
+        model = SimpleModel(input_dim=self.feature_dim).to(self.device)
+        major, minor = torch.cuda.get_device_capability(self.device)
+        compile_safe = major < 12  # CUDA 12.1 (Blackwell) hits torch.compile crashes
+        if compile_safe:
             try:
-                self.model = self.model.half()
+                self.model = torch.compile(model, mode="reduce-overhead")
             except Exception:
-                pass  # Fallback to FP32 if FP16 not supported
-
+                self.model = model
+        else:
+            self.model = model
+        
         self.optimizer = torch.optim.SGD(self.model.parameters(), lr=0.01)
         self.criterion = nn.CrossEntropyLoss()
         
-        # Optimized DataLoader: num_workers>0, pin_memory=True, prefetch_factor
+        # Optimized DataLoader with optimal settings
+        # num_workers>0: Multi-threaded data loading (overlaps with GPU computation)
+        # pin_memory=True: Pinned memory for faster CPU-GPU transfer
+        # prefetch_factor: Prefetch batches ahead to hide I/O latency
+        # persistent_workers: Keep workers alive to avoid startup overhead
         dataset = SyntheticDataset(num_samples=self.dataset_size, feature_dim=self.feature_dim)
         self.dataloader = DataLoader(
             dataset,
             batch_size=self.batch_size,
             shuffle=False,  # Disable shuffle for consistent benchmarking
-            num_workers=4,  # Multi-threaded data loading (optimized)
-            pin_memory=True,  # Pinned memory for faster CPU-GPU transfer (optimized)
-            prefetch_factor=2,  # Prefetch batches ahead (optimized)
-            persistent_workers=True,  # Keep workers alive between epochs (optimized)
+            num_workers=4,  # Multi-threaded data loading
+            pin_memory=True,  # Pinned memory for faster transfer
+            prefetch_factor=4,  # Increased prefetch for better overlap
+            persistent_workers=True,  # Keep workers alive
         )
+        self._data_iter = iter(self.dataloader)
         
         # Warmup
         for i, (data, labels) in enumerate(self.dataloader):
@@ -141,7 +150,13 @@ class OptimizedDataloaderTunedBenchmark(Benchmark):
 
         with nvtx_range("optimized_dataloader_tuned", enable=enable_nvtx):
             # Process one batch (optimized DataLoader: overlapped loading)
-            data, labels = next(iter(self.dataloader))
+            if self._data_iter is None:
+                self._data_iter = iter(self.dataloader)
+            try:
+                data, labels = next(self._data_iter)
+            except StopIteration:
+                self._data_iter = iter(self.dataloader)
+                data, labels = next(self._data_iter)
             data = data.to(self.device, non_blocking=True)  # Non-blocking transfer
             labels = labels.to(self.device, non_blocking=True)
             
@@ -153,7 +168,16 @@ class OptimizedDataloaderTunedBenchmark(Benchmark):
 
     def teardown(self) -> None:
         """Cleanup."""
+        iterator = getattr(self, "_data_iter", None)
+        if iterator is not None:
+            shutdown = getattr(iterator, "_shutdown_workers", None)
+            if callable(shutdown):
+                try:
+                    shutdown()
+                except Exception:
+                    pass
         del self.model, self.dataloader, self.optimizer, self.criterion
+        self._data_iter = None
         torch.cuda.empty_cache()
     
     def get_config(self) -> BenchmarkConfig:
@@ -181,5 +205,4 @@ if __name__ == "__main__":
         config=benchmark.get_config()
     )
     result = harness.benchmark(benchmark)
-    print(f"\nOptimized Tuned DataLoader: {result.mean_ms:.3f} ms")
-
+    print(f"\nOptimized Tuned DataLoader: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")

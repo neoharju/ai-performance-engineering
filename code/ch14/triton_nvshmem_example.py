@@ -26,6 +26,12 @@ import os
 # Add parent directory to path to import arch_config
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from common.python.symmetric_memory_patch import (
+    ensure_symmetric_memory_api as _ensure_symmetric_memory_api,
+)
+
+_ensure_symmetric_memory_api()
+
 
 import torch
 import triton

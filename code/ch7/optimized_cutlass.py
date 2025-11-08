@@ -29,6 +29,7 @@ from common.python.benchmark_harness import (
     Benchmark,
     BenchmarkConfig,
 )
+from common.python.compile_utils import get_optimal_compile_mode, enable_tf32
 
 
 def resolve_device() -> torch.device:
@@ -60,9 +61,8 @@ class OptimizedCutlassBenchmark(Benchmark):
         if torch.cuda.is_available():
             torch.backends.cudnn.benchmark = True
             torch.backends.cudnn.deterministic = False
-            # Enable TF32 for faster matmul on Ampere+ GPUs
-            torch.backends.cuda.matmul.allow_tf32 = True
-            torch.backends.cudnn.allow_tf32 = True
+            # Enable TF32 using the new API to avoid legacy/new API mixing errors
+            enable_tf32()
         torch.manual_seed(42)
         # Optimization: CUTLASS-optimized GEMM
         # Uses torch.compile with CUTLASS backend for hardware-optimized kernels
@@ -73,13 +73,23 @@ class OptimizedCutlassBenchmark(Benchmark):
         # Optimization: Compile with CUTLASS backend
         # CUTLASS provides hardware-optimized GEMM kernels
         # Select optimal compile mode based on GPU SM count
-        from common.python.compile_utils import get_optimal_compile_mode
         compile_mode = get_optimal_compile_mode("max-autotune")
-        self.compiled_matmul = torch.compile(
-            lambda a, b: torch.matmul(a, b),
-            mode=compile_mode,
-            backend="inductor"
-        )
+        try:
+            self.compiled_matmul = torch.compile(
+                lambda a, b: torch.matmul(a, b),
+                mode=compile_mode,
+                backend="inductor"
+            )
+        except Exception as exc:
+            # Handle C++ compilation errors (e.g., missing .torch_inductor directory)
+            # Fall back to eager execution so the benchmark still runs
+            error_msg = str(exc)
+            if "CppCompileError" in error_msg or "torch._inductor" in error_msg or "No such file or directory" in error_msg:
+                print(f"WARNING: torch.compile failed due to C++ compilation error: {error_msg[:200]}. Falling back to eager execution.")
+                self.compiled_matmul = lambda a, b: torch.matmul(a, b)
+            else:
+                # Re-raise unknown errors
+                raise
         torch.cuda.synchronize()
     
     def benchmark_fn(self) -> None:
@@ -146,9 +156,9 @@ def main() -> None:
     print("=" * 70)
     print(f"Optimized: Cutlass")
     print("=" * 70)
-    print(f"Average time: {result.mean_ms:.3f} ms")
-    print(f"Median: {result.median_ms:.3f} ms")
-    print(f"Std: {result.std_ms:.3f} ms")
+    print(f"Average time: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")
+    print(f"Median: {result.timing.median_ms if result.timing else 0.0:.3f} ms")
+    print(f"Std: {result.timing.std_ms if result.timing else 0.0:.3f} ms")
 
 
 if __name__ == "__main__":

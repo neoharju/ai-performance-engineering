@@ -129,9 +129,13 @@ if __name__ == '__main__':
     )
     
     result = harness.benchmark(benchmark)
+    timing = result.timing
     print(f"\nBaseline Coalescing Benchmark Results:")
-    print(f"  Mean time: {result.mean_ms:.3f} ms")
-    print(f"  Std dev: {result.std_ms:.3f} ms")
-    print(f"  Min time: {result.min_ms:.3f} ms")
-    print(f"  Max time: {result.max_ms:.3f} ms")
+    if timing:
+        print(f"  Mean time: {timing.mean_ms:.3f} ms")
+        print(f"  Std dev: {timing.std_ms:.3f} ms")
+        print(f"  Min time: {timing.min_ms:.3f} ms")
+        print(f"  Max time: {timing.max_ms:.3f} ms")
+    else:
+        print("  No timing data available")
 

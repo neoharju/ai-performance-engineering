@@ -1,0 +1,8 @@
+Metric,Value
+Total GPU Time,1234.56
+Kernel Time,1000.00
+Memory Throughput GB/s,500.25
+Compute Throughput GFLOPS,2000.50
+Memory Bandwidth Utilization,75.5
+Compute Utilization,85.2
+

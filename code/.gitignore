@@ -18,6 +18,12 @@ tmp_profile_*/
 tmp_bench_*/
 tmp_*/
 *-plan.md
+benchmark_peak_results_*.json
+benchmark_profiles/
+benchmark_results_*.json
+benchmark_results_*.json
+benchmark_test_results_*.json
+benchmark_test_results_*.json
 
 # Python
 __pycache__/
@@ -139,6 +145,8 @@ ch*/*.svg
 # Match extensionless executables but exclude source files and config files
 ch*/*_sm[0-9]*
 ch*/*_sm[0-9][0-9]*
+# Test executables (manually compiled test programs)
+ch*/test_*
 # Explicitly allow Python and CUDA source files
 !ch*/*.py
 !ch*/*.cu

@@ -4,6 +4,7 @@ Helper module to handle sm_121 (GB10) compatibility issues.
 Some features have known limitations on sm_121 due to toolchain support.
 This module provides transparent messaging for unsupported features.
 """
+from common.python import compile_utils as _compile_utils_patch  # noqa: F401
 import pathlib
 import sys
 

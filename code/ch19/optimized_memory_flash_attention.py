@@ -59,18 +59,20 @@ class OptimizedMemoryFlashAttentionBenchmark(Benchmark):
             num_heads=self.num_heads,
             batch_first=True
         )
-        self.model = self.model.to(self.device).to(dtype=torch.bfloat16)
-        # Optimization: Use FP16 for faster computation
-        if self.device.type == "cuda":
-            try:
-                self.model = self.model.half()
-            except Exception:
-                 pass
+        # Optimization: Use FP16 for faster computation - FAIL FAST if not supported
+        if self.device.type != "cuda":
+            raise RuntimeError("CUDA required for optimized_memory_flash_attention benchmark")
+        self.model = self.model.to(self.device).half()
         self.model.eval()
         
+        # Ensure input dtype matches model dtype
+        params = list(self.model.parameters())
+        if not params:
+            raise RuntimeError("Model has no parameters - cannot determine dtype")
+        input_dtype = params[0].dtype
         self.x = torch.randn(
             self.batch_size, self.seq_len, self.hidden_dim,
-            device=self.device, dtype=torch.bfloat16
+            device=self.device, dtype=input_dtype
         )
     
     def benchmark_fn(self) -> None:
@@ -85,21 +87,20 @@ class OptimizedMemoryFlashAttentionBenchmark(Benchmark):
 
         with nvtx_range("optimized_memory_flash_attention", enable=enable_nvtx):
             with torch.no_grad():
-                pass
-        # Optimization: Use Flash Attention via F.scaled_dot_product_attention
-        # Flash Attention reduces memory from O(N²) to O(N) by tiling
-        # This is crucial for long sequences in adaptive memory management
-        q = self.x
-        k = self.x
-        v = self.x
-                
-        # Use PyTorch's optimized attention (uses Flash Attention when available)
-        attn_output = F.scaled_dot_product_attention(
-        q, k, v,
-        is_causal=True,
-        dropout_p=0.0,
-        )
-        _ = attn_output
+                # Optimization: Use Flash Attention via F.scaled_dot_product_attention
+                # Flash Attention reduces memory from O(N²) to O(N) by tiling
+                # This is crucial for long sequences in adaptive memory management
+                q = self.x
+                k = self.x
+                v = self.x
+                        
+                # Use PyTorch's optimized attention (uses Flash Attention when available)
+                attn_output = F.scaled_dot_product_attention(
+                    q, k, v,
+                    is_causal=True,
+                    dropout_p=0.0,
+                )
+                _ = attn_output
 
     
     def teardown(self) -> None:
@@ -151,7 +152,7 @@ def main() -> None:
     print("=" * 70)
     print("Optimized: Memory Flash Attention")
     print("=" * 70)
-    print(f"Average time: {result.mean_ms:.3f} ms")
+    print(f"Average time: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")
     print(" Tip: Flash Attention reduces memory from O(N²) to O(N) through tiling")
 
 if __name__ == "__main__":

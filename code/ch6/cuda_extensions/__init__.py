@@ -4,6 +4,26 @@ from pathlib import Path
 import torch
 import sys
 
+# Import build utilities for lock cleanup
+try:
+    from common.python.build_utils import ensure_clean_build_directory
+except ImportError:
+    # Fallback if build_utils not available
+    def ensure_clean_build_directory(build_dir: Path, max_lock_age_seconds: int = 300) -> None:
+        """Fallback: remove lock file if it exists."""
+        lock_file = build_dir / "lock"
+        if lock_file.exists():
+            try:
+                lock_file.unlink()
+            except Exception:
+                pass
+
+from common.python.nvtx_stub import ensure_nvtx_stub
+
+NVTX_CFLAG = "-DENABLE_NVTX_PROFILING"
+_NVTX_STUB_LIB = ensure_nvtx_stub()
+NVTX_LDFLAGS = [f"-L{_NVTX_STUB_LIB.parent}", "-lnvToolsExt"]
+
 _EXTENSIONS = {}
 
 
@@ -26,10 +46,14 @@ def load_coalescing_extension():
             common_headers = Path(__file__).parent.parent.parent / "common" / "headers"
             build_dir = extension_dir / "build"
             build_dir.mkdir(parents=True, exist_ok=True)
+            # Clean stale locks before building to prevent hangs
+            ensure_clean_build_directory(build_dir)
+            cuda_flags = ["-lineinfo", f"-I{common_headers}", NVTX_CFLAG]
             _EXTENSIONS["coalescing"] = load(
                 name="coalescing_kernels",
                 sources=[str(cuda_source)],
-                extra_cuda_cflags=["-lineinfo", f"-I{common_headers}"],
+                extra_cuda_cflags=cuda_flags,
+                extra_ldflags=list(NVTX_LDFLAGS),
                 verbose=False,
                 build_directory=str(build_dir),
             )
@@ -54,10 +78,14 @@ def load_bank_conflicts_extension():
             common_headers = Path(__file__).parent.parent.parent / "common" / "headers"
             build_dir = extension_dir / "build"
             build_dir.mkdir(parents=True, exist_ok=True)
+            # Clean stale locks before building to prevent hangs
+            ensure_clean_build_directory(build_dir)
+            cuda_flags = ["-lineinfo", f"-I{common_headers}", NVTX_CFLAG]
             _EXTENSIONS["bank_conflicts"] = load(
                 name="bank_conflicts_kernels",
                 sources=[str(cuda_source)],
-                extra_cuda_cflags=["-lineinfo", f"-I{common_headers}"],
+                extra_cuda_cflags=cuda_flags,
+                extra_ldflags=list(NVTX_LDFLAGS),
                 verbose=False,
                 build_directory=str(build_dir),
             )
@@ -81,10 +109,14 @@ def load_ilp_extension():
             common_headers = Path(__file__).parent.parent.parent / "common" / "headers"
             build_dir = extension_dir / "build"
             build_dir.mkdir(parents=True, exist_ok=True)
+            # Clean stale locks before building to prevent hangs
+            ensure_clean_build_directory(build_dir)
+            cuda_flags = ["-lineinfo", f"-I{common_headers}", NVTX_CFLAG]
             _EXTENSIONS["ilp"] = load(
                 name="ilp_kernels",
                 sources=[str(cuda_source)],
-                extra_cuda_cflags=["-lineinfo", f"-I{common_headers}"],
+                extra_cuda_cflags=cuda_flags,
+                extra_ldflags=list(NVTX_LDFLAGS),
                 verbose=False,
                 build_directory=str(build_dir),
             )
@@ -108,10 +140,14 @@ def load_launch_bounds_extension():
             common_headers = Path(__file__).parent.parent.parent / "common" / "headers"
             build_dir = extension_dir / "build"
             build_dir.mkdir(parents=True, exist_ok=True)
+            # Clean stale locks before building to prevent hangs
+            ensure_clean_build_directory(build_dir)
+            cuda_flags = ["-lineinfo", f"-I{common_headers}", NVTX_CFLAG]
             _EXTENSIONS["launch_bounds"] = load(
                 name="launch_bounds_kernels",
                 sources=[str(cuda_source)],
-                extra_cuda_cflags=["-lineinfo", f"-I{common_headers}"],
+                extra_cuda_cflags=cuda_flags,
+                extra_ldflags=list(NVTX_LDFLAGS),
                 verbose=False,
                 build_directory=str(build_dir),
             )
@@ -121,4 +157,3 @@ def load_launch_bounds_extension():
             ) from e
     
     return _EXTENSIONS["launch_bounds"]
-

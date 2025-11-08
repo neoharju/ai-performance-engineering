@@ -24,6 +24,12 @@ except ImportError:
     pass
 from typing import Optional
 
+from ch20.inductor_guard import (
+    disable_inductor_cudagraph_features,
+    restore_inductor_cudagraph_features,
+    InductorCudagraphState,
+)
+
 from common.python.benchmark_harness import (
     Benchmark,
     BenchmarkConfig,
@@ -65,34 +71,44 @@ class OptimizedEndToEndBandwidthBenchmark(Benchmark):
         self.batch_size = 32
         self.hidden_dim = 1024
         self.num_batches = 10
+        self._inductor_cfg_state: InductorCudagraphState = None
     
     def setup(self) -> None:
         """Setup: Initialize optimized model and data."""
         
-        # Optimization: Enable cuDNN benchmarking for optimal kernel selection
-        if torch.cuda.is_available():
-            torch.backends.cudnn.benchmark = True
-            torch.backends.cudnn.deterministic = False
-        torch.manual_seed(42)
-        
-        # Optimized: FP16, compiled model
-        model = SimplePipeline(hidden_dim=self.hidden_dim).to(self.device).half().eval()
+        self._inductor_cfg_state = disable_inductor_cudagraph_features()
         try:
+            # Optimization: Enable cuDNN benchmarking for optimal kernel selection
+            if torch.cuda.is_available():
+                torch.backends.cudnn.benchmark = True
+                torch.backends.cudnn.deterministic = False
+            torch.manual_seed(42)
+            
+            # Optimized: FP16, compiled model
+            model = SimplePipeline(hidden_dim=self.hidden_dim).to(self.device).half().eval()
             self.model = torch.compile(model, mode="reduce-overhead")
+            # Warmup to trigger compilation and catch errors early
+            test_input = torch.randn(self.batch_size, self.hidden_dim, device=self.device, dtype=torch.float16)
+            for _ in range(3):
+                with torch.no_grad():
+                    _ = self.model(test_input)
+            torch.cuda.synchronize()
+            
+            # Optimized: FP16, contiguous memory layout
+            self.inputs = [
+                torch.randn(self.batch_size, self.hidden_dim, device=self.device, dtype=torch.float16).contiguous()
+                for _ in range(self.num_batches)
+            ]
+            self.outputs = []
+            
+            # Warmup
+            for inp in self.inputs[:5]:
+                _ = self.model(inp)
+            torch.cuda.synchronize()
         except Exception:
-            self.model = model
-        
-        # Optimized: FP16, contiguous memory layout
-        self.inputs = [
-            torch.randn(self.batch_size, self.hidden_dim, device=self.device, dtype=torch.float16).contiguous()
-            for _ in range(self.num_batches)
-        ]
-        self.outputs = []
-        
-        # Warmup
-        for inp in self.inputs[:5]:
-            _ = self.model(inp)
-        torch.cuda.synchronize()
+            restore_inductor_cudagraph_features(self._inductor_cfg_state)
+            self._inductor_cfg_state = None
+            raise
     
     def benchmark_fn(self) -> None:
         """Function to benchmark - optimized end-to-end."""
@@ -120,6 +136,8 @@ class OptimizedEndToEndBandwidthBenchmark(Benchmark):
         """Cleanup."""
         del self.model, self.inputs, self.outputs
         torch.cuda.empty_cache()
+        restore_inductor_cudagraph_features(self._inductor_cfg_state)
+        self._inductor_cfg_state = None
     
     def get_config(self) -> BenchmarkConfig:
         """Return benchmark configuration."""
@@ -128,13 +146,16 @@ class OptimizedEndToEndBandwidthBenchmark(Benchmark):
             warmup=10,
             enable_memory_tracking=True,
             enable_profiling=False,
+            use_subprocess=False,
         )
     
     def validate_result(self) -> Optional[str]:
         """Validate benchmark result."""
         if self.model is None:
             return "Model not initialized"
-        return None and len(self.outputs) == self.num_batches
+        if len(self.outputs) != self.num_batches:
+            return f"Expected {self.num_batches} outputs, got {len(self.outputs)}"
+        return None
 
 
 def get_benchmark() -> Benchmark:
@@ -149,5 +170,4 @@ if __name__ == "__main__":
         config=benchmark.get_config()
     )
     result = harness.benchmark(benchmark)
-    print(f"\nOptimized End-to-End Bandwidth: {result.mean_ms:.3f} ms")
-
+    print(f"\nOptimized End-to-End Bandwidth: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")

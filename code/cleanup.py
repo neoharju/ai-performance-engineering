@@ -164,6 +164,7 @@ class CleanupRunner:
                     result = subprocess.run(
                         ["git", "ls-files", "--error-unmatch", str(exe)],
                         capture_output=True,
+                        text=True,
                         timeout=1
                     )
                     if result.returncode == 0:

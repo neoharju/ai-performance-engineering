@@ -90,13 +90,16 @@ class BaselineSpeculativeDecodingBenchmark(Benchmark):
                 # No speculative decoding - cannot predict multiple tokens in parallel
                 # Not optimized for hardware parallelism
                 
-                current_ids = self.input_ids.clone()
+                # TransformerDecoder expects embedded inputs, not token IDs
+                # Convert token IDs to embeddings using a simple embedding lookup
+                # For simplicity, use random embeddings (in practice would use learned embeddings)
+                current_embeddings = torch.randn(self.input_ids.shape[0], self.input_ids.shape[1], 256, device=self.device)
                 for _ in range(self.max_length):
                     # Generate next token (sequential - no speculative decoding)
-                    # TransformerDecoder requires both tgt and memory arguments
-                    output = self.model(current_ids, self.memory)
-                    next_token = output[:, -1, :].argmax(dim=-1, keepdim=True)
-                    current_ids = torch.cat([current_ids, next_token], dim=1)
+                    # TransformerDecoder requires both tgt (embedded) and memory arguments
+                    output = self.model(current_embeddings, self.memory)
+                    next_token_embedding = output[:, -1:, :]  # Keep last token embedding
+                    current_embeddings = torch.cat([current_embeddings, next_token_embedding], dim=1)
                 
                 # Baseline: No speculative decoding
                 # Sequential token generation (not optimized for hardware)
@@ -142,9 +145,9 @@ def main() -> None:
     print("=" * 70)
     print(f"Baseline: speculative_decoding")
     print("=" * 70)
-    print(f"Average time: {result.mean_ms:.3f} ms")
-    print(f"Median: {result.median_ms:.3f} ms")
-    print(f"Std: {result.std_ms:.3f} ms")
+    print(f"Average time: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")
+    print(f"Median: {result.timing.median_ms if result.timing else 0.0:.3f} ms")
+    print(f"Std: {result.timing.std_ms if result.timing else 0.0:.3f} ms")
 
 
 if __name__ == "__main__":

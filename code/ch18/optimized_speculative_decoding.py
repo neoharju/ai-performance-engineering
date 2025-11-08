@@ -42,7 +42,6 @@ class OptimizedSpeculativeDecodingBenchmark(Benchmark):
         self.device = resolve_device()
         self.target_model = None
         # Optimization: Compile model for kernel fusion and optimization
-        try:
 
         self.draft_model = None
         self.input_ids = None
@@ -64,6 +63,9 @@ class OptimizedSpeculativeDecodingBenchmark(Benchmark):
         hidden_dim = 256
         vocab_size = 1000
         
+        # TransformerDecoder requires embedding layer for input_ids
+        self.embedding = nn.Embedding(vocab_size, hidden_dim)
+        
         # Target model (slower, more accurate)
         self.target_model = nn.TransformerDecoder(
             nn.TransformerDecoderLayer(d_model=hidden_dim, nhead=8, batch_first=True),
@@ -76,10 +78,14 @@ class OptimizedSpeculativeDecodingBenchmark(Benchmark):
             num_layers=2  # Smaller model
         ).to(self.device).eval()
         
+        self.embedding = self.embedding.to(self.device).eval()
+        
         # Input
         batch_size = 4
         seq_len = 10
         self.input_ids = torch.randint(0, vocab_size, (batch_size, seq_len), device=self.device)
+        # Create dummy memory tensor for TransformerDecoder (encoder output)
+        self.memory = torch.randn(batch_size, seq_len, hidden_dim, device=self.device)
         torch.cuda.synchronize()
     
     def benchmark_fn(self) -> None:
@@ -102,7 +108,9 @@ class OptimizedSpeculativeDecodingBenchmark(Benchmark):
                 
                 while current_ids.size(1) < self.input_ids.size(1) + self.max_length:
                     # Draft model: Predict multiple tokens speculatively
-                    draft_output = self.draft_model(current_ids)
+                    # TransformerDecoder requires embedded inputs and memory arguments
+                    tgt_embedded = self.embedding(current_ids)
+                    draft_output = self.draft_model(tgt_embedded, self.memory)
                     draft_tokens = draft_output[:, -self.speculative_length:, :].argmax(dim=-1)
                     
                     # Target model: Verify draft predictions (speculative decoding verification)
@@ -124,7 +132,9 @@ class OptimizedSpeculativeDecodingBenchmark(Benchmark):
         """Teardown: Clean up resources."""
         self.target_model = None
         self.draft_model = None
+        self.embedding = None
         self.input_ids = None
+        self.memory = None
         torch.cuda.empty_cache()
     
     def get_config(self) -> BenchmarkConfig:
@@ -160,9 +170,9 @@ def main() -> None:
     print("=" * 70)
     print(f"Optimized: Speculative Decoding")
     print("=" * 70)
-    print(f"Average time: {result.mean_ms:.3f} ms")
-    print(f"Median: {result.median_ms:.3f} ms")
-    print(f"Std: {result.std_ms:.3f} ms")
+    print(f"Average time: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")
+    print(f"Median: {result.timing.median_ms if result.timing else 0.0:.3f} ms")
+    print(f"Std: {result.timing.std_ms if result.timing else 0.0:.3f} ms")
 
 if __name__ == "__main__":
     main()

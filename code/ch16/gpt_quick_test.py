@@ -24,6 +24,8 @@ import time
 import warnings
 from tqdm import tqdm
 
+from common.python.compile_utils import enable_tf32
+
 # Suppress deprecated warnings
 warnings.filterwarnings('ignore', category=FutureWarning)
 warnings.filterwarnings('ignore', category=UserWarning)
@@ -72,9 +74,7 @@ def benchmark_quick(model, x, name, num_iters=20):
 
 def main():
     # NEW PyTorch 2.9 API (fixes warnings!)
-    torch.set_float32_matmul_precision('high')
-    torch.backends.cudnn.conv.fp32_precision = 'tf32'
-    torch.backends.cuda.matmul.fp32_precision = 'tf32'
+    enable_tf32()
     
     print("=" * 80)
     print("QUICK GPT TEST ON B200")

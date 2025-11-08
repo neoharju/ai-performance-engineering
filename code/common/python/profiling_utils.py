@@ -1,13 +1,17 @@
 """profiling_utils.py - PyTorch profiling helpers."""
 
-import torch
-from torch.profiler import profile, ProfilerActivity, schedule
-from typing import Optional, List
 import os
+from typing import Any, Callable, Dict, List, Optional
+
+import torch
+from torch.profiler import ProfilerActivity, profile
+
+
+ProfileFn = Callable[[], Any]
 
 
 def profile_with_chrome_trace(
-    func: callable,
+    func: ProfileFn,
     trace_path: str = "./trace.json",
     activities: Optional[List[ProfilerActivity]] = None,
     with_stack: bool = False,
@@ -48,9 +52,9 @@ def profile_with_chrome_trace(
 
 
 def profile_memory(
-    func: callable,
+    func: ProfileFn,
     device: Optional[torch.device] = None
-) -> dict:
+) -> Dict[str, float]:
     """
     Profile memory usage of a function.
     
@@ -94,7 +98,7 @@ def profile_memory(
 
 
 def profile_with_nvtx(
-    func: callable,
+    func: ProfileFn,
     name: str = "profile_range"
 ) -> None:
     """
@@ -153,13 +157,13 @@ class ProfilerContext:
             with_modules=True,
         )
     
-    def __enter__(self):
+    def __enter__(self) -> "ProfilerContext":
         if self.enable_nvtx:
             torch.cuda.nvtx.range_push(self.name)
         self.profiler.__enter__()
         return self
     
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         self.profiler.__exit__(exc_type, exc_val, exc_tb)
         if self.enable_nvtx:
             torch.cuda.nvtx.range_pop()
@@ -177,8 +181,8 @@ class ProfilerContext:
 
 
 def compare_with_profiler(
-    baseline: callable,
-    optimized: callable,
+    baseline: ProfileFn,
+    optimized: ProfileFn,
     trace_dir: str = "./traces"
 ) -> None:
     """
@@ -203,4 +207,3 @@ def compare_with_profiler(
     print(f"  1. Open chrome://tracing")
     print(f"  2. Load {baseline_trace}")
     print(f"  3. Load {optimized_trace}")
-

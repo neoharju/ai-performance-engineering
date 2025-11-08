@@ -25,6 +25,7 @@ class BaselineDoubleBufferedPipelineBenchmark(CudaBinaryBenchmark):
             iterations=3,
             warmup=1,
             timeout_seconds=180,
+            requires_pipeline_api=True,
         )
 
 
@@ -40,5 +41,4 @@ if __name__ == "__main__":
         config=benchmark.get_config(),
     )
     result = harness.benchmark(benchmark)
-    print(f"\nBaseline Double-buffered Pipeline: {result.mean_ms:.3f} ms")
-
+    print(f"\nBaseline Double-buffered Pipeline: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")

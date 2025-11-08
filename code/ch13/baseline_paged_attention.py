@@ -8,6 +8,7 @@ Implements Benchmark protocol for harness integration.
 
 from __future__ import annotations
 
+import math
 import sys
 from pathlib import Path
 
@@ -18,8 +19,6 @@ if str(repo_root) not in sys.path:
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
-from common.python.compile_utils import compile_model
 
 from typing import Optional, Tuple
 
@@ -48,6 +47,9 @@ class BaselinePagedAttentionBenchmark(Benchmark):
         self.model = None
         self.kv_cache = None
         self.inputs = None
+        self.hidden_dim = 256
+        self.num_heads = 8
+        self.head_dim = self.hidden_dim // self.num_heads
     
     def setup(self) -> None:
         """Setup: Initialize model and contiguous KV cache."""
@@ -56,14 +58,10 @@ class BaselinePagedAttentionBenchmark(Benchmark):
         # Paged attention uses non-contiguous pages for efficient memory management
         # This baseline allocates contiguous memory for each sequence
         
-        hidden_dim = 256
-        num_heads = 8
-        head_dim = hidden_dim // num_heads
-        
         # Simple attention model
         self.model = nn.MultiheadAttention(
-            embed_dim=hidden_dim,
-            num_heads=num_heads,
+            embed_dim=self.hidden_dim,
+            num_heads=self.num_heads,
             batch_first=True
         ).to(self.device).eval()
         
@@ -72,16 +70,26 @@ class BaselinePagedAttentionBenchmark(Benchmark):
         batch_size = 2
         max_seq_len = 128
         self.kv_cache = {
-            'k': torch.zeros(batch_size, max_seq_len, num_heads, head_dim, device=self.device),
-            'v': torch.zeros(batch_size, max_seq_len, num_heads, head_dim, device=self.device),
+            'k': torch.zeros(batch_size, max_seq_len, self.num_heads, self.head_dim, device=self.device),
+            'v': torch.zeros(batch_size, max_seq_len, self.num_heads, self.head_dim, device=self.device),
         }
         
         # Simulate autoregressive generation
         self.inputs = [
-            torch.randn(batch_size, 1, hidden_dim, device=self.device)
+            torch.randn(batch_size, 1, self.hidden_dim, device=self.device)
             for _ in range(32)
         ]
         torch.cuda.synchronize()
+
+    def _split_heads(self, tensor: torch.Tensor) -> torch.Tensor:
+        """Reshape (B, T, hidden) into (B, heads, T, head_dim)."""
+        batch, seq_len, _ = tensor.shape
+        return tensor.view(batch, seq_len, self.num_heads, self.head_dim).permute(0, 2, 1, 3).contiguous()
+
+    def _project_qkv(self, query: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Project inputs into Q, K, V using the MHA weights."""
+        qkv = F.linear(query, self.model.in_proj_weight, self.model.in_proj_bias)
+        return qkv.chunk(3, dim=-1)
     
     def benchmark_fn(self) -> None:
         """Benchmark: Attention without paged attention."""
@@ -101,24 +109,30 @@ class BaselinePagedAttentionBenchmark(Benchmark):
                 # Cannot efficiently handle variable-length sequences
                 
                 for step, query in enumerate(self.inputs):
-                    # Compute new K, V
-                    _, k_new, v_new = self.model(query, query, query, need_weights=False)
+                    q_proj, k_proj, v_proj = self._project_qkv(query)
+                    q_heads = self._split_heads(q_proj)  # (B, H, 1, Dh)
+                    k_new = self._split_heads(k_proj).permute(0, 2, 1, 3)  # (B, 1, H, Dh)
+                    v_new = self._split_heads(v_proj).permute(0, 2, 1, 3)
                     
                     # Store in contiguous cache (inefficient for variable lengths)
                     self.kv_cache['k'][:, step:step+1, :, :] = k_new
                     self.kv_cache['v'][:, step:step+1, :, :] = v_new
                     
                     # Attention computation using all cached K, V
-                    k_all = self.kv_cache['k'][:, :step+1, :, :]
+                    k_all = self.kv_cache['k'][:, :step+1, :, :]  # (B, T, H, Dh)
                     v_all = self.kv_cache['v'][:, :step+1, :, :]
+                    k_heads = k_all.permute(0, 2, 1, 3).contiguous()  # (B, H, T, Dh)
+                    v_heads = v_all.permute(0, 2, 1, 3).contiguous()
                     
-                    # Reshape for attention
-                    k_all = k_all.permute(0, 2, 1, 3).contiguous()
-                    v_all = v_all.permute(0, 2, 1, 3).contiguous()
-                    q = query.permute(0, 2, 1, 3).contiguous()
+                    # Scaled dot-product attention without paging
+                    attn_scores = torch.matmul(
+                        q_heads, k_heads.transpose(-2, -1)
+                    ) / math.sqrt(self.head_dim)
+                    attn_probs = torch.softmax(attn_scores, dim=-1)
+                    context = torch.matmul(attn_probs, v_heads)  # (B, H, 1, Dh)
                     
-                    # Baseline: No paged attention
-                    # Contiguous allocation causes memory waste for variable-length sequences
+                    # Merge heads (baseline output not used further, we just ensure work is done)
+                    _ = context.permute(0, 2, 1, 3).reshape(query.size(0), 1, self.hidden_dim)
 
     
     def teardown(self) -> None:
@@ -162,9 +176,9 @@ def main() -> None:
     print("=" * 70)
     print(f"Baseline: paged_attention")
     print("=" * 70)
-    print(f"Average time: {result.mean_ms:.3f} ms")
-    print(f"Median: {result.median_ms:.3f} ms")
-    print(f"Std: {result.std_ms:.3f} ms")
+    print(f"Average time: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")
+    print(f"Median: {result.timing.median_ms if result.timing else 0.0:.3f} ms")
+    print(f"Std: {result.timing.std_ms if result.timing else 0.0:.3f} ms")
 
 
 if __name__ == "__main__":

@@ -20,12 +20,15 @@ Usage:
     model_compiled = safe_compile(model, skip_if_large=True)
 """
 
+from common.python import compile_utils as _compile_utils_patch  # noqa: F401
 import os
 import threading
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable, Optional, TypeVar, Union, cast
 
 import torch
 import torch.nn as nn
+
+LayerSequence = Union[nn.ModuleList, nn.Sequential]
 
 
 # Environment variable to disable timeout (for debugging)
@@ -59,47 +62,51 @@ class CompilationTimeoutError(Exception):
     pass
 
 
+T = TypeVar("T")
+
+
 def _compile_with_timeout(
-    model: nn.Module,
-    compile_fn: Callable,
+    fn: Callable[[], T],
     timeout: int,
-    *args: Any,
-    **kwargs: Any
-) -> nn.Module:
+) -> T:
     """
-    Compile model with timeout support.
+    Execute ``fn`` with timeout support.
     
     Uses threading to implement timeout - the actual compilation happens
     in a separate thread, and we wait for it with a timeout.
     """
     if DISABLE_TIMEOUT:
-        return compile_fn(model, *args, **kwargs)
+        return fn()
     
-    result_container = {"compiled": None, "error": None, "done": False}
+    result: list[T] = []
+    error: list[BaseException] = []
+    finished = threading.Event()
     
-    def compile_worker():
+    def compile_worker() -> None:
         try:
-            result_container["compiled"] = compile_fn(model, *args, **kwargs)
-        except Exception as e:
-            result_container["error"] = e
+            result.append(fn())
+        except BaseException as exc:  # pragma: no cover - defensive
+            error.append(exc)
         finally:
-            result_container["done"] = True
+            finished.set()
     
     thread = threading.Thread(target=compile_worker, daemon=True)
     thread.start()
     thread.join(timeout=timeout)
     
-    if not result_container["done"]:
+    if not finished.is_set():
         raise CompilationTimeoutError(
             f"Compilation exceeded timeout of {timeout} seconds during compile. "
-            f"This is common for models >40B parameters. "
-            f"Consider using eager mode or increasing timeout."
+            "This is common for models >40B parameters. "
+            "Consider using eager mode or increasing timeout."
         )
     
-    if result_container["error"]:
-        raise result_container["error"]
+    if error:
+        raise error[0]
+    if not result:
+        raise RuntimeError("Compilation finished without producing a result")
     
-    return result_container["compiled"]
+    return result[0]
 
 
 def safe_compile(
@@ -112,7 +119,7 @@ def safe_compile(
     skip_if_large: bool = False,
     warn_on_skip: bool = True,
     **kwargs: Any
-) -> Union[nn.Module, Callable]:
+) -> nn.Module:
     """
     Safely compile a model with timeout and fallback support.
     
@@ -157,22 +164,21 @@ def safe_compile(
             f"Consider using eager mode or --skip-compile flag."
         )
     
-    # Define compilation function
-    def compile_fn(m: nn.Module) -> nn.Module:
-        return torch.compile(
-            m,
+    def compile_target() -> nn.Module:
+        compiled_model = torch.compile(
+            model,
             mode=mode,
             fullgraph=fullgraph,
             dynamic=dynamic,
             backend=backend,
             **kwargs
         )
+        return cast(nn.Module, compiled_model)
     
     try:
         # Attempt compilation with timeout
         compiled = _compile_with_timeout(
-            model,
-            compile_fn,
+            compile_target,
             timeout,
         )
         
@@ -244,7 +250,7 @@ def should_use_compile(
         return True, f"Large model ({param_count_b:.1f}B params): compilation may hang, profile first"
 
 
-def detect_transformer_layers(model: nn.Module) -> Optional[nn.ModuleList]:
+def detect_transformer_layers(model: nn.Module) -> Optional[LayerSequence]:
     """
     Detect transformer layers in a model.
     
@@ -254,7 +260,7 @@ def detect_transformer_layers(model: nn.Module) -> Optional[nn.ModuleList]:
     - model.blocks (Sequential or ModuleList)
     
     Returns:
-        ModuleList of transformer layers, or None if not found
+        Sequence of transformer layers, or None if not found
     """
     # Check common attribute names
     for attr_name in ['layers', 'blocks', 'h', 'transformer_blocks']:
@@ -294,11 +300,12 @@ def compile_layer(
         Compiled layer, or original if compilation fails
     """
     try:
-        def compile_fn(m: nn.Module) -> nn.Module:
-            return torch.compile(m, mode=mode, **kwargs)
+        def compile_target() -> nn.Module:
+            compiled_layer = torch.compile(layer, mode=mode, **kwargs)
+            return cast(nn.Module, compiled_layer)
         
-        return _compile_with_timeout(layer, compile_fn, timeout)
-    except Exception as e:
+        return _compile_with_timeout(compile_target, timeout)
+    except Exception:
         # Silently fall back to eager for this layer
         return layer
 
@@ -475,4 +482,3 @@ def smart_compile(
     else:
         print("Strategy: Eager mode (very large model, compilation likely to hang)")
         return model
-

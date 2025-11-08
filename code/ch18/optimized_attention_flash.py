@@ -143,9 +143,9 @@ def main() -> None:
     print(f"Memory: O(N) = {benchmark.seq_len * 4 / 1e6:.3f} MB per head (vs O(N²) baseline)")
     print("Optimization: Uses FlashAttention kernel\n")
     
-    print(f"Average time: {result.mean_ms:.3f} ms")
-    print(f"Median: {result.median_ms:.3f} ms")
-    print(f"Std: {result.std_ms:.3f} ms")
+    print(f"Average time: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")
+    print(f"Median: {result.timing.median_ms if result.timing else 0.0:.3f} ms")
+    print(f"Std: {result.timing.std_ms if result.timing else 0.0:.3f} ms")
     print(f"Status: Compute-bound (O(N) memory)")
     print(f"Speedup: ~5-15x for long sequences (seq_len > 1024)")
 

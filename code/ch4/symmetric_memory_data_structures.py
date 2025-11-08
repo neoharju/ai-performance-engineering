@@ -79,6 +79,12 @@ When NOT to Use:
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from common.python.symmetric_memory_patch import (
+    ensure_symmetric_memory_api as _ensure_symmetric_memory_api,
+)
+
+_ensure_symmetric_memory_api()
+
 try:
     from distributed_helper import setup_single_gpu_env
 except ImportError:

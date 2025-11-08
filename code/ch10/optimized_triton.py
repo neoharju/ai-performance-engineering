@@ -15,6 +15,9 @@ repo_root = Path(__file__).parent.parent
 if str(repo_root) not in sys.path:
     sys.path.insert(0, str(repo_root))
 
+# Import arch_config to apply Triton SM architecture patch (fixes sm_121a issue)
+import arch_config  # noqa: F401
+
 import torch
 import torch.nn as nn
 
@@ -27,6 +30,7 @@ except ImportError:
 
 from typing import Optional
 
+from common.python.compile_utils import enable_tf32
 from common.python.benchmark_harness import (
     Benchmark,
     BenchmarkConfig,
@@ -70,10 +74,8 @@ class OptimizedTritonBenchmark(Benchmark):
         self.device = resolve_device()
         self.model = None
         # Optimization: Compile model for kernel fusion and optimization
-        try:
 
         # Optimization: Compile model for kernel fusion and optimization
-        try:
 
         self.input = None
         self.use_triton = TRITON_AVAILABLE
@@ -86,8 +88,7 @@ class OptimizedTritonBenchmark(Benchmark):
             torch.backends.cudnn.benchmark = True
             torch.backends.cudnn.deterministic = False
             # Enable TF32 for faster matmul on Ampere+ GPUs
-            torch.backends.cuda.matmul.allow_tf32 = True
-            torch.backends.cudnn.allow_tf32 = True
+            enable_tf32()
         torch.manual_seed(42)
         # Optimization: Triton for custom kernel development
         # Triton provides high-level DSL for writing optimized CUDA kernels
@@ -176,9 +177,9 @@ def main() -> None:
     print("=" * 70)
     print(f"Optimized: Triton")
     print("=" * 70)
-    print(f"Average time: {result.mean_ms:.3f} ms")
-    print(f"Median: {result.median_ms:.3f} ms")
-    print(f"Std: {result.std_ms:.3f} ms")
+    print(f"Average time: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")
+    print(f"Median: {result.timing.median_ms if result.timing else 0.0:.3f} ms")
+    print(f"Std: {result.timing.std_ms if result.timing else 0.0:.3f} ms")
 
 if __name__ == "__main__":
     main()

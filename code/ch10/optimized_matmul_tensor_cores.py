@@ -19,6 +19,7 @@ import torch
 # Configure for Blackwell
 from typing import Optional
 
+from common.python.compile_utils import enable_tf32
 from common.python.benchmark_harness import (
     Benchmark,
     BenchmarkConfig,
@@ -64,8 +65,7 @@ class OptimizedTensorCoreBenchmark(Benchmark):
             torch.backends.cudnn.benchmark = True
             torch.backends.cudnn.deterministic = False
             # Enable TF32 for faster matmul on Ampere+ GPUs
-            torch.backends.cuda.matmul.allow_tf32 = True
-            torch.backends.cudnn.allow_tf32 = True
+            enable_tf32()
 # Use tensor core dtype (bfloat16/fp16) for GPU performance
         self.A = torch.randn(self.size, self.size, device=self.device, dtype=self.dtype)
         self.B = torch.randn(self.size, self.size, device=self.device, dtype=self.dtype)
@@ -147,11 +147,11 @@ def main() -> None:
     print()
     
     flops = 2 * benchmark.size * benchmark.size * benchmark.size
-    tflops = (flops * result.iterations) / (result.mean_ms * result.iterations / 1000 * 1e12)
+    tflops = (flops * result.iterations) / (result.timing.mean_ms if result.timing else 0.0 * result.iterations / 1000 * 1e12)
     
-    print(f"Average time: {result.mean_ms:.3f} ms")
-    print(f"Median: {result.median_ms:.3f} ms")
-    print(f"Std: {result.std_ms:.3f} ms")
+    print(f"Average time: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")
+    print(f"Median: {result.timing.median_ms if result.timing else 0.0:.3f} ms")
+    print(f"Std: {result.timing.std_ms if result.timing else 0.0:.3f} ms")
     print(f"Performance: {tflops:.2f} TFLOPS")
     print(f"Status: Using 5th-gen Tensor Cores (~2000+ TFLOPS on B200)")
     print("Speedup: ~3-4x over FP32 baseline")

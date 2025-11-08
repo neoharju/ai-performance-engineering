@@ -218,5 +218,5 @@ if __name__ == '__main__':
         config=benchmark.get_config()
     )
     result = harness.benchmark(benchmark)
-    print(f"\nOptimized Roofline Quantization: {result.mean_ms:.3f} ms")
+    print(f"\nOptimized Roofline Quantization: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")
     print(" Tip: Roofline analysis guides quantization strategy based on performance bottlenecks")

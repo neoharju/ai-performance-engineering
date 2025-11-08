@@ -21,6 +21,7 @@ try:
 except ImportError:
     pass
 
+from common.python.compile_utils import enable_tf32
 from common.python.compile_utils import compile_model
 
 from typing import Optional
@@ -49,11 +50,6 @@ class OptimizedPerformanceGraphsBenchmark(Benchmark):
         self.batch_size = batch_size
         self.model = None
         # Optimization: Compile model for kernel fusion and optimization
-        try:
-
-        # Optimization: Compile model for kernel fusion and optimization
-        try:
-
         self.data_buf = None
         self.target_buf = None
         self.host_data = None
@@ -68,8 +64,7 @@ class OptimizedPerformanceGraphsBenchmark(Benchmark):
             torch.backends.cudnn.benchmark = True
             torch.backends.cudnn.deterministic = False
             # Enable TF32 for faster matmul on Ampere+ GPUs
-            torch.backends.cuda.matmul.allow_tf32 = True
-            torch.backends.cudnn.allow_tf32 = True
+            enable_tf32()
         if self.device.type != "cuda":
             raise RuntimeError("CUDA Graphs require CUDA device")
         
@@ -185,10 +180,9 @@ def main() -> None:
     print("Optimized: Performance with CUDA Graphs")
     print("=" * 70)
     print(f"Batch size: {benchmark.batch_size}")
-    print(f"Average time: {result.mean_ms:.3f} ms")
-    print(f"Median: {result.median_ms:.3f} ms")
-    print(f"Std: {result.std_ms:.3f} ms")
+    print(f"Average time: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")
+    print(f"Median: {result.timing.median_ms if result.timing else 0.0:.3f} ms")
+    print(f"Std: {result.timing.std_ms if result.timing else 0.0:.3f} ms")
 
 if __name__ == "__main__":
     main()
-

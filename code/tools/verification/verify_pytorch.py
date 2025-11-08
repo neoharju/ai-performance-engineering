@@ -4,6 +4,7 @@ Verify PyTorch installation and CUDA functionality.
 Tests basic PyTorch operations and CUDA availability.
 """
 
+from common.python import compile_utils as _compile_utils_patch  # noqa: F401
 import sys
 
 

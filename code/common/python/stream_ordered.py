@@ -1,0 +1,29 @@
+"""Stream-ordered allocator CUDA extension bindings."""
+
+from __future__ import annotations
+
+from functools import lru_cache
+from pathlib import Path
+
+from common.python.extension_loader_template import load_cuda_extension
+
+
+@lru_cache()
+def _load_module():
+    source = Path(__file__).resolve().parents[1] / "cuda" / "stream_ordered_extension.cu"
+    extra_flags = ["-O3", "--use_fast_math", "-std=c++17"]
+    return load_cuda_extension(
+        extension_name="stream_ordered_ext",
+        cuda_source_file=str(source),
+        extra_cuda_cflags=extra_flags,
+    )
+
+
+def run_standard_allocator(elements: int, iterations: int = 5) -> None:
+    """Execute the cudaMalloc baseline workload."""
+    _load_module().run_standard_allocator(int(elements), int(iterations))
+
+
+def run_stream_ordered_allocator(elements: int, iterations: int = 5) -> None:
+    """Execute the cudaMallocAsync (stream-ordered) workload."""
+    _load_module().run_stream_ordered_allocator(int(elements), int(iterations))

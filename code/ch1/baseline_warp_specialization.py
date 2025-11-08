@@ -98,6 +98,7 @@ class BaselineWarpSpecializationBenchmark(Benchmark):
         return BenchmarkConfig(
             iterations=10,
             warmup=2,
+            use_subprocess=False,
         )
     
     def validate_result(self) -> Optional[str]:
@@ -118,9 +119,11 @@ if __name__ == '__main__':
     from common.python.benchmark_harness import BenchmarkHarness, BenchmarkMode
     
     benchmark = get_benchmark()
+    config = benchmark.get_config()
+    config.use_subprocess = False
     harness = BenchmarkHarness(
         mode=BenchmarkMode.CUSTOM,
-        config=benchmark.get_config()
+        config=config
     )
     result = harness.benchmark(benchmark)
-    print(f"\nBaseline Warp Specialization: {result.mean_ms:.3f} ms")
+    print(f"\nBaseline Warp Specialization: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")

@@ -8,6 +8,7 @@ Measures peak hardware performance metrics:
 - FP6 compute TFLOPS (if available)
 - FP8 compute TFLOPS (if available)
 - FP16 compute TFLOPS
+- BF16 compute TFLOPS
 - L2 cache bandwidth
 - Shared memory (L1-equivalent) characteristics
 - GPU hardware information (SMs, cache sizes, etc.)
@@ -35,36 +36,12 @@ warnings.filterwarnings("ignore", message=".*TensorFloat32 tensor cores.*availab
 
 import torch
 
+from common.python.compile_utils import enable_tf32
+
 # Configure TF32 using new API (PyTorch 2.9+)
-# Enable TF32 for optimal performance on Ampere+ GPUs
+# Enable TF32 for optimal performance on Ampere+ GPUs using the shared helper
 if torch.cuda.is_available():
-    # Suppress warnings during TF32 configuration (torch internally may use deprecated APIs)
-    # Use more aggressive warning suppression with context manager to catch all warnings
-    with warnings.catch_warnings():
-        # Suppress all UserWarnings during TF32 setup since PyTorch internally uses deprecated APIs
-        # This catches warnings from torch.set_float32_matmul_precision() which triggers C++ code
-        warnings.simplefilter("ignore")
-        
-        try:
-            # Set global matmul precision to enable TF32 tensor cores
-            # This may trigger internal warnings about deprecated API usage from C++ code
-            torch.set_float32_matmul_precision("high")
-        except (AttributeError, RuntimeError):
-            pass
-        
-        # Configure matmul TF32 using new API
-        try:
-            if hasattr(torch.backends.cuda.matmul, "fp32_precision"):
-                torch.backends.cuda.matmul.fp32_precision = "tf32"
-        except (RuntimeError, AttributeError):
-            pass
-        
-        # Configure cuDNN conv TF32 using new API
-        try:
-            if hasattr(torch.backends.cudnn.conv, "fp32_precision"):
-                torch.backends.cudnn.conv.fp32_precision = "tf32"
-        except (RuntimeError, AttributeError):
-            pass
+    enable_tf32()
 
 try:
     import transformer_engine.pytorch as te
@@ -74,6 +51,8 @@ try:
     FP4_AVAILABLE = hasattr(te_constants, 'NVFP4_BLOCK_SCALING_SIZE')
     FP6_AVAILABLE = hasattr(te_constants, 'NVFP6_BLOCK_SCALING_SIZE')
 except ImportError:
+    te = None
+    te_constants = None
     TE_AVAILABLE = False
     FP8_AVAILABLE = False
     FP4_AVAILABLE = False
@@ -116,7 +95,10 @@ def measure_hbm_bandwidth(device: torch.device = None, size_gb: float = 4.0, ite
         torch.cuda.synchronize(device)
         
         elapsed_ms = start_event.elapsed_time(end_event)
-        bandwidth_gbs = (size_bytes * iterations / elapsed_ms) / 1e9
+        if elapsed_ms <= 0:
+            raise RuntimeError("HBM bandwidth measurement returned non-positive elapsed time")
+        elapsed_s = elapsed_ms / 1000.0
+        bandwidth_gbs = (size_bytes * iterations / elapsed_s) / 1e9
         bandwidth_tbs = bandwidth_gbs / 1000.0
         
         # Theoretical peak for B200 is ~8.0 TB/s
@@ -186,6 +168,58 @@ def measure_fp16_compute(device: torch.device = None, matrix_size: int = 8192, i
         return {"peak_tflops": None, "error": str(e)}
 
 
+def measure_bf16_compute(device: torch.device = None, matrix_size: int = 8192, iterations: int = 20) -> dict:
+    """Measure BF16 compute TFLOPS."""
+    if device is None:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
+    if not torch.cuda.is_available():
+        return {"peak_tflops": None, "error": "CUDA not available"}
+    
+    is_bf16_supported = getattr(torch.cuda, "is_bf16_supported", lambda: False)
+    if not is_bf16_supported():
+        return {"peak_tflops": None, "error": "BF16 not supported on this GPU"}
+    
+    print(f"\nMeasuring BF16 compute performance...")
+    print(f"  Matrix size: {matrix_size}x{matrix_size}")
+    print(f"  Iterations: {iterations}")
+    
+    try:
+        dtype = torch.bfloat16
+        a = torch.randn(matrix_size, matrix_size, device=device, dtype=dtype)
+        b = torch.randn(matrix_size, matrix_size, device=device, dtype=dtype)
+        c = torch.empty(matrix_size, matrix_size, device=device, dtype=dtype)
+        
+        for _ in range(10):
+            torch.mm(a, b, out=c)
+        torch.cuda.synchronize(device)
+        
+        start_event = torch.cuda.Event(enable_timing=True)
+        end_event = torch.cuda.Event(enable_timing=True)
+        
+        start_event.record()
+        for _ in range(iterations):
+            torch.mm(a, b, out=c)
+        end_event.record()
+        torch.cuda.synchronize(device)
+        
+        elapsed_ms = start_event.elapsed_time(end_event)
+        elapsed_s = elapsed_ms / 1000.0
+        
+        flops_per_iteration = 2 * matrix_size * matrix_size * matrix_size
+        total_flops = flops_per_iteration * iterations
+        tflops = total_flops / (elapsed_s * 1e12)
+        
+        print(f"  Result: {tflops:.2f} TFLOPS")
+        
+        return {
+            "peak_tflops": tflops,
+            "matrix_size": matrix_size,
+        }
+    except Exception as e:
+        return {"peak_tflops": None, "error": str(e)}
+
+
 def measure_fp4_compute(device: torch.device = None, matrix_size: int = 8192, iterations: int = 20) -> dict:
     """Measure FP4 compute TFLOPS using Transformer Engine NVFP4 (if available)."""
     if device is None:
@@ -212,7 +246,12 @@ def measure_fp4_compute(device: torch.device = None, matrix_size: int = 8192, it
         x = torch.randn(1024, in_features, device=device, dtype=torch.float16)
         
         # Create TE linear layer - initialize on device first
-        fp4_linear = TELinear(in_features, out_features, bias=False).to(device)
+        fp4_linear = TELinear(
+            in_features,
+            out_features,
+            bias=False,
+            params_dtype=torch.float16,
+        ).to(device)
         
         # Create and initialize FP4 recipe if available
         fp4_recipe = None
@@ -235,7 +274,7 @@ def measure_fp4_compute(device: torch.device = None, matrix_size: int = 8192, it
         
         torch.cuda.synchronize(device)
         
-        # Warmup - FP4 uses fp8_autocast API (name is historical, supports FP4/FP6/FP8)
+        # Warmup - FP4 uses fp8_autocast API (name is historical, supports FP4/FP8)
         # Use the same recipe for consistency
         if fp4_recipe is not None:
             with te.fp8_autocast(enabled=True, fp8_recipe=fp4_recipe):
@@ -298,60 +337,49 @@ def measure_fp6_compute(device: torch.device = None, matrix_size: int = 8192, it
     print(f"  Iterations: {iterations}")
     
     try:
-        # Use Transformer Engine Linear layer (supports FP6 via fp8_autocast)
         from transformer_engine.pytorch import Linear as TELinear
         
         in_features = matrix_size
         out_features = matrix_size
-        
-        # Create TE linear layer (can use FP6 via autocast)
-        fp6_linear = TELinear(in_features, out_features, bias=False).to(device)
-        
-        # Input tensor
         x = torch.randn(1024, in_features, device=device, dtype=torch.float16)
+        fp6_linear = TELinear(
+            in_features,
+            out_features,
+            bias=False,
+            params_dtype=torch.float16,
+        ).to(device)
         
-        # Warmup - FP6 uses fp8_autocast API (name is historical, supports FP4/FP6/FP8)
-        # Try with FP6 recipe if available, otherwise fallback to standard autocast
-        try:
-            if hasattr(te, 'fp8') and hasattr(te.fp8, 'Recipe'):
-                with te.fp8_autocast(enabled=True, fp8_recipe=te.fp8.Recipe.override(FP6=True)):
-                    for _ in range(10):
+        fp6_recipe = None
+        if hasattr(te, "fp8") and hasattr(te.fp8, "Recipe"):
+            try:
+                fp6_recipe = te.fp8.Recipe.override(FP6=True)
+            except (AttributeError, TypeError):
+                fp6_recipe = None
+        
+        def _run(iterations_to_run: int) -> None:
+            if fp6_recipe is not None:
+                with te.fp8_autocast(enabled=True, fp8_recipe=fp6_recipe):
+                    for _ in range(iterations_to_run):
                         _ = fp6_linear(x)
             else:
                 with te.fp8_autocast():
-                    for _ in range(10):
+                    for _ in range(iterations_to_run):
                         _ = fp6_linear(x)
-        except (AttributeError, TypeError):
-            with te.fp8_autocast():
-                for _ in range(10):
-                    _ = fp6_linear(x)
+        
+        _run(10)
         torch.cuda.synchronize(device)
         
-        # Benchmark
         start_event = torch.cuda.Event(enable_timing=True)
         end_event = torch.cuda.Event(enable_timing=True)
         
         start_event.record()
-        try:
-            if hasattr(te, 'fp8') and hasattr(te.fp8, 'Recipe'):
-                with te.fp8_autocast(enabled=True, fp8_recipe=te.fp8.Recipe.override(FP6=True)):
-                    for _ in range(iterations):
-                        _ = fp6_linear(x)
-            else:
-                with te.fp8_autocast():
-                    for _ in range(iterations):
-                        _ = fp6_linear(x)
-        except (AttributeError, TypeError):
-            with te.fp8_autocast():
-                for _ in range(iterations):
-                    _ = fp6_linear(x)
+        _run(iterations)
         end_event.record()
         torch.cuda.synchronize(device)
         
         elapsed_ms = start_event.elapsed_time(end_event)
         elapsed_s = elapsed_ms / 1000.0
         
-        # FLOPs = 2 * batch_size * M * N
         batch_size = x.shape[0]
         flops_per_iteration = 2 * batch_size * in_features * out_features
         total_flops = flops_per_iteration * iterations
@@ -390,7 +418,12 @@ def measure_fp8_compute(device: torch.device = None, matrix_size: int = 8192, it
         out_features = matrix_size
         
         # Create FP8 linear layer
-        fp8_linear = Fp8Linear(in_features, out_features, bias=False).to(device)
+        fp8_linear = Fp8Linear(
+            in_features,
+            out_features,
+            bias=False,
+            params_dtype=torch.float16,
+        ).to(device)
         
         # Input tensor
         x = torch.randn(1024, in_features, device=device, dtype=torch.float16)
@@ -479,7 +512,10 @@ def measure_l2_cache_bandwidth(device: torch.device = None, size_mb: float = 50.
         torch.cuda.synchronize(device)
         
         elapsed_ms = start_event.elapsed_time(end_event)
-        bandwidth_gbs = (size_bytes * iterations / elapsed_ms) / 1e9
+        if elapsed_ms <= 0:
+            raise RuntimeError("L2 cache bandwidth measurement returned non-positive elapsed time")
+        elapsed_s = elapsed_ms / 1000.0
+        bandwidth_gbs = (size_bytes * iterations / elapsed_s) / 1e9
         
         print(f"  Result: {bandwidth_gbs:.1f} GB/s")
         
@@ -723,6 +759,8 @@ def run_all_benchmarks(output_dir: Path = None) -> dict:
     print(f"FP4 Available: {FP4_AVAILABLE}")
     print(f"FP6 Available: {FP6_AVAILABLE}")
     print(f"FP8 Available: {FP8_AVAILABLE}")
+    bf16_supported = getattr(torch.cuda, "is_bf16_supported", lambda: False)()
+    print(f"BF16 Supported: {bf16_supported}")
     
     results = {
         "timestamp": datetime.now().isoformat(),
@@ -733,6 +771,7 @@ def run_all_benchmarks(output_dir: Path = None) -> dict:
         "fp4_available": FP4_AVAILABLE,
         "fp6_available": FP6_AVAILABLE,
         "fp8_available": FP8_AVAILABLE,
+        "bf16_supported": bf16_supported,
     }
     
     # Use 20 iterations for all measurements
@@ -752,6 +791,9 @@ def run_all_benchmarks(output_dir: Path = None) -> dict:
     
     # Measure FP16 compute
     results["fp16_compute"] = measure_fp16_compute(device, iterations=iterations)
+    
+    # Measure BF16 compute (if supported)
+    results["bf16_compute"] = measure_bf16_compute(device, iterations=iterations)
     
     # Measure L2 cache bandwidth
     results["l2_cache"] = measure_l2_cache_bandwidth(device, iterations=iterations)
@@ -793,6 +835,11 @@ def run_all_benchmarks(output_dir: Path = None) -> dict:
     
     if results["fp16_compute"].get("peak_tflops"):
         print(f"FP16 Compute: {results['fp16_compute']['peak_tflops']:.2f} TFLOPS")
+    
+    if results["bf16_compute"].get("peak_tflops"):
+        print(f"BF16 Compute: {results['bf16_compute']['peak_tflops']:.2f} TFLOPS")
+    elif results["bf16_compute"].get("error"):
+        print(f"BF16 Compute: Not available ({results['bf16_compute']['error']})")
     
     if results["l2_cache"].get("peak_bandwidth_gbs"):
         print(f"L2 Cache Bandwidth: {results['l2_cache']['peak_bandwidth_gbs']:.1f} GB/s")
@@ -851,4 +898,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

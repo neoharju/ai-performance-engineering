@@ -126,5 +126,5 @@ if __name__ == '__main__':
     )
     result = harness.benchmark(benchmark)
     
-    print(f"\nOptimized Autotuning: {result.mean_ms:.3f} ms")
+    print(f"\nOptimized Autotuning: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")
     print(" Tip: Autotuning finds optimal kernel parameters automatically for best performance")

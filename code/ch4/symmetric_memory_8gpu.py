@@ -35,6 +35,7 @@ Usage:
     # Test with 2-4 GPUs
     torchrun --nproc_per_node=4 symmetric_memory_8gpu.py
 """
+from common.python import compile_utils as _compile_utils_patch  # noqa: F401
 import pathlib
 import sys
 
@@ -46,6 +47,12 @@ from pathlib import Path
 
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from common.python.symmetric_memory_patch import (
+    ensure_symmetric_memory_api as _ensure_symmetric_memory_api,
+)
+
+_ensure_symmetric_memory_api()
 
 try:
     from distributed_helper import setup_single_gpu_env

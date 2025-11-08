@@ -19,8 +19,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from common.python.compile_utils import compile_model
-
 from typing import Optional, List, Tuple
 
 from common.python.benchmark_harness import (
@@ -44,51 +42,57 @@ class PagedKVCache:
         self.num_heads = num_heads
         self.head_dim = head_dim
         self.device = device
-        self.pages: List[torch.Tensor] = []  # List of page tensors
-        self.page_map: List[int] = []  # Maps sequence positions to page indices
+        self.k_pages: List[torch.Tensor] = []
+        self.v_pages: List[torch.Tensor] = []
     
-    def allocate_page(self) -> int:
-        """Allocate a new page and return its index."""
-        page = torch.zeros(
-            self.page_size, self.num_heads, self.head_dim,
-            dtype=torch.float16, device=self.device
-        )
-        page_idx = len(self.pages)
-        self.pages.append(page)
-        return page_idx
+    def _ensure_page(self, pages: List[torch.Tensor], page_idx: int) -> None:
+        """Allocate pages up to the requested index."""
+        while len(pages) <= page_idx:
+            pages.append(
+                torch.zeros(
+                    self.page_size,
+                    self.num_heads,
+                    self.head_dim,
+                    dtype=torch.float16,
+                    device=self.device,
+                )
+            )
     
-    def write(self, pos: int, k: torch.Tensor, v: torch.Tensor) -> None:
-        """Write K/V to cache at position using paged storage."""
-        # Determine which page and offset
+    def write(self, pos: int, k_token: torch.Tensor, v_token: torch.Tensor) -> None:
+        """Write single-token K/V tensors to the cache."""
         page_idx = pos // self.page_size
         offset = pos % self.page_size
         
-        # Allocate pages as needed
-        while len(self.pages) <= page_idx:
-            self.allocate_page()
+        self._ensure_page(self.k_pages, page_idx)
+        self._ensure_page(self.v_pages, page_idx)
         
-        # Write to page (paged attention: non-contiguous storage)
-        self.pages[page_idx][offset, :, :] = k.squeeze(1)
-        self.page_map.append(page_idx)
+        self.k_pages[page_idx][offset, :, :] = k_token
+        self.v_pages[page_idx][offset, :, :] = v_token
     
     def get_kv(self, length: int) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Get K/V up to length, reconstructing from pages."""
-        # Paged attention: reconstruct from non-contiguous pages
-        k_list = []
-        v_list = []
+        """Get cached K/V tensors up to the requested sequence length."""
+        if not self.k_pages:
+            empty = torch.empty(0, self.num_heads, self.head_dim, device=self.device)
+            return empty, empty
+        
+        k_list: List[torch.Tensor] = []
+        v_list: List[torch.Tensor] = []
         
         for pos in range(length):
-            page_idx = self.page_map[pos] if pos < len(self.page_map) else 0
+            page_idx = pos // self.page_size
             offset = pos % self.page_size
-            k_list.append(self.pages[page_idx][offset:offset+1, :, :])
-            v_list.append(self.pages[page_idx][offset:offset+1, :, :])
+            if page_idx >= len(self.k_pages):
+                break
+            k_list.append(self.k_pages[page_idx][offset:offset+1, :, :])
+            v_list.append(self.v_pages[page_idx][offset:offset+1, :, :])
         
-        if k_list:
-            k = torch.cat(k_list, dim=0)
-            v = torch.cat(v_list, dim=0)
-            return k, v
-        return torch.empty(0, self.num_heads, self.head_dim, device=self.device), \
-               torch.empty(0, self.num_heads, self.head_dim, device=self.device)
+        if not k_list:
+            empty = torch.empty(0, self.num_heads, self.head_dim, device=self.device)
+            return empty, empty
+        
+        k = torch.cat(k_list, dim=0)
+        v = torch.cat(v_list, dim=0)
+        return k, v
 
 
 class OptimizedPagedAttentionBenchmark(Benchmark):
@@ -100,8 +104,14 @@ class OptimizedPagedAttentionBenchmark(Benchmark):
     
     def __init__(self):
         self.device = resolve_device()
-        self.model = None        self.kv_cache = None
+        self.model = None
+        self.kv_cache = None
         self.inputs = None
+        self.batch_size = 1
+        self.sequence_length = 1
+        self.hidden_dim = 512
+        self.num_heads = 8
+        self.head_dim = self.hidden_dim // self.num_heads
     
     def setup(self) -> None:
         """Setup: Initialize model and paged KV cache."""
@@ -114,26 +124,34 @@ class OptimizedPagedAttentionBenchmark(Benchmark):
         # Optimization: Paged attention - non-contiguous page-based storage
         # Paged attention uses pages for efficient memory management
         
-        hidden_dim = 512
-        num_heads = 8
-        head_dim = hidden_dim // num_heads
-        
         # Simple attention model
         self.model = nn.MultiheadAttention(
-            embed_dim=hidden_dim,
-            num_heads=num_heads,
+            embed_dim=self.hidden_dim,
+            num_heads=self.num_heads,
             batch_first=True
-        ).to(self.device).eval()
+        ).to(self.device)
+        if self.device.type == "cuda":
+            self.model = self.model.half()
+        self.model.eval()
         
         # Optimization: Paged KV cache (paged attention)
         # Uses non-contiguous pages for efficient memory management
         page_size = 32  # Page size for paged attention
-        self.kv_cache = PagedKVCache(page_size, num_heads, head_dim, self.device)
+        self.kv_cache = PagedKVCache(page_size, self.num_heads, self.head_dim, self.device)
         
-        # Simulate autoregressive generation
-        batch_size = 4
+        # Simulate autoregressive generation - FAIL FAST if model has no parameters
+        params = list(self.model.parameters())
+        if not params:
+            raise RuntimeError("Model has no parameters - cannot determine dtype")
+        input_dtype = params[0].dtype
         self.inputs = [
-            torch.randn(batch_size, 1, hidden_dim, device=self.device)
+            torch.randn(
+                self.batch_size,
+                self.sequence_length,
+                self.hidden_dim,
+                device=self.device,
+                dtype=input_dtype,
+            )
             for _ in range(64)
         ]
         torch.cuda.synchronize()
@@ -155,25 +173,48 @@ class OptimizedPagedAttentionBenchmark(Benchmark):
                 # Uses non-contiguous pages for efficient memory management
                 # Reduces fragmentation and improves memory utilization
                 
+                # Get model dtype - FAIL FAST if model has no parameters
+                params = list(self.model.parameters())
+                if not params:
+                    raise RuntimeError("Model has no parameters - cannot determine dtype")
+                model_dtype = params[0].dtype
+                
                 for step, query in enumerate(self.inputs):
-                    # Compute new K, V
-                    _, k_new, v_new = self.model(query, query, query, need_weights=False)
+                    query = query.to(device=self.device, dtype=model_dtype)
                     
-                    # Store in paged cache (paged attention)
-                    # Non-contiguous storage allows efficient memory usage
-                    self.kv_cache.write(step, k_new, v_new)
+                    # Use model's forward to get q, k, v properly
+                    # MultiheadAttention returns (attn_output, attn_weights) or just attn_output
+                    # We need to extract q, k, v from the internal computation
+                    # For paged attention, we compute qkv manually
+                    batch_size, seq_len = query.shape[:2]
                     
-                    # Retrieve K, V from pages (paged attention reconstruction)
+                    # Get qkv projection weights - FAIL FAST if not available
+                    if not hasattr(self.model, 'in_proj_weight') or self.model.in_proj_weight is None:
+                        raise RuntimeError("MultiheadAttention.in_proj_weight is required for paged attention benchmark")
+                    if not hasattr(self.model, 'in_proj_bias'):
+                        raise RuntimeError("MultiheadAttention.in_proj_bias is required for paged attention benchmark")
+                    qkv = F.linear(query, self.model.in_proj_weight, self.model.in_proj_bias)
+                    qkv = qkv.reshape(batch_size, seq_len, 3, self.num_heads, self.head_dim)
+                    q, k, v = qkv.unbind(dim=2)  # Each: (batch, seq, num_heads, head_dim)
+                    
+                    q_step = q[0]
+                    k_token = k[0, 0]
+                    v_token = v[0, 0]
+                    
+                    self.kv_cache.write(step, k_token, v_token)
+                    
                     k_all, v_all = self.kv_cache.get_kv(step + 1)
+                    if k_all.numel() == 0:
+                        continue
                     
-                    # Reshape for attention
-                    if k_all.numel() > 0:
-                        k_all = k_all.unsqueeze(0).permute(0, 2, 1, 3).contiguous()
-                        v_all = v_all.unsqueeze(0).permute(0, 2, 1, 3).contiguous()
-                        q = query.permute(0, 2, 1, 3).contiguous()
-                        
-                        # Attention computation with paged K/V
-                        # Paged attention: efficient memory usage for variable-length sequences
+                    k_heads = k_all.permute(1, 0, 2).contiguous()
+                    v_heads = v_all.permute(1, 0, 2).contiguous()
+                    q_heads = q_step.permute(1, 0, 2).contiguous()
+                    
+                    scores = torch.matmul(q_heads, k_heads.transpose(-2, -1)) / (self.head_dim ** 0.5)
+                    attn_weights = torch.softmax(scores, dim=-1)
+                    attn_output = torch.matmul(attn_weights, v_heads)
+                    _ = attn_output.sum()
 
     
     def teardown(self) -> None:
@@ -217,9 +258,9 @@ def main() -> None:
     print("=" * 70)
     print(f"Optimized: paged_attention")
     print("=" * 70)
-    print(f"Average time: {result.mean_ms:.3f} ms")
-    print(f"Median: {result.median_ms:.3f} ms")
-    print(f"Std: {result.std_ms:.3f} ms")
+    print(f"Average time: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")
+    print(f"Median: {result.timing.median_ms if result.timing else 0.0:.3f} ms")
+    print(f"Std: {result.timing.std_ms if result.timing else 0.0:.3f} ms")
 
 
 if __name__ == "__main__":

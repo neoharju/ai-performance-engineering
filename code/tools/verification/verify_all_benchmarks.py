@@ -21,12 +21,18 @@ import argparse
 import importlib.util
 import traceback
 from pathlib import Path
-from typing import List, Tuple, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 repo_root = Path(__file__).parent.parent.parent
 if str(repo_root) not in sys.path:
     sys.path.insert(0, str(repo_root))
 
+# Apply environment defaults (creates .torch_inductor directory, etc.)
+try:
+    from common.python.env_defaults import apply_env_defaults
+    apply_env_defaults()
+except ImportError:
+    pass  # Continue if env_defaults not available
 
 # Default timeout constant (15 seconds - required for all benchmarks)
 DEFAULT_TIMEOUT = 15
@@ -49,9 +55,15 @@ def load_benchmark(file_path: Path, timeout_seconds: int = DEFAULT_TIMEOUT) -> T
     
     Uses threading timeout to prevent hangs during module import or get_benchmark() calls.
     
+    Note: For benchmarks that compile CUDA extensions during import (rare), the default
+    15-second timeout may be insufficient. Most CUDA extensions are lazy-loaded in setup(),
+    but if compilation happens during import, consider pre-compiling extensions or increasing
+    the timeout parameter.
+    
     Args:
         file_path: Path to Python file with Benchmark implementation
         timeout_seconds: Maximum time to wait for module load (default: 15 seconds)
+                        Increase to 60-120 seconds if CUDA compilation happens during import
         
     Returns:
         Tuple of (benchmark_instance, error_message). If successful: (benchmark, None).
@@ -87,7 +99,7 @@ def load_benchmark(file_path: Path, timeout_seconds: int = DEFAULT_TIMEOUT) -> T
     thread.join(timeout=timeout_seconds)
     
     if not result["done"]:
-        return None, f"TIMEOUT: exceeded {timeout_seconds} second timeout"
+        return None, f"TIMEOUT: exceeded {timeout_seconds} second timeout (module import/get_benchmark() took too long)"
     
     if result["error"]:
         return None, result["error"]
@@ -102,23 +114,58 @@ def test_benchmark(benchmark: object, timeout: int = DEFAULT_TIMEOUT) -> Tuple[b
     Resets CUDA state before and after to prevent cascading failures.
     
     Uses threading timeout (reliable, cross-platform) instead of signal-based timeout.
+    
+    If benchmark has get_config() method, uses setup_timeout_seconds from config if available,
+    otherwise falls back to provided timeout.
     """
     import threading
     import torch
+    
+    # Check if benchmark specifies longer timeouts in its config
+    # Note: We use the maximum of all timeouts since test_benchmark() runs setup + benchmark_fn + teardown
+    # as a single operation, so we need to account for the longest phase
+    original_timeout = timeout
+    if hasattr(benchmark, 'get_config'):
+        try:
+            config = benchmark.get_config()
+            # Check setup timeout (most relevant for CUDA compilation)
+            if hasattr(config, 'setup_timeout_seconds') and config.setup_timeout_seconds:
+                timeout = max(timeout, config.setup_timeout_seconds)
+            # Also check measurement timeout (for long-running benchmark_fn)
+            if hasattr(config, 'measurement_timeout_seconds') and config.measurement_timeout_seconds:
+                timeout = max(timeout, config.measurement_timeout_seconds)
+            # Check warmup timeout (less relevant for single-run verification, but included for completeness)
+            if hasattr(config, 'warmup_timeout_seconds') and config.warmup_timeout_seconds:
+                timeout = max(timeout, config.warmup_timeout_seconds)
+        except Exception:
+            # If get_config() fails, use default timeout
+            pass
+    
+    # Note: If timeout was increased from config, extensions should be pre-compiled
+    # Threading timeout may not interrupt CUDA compilation, so pre-compilation is recommended
     
     def reset_cuda_state():
         """Reset CUDA state to prevent cascading failures."""
         try:
             if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+                # Synchronize to catch any pending CUDA errors
                 torch.cuda.synchronize()
-                # Clear any device-side errors by resetting peak stats
+                # Clear any device-side errors
                 try:
                     torch.cuda.reset_peak_memory_stats()
                 except:
                     pass
+                # Clear cache
+                torch.cuda.empty_cache()
+                # Synchronize again after cleanup
+                torch.cuda.synchronize()
         except Exception:
-            pass
+            # If synchronization fails, try to reset device
+            try:
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except Exception:
+                pass
     
     # Reset CUDA state before running benchmark
     reset_cuda_state()
@@ -186,20 +233,55 @@ def test_benchmark(benchmark: object, timeout: int = DEFAULT_TIMEOUT) -> Tuple[b
 
 
 def is_distributed_benchmark(file_path: Path) -> bool:
-    """Check if a benchmark file contains distributed operations."""
+    """Check if a benchmark file contains distributed operations.
+    
+    This function detects distributed benchmarks by looking for:
+    - torch.distributed imports and usage
+    - DistributedDataParallel (DDP)
+    - NCCL backend usage
+    - Environment variables like WORLD_SIZE, RANK
+    - Multi-GPU communication patterns
+    """
     try:
         content = file_path.read_text()
-        return any(pattern in content for pattern in [
-            'dist.init_process_group',
-            'WORLD_SIZE',
-            'RANK',
-            'torch.distributed.init_process_group',
+        
+        # Check for distributed imports
+        has_dist_import = any(pattern in content for pattern in [
+            'import torch.distributed',
+            'from torch.distributed',
+            'torch.distributed as dist',
         ])
-    except:
+        
+        # Check for distributed operations
+        has_dist_ops = any(pattern in content for pattern in [
+            'dist.init_process_group',
+            'torch.distributed.init_process_group',
+            'torch.nn.parallel.DistributedDataParallel',
+            'DistributedDataParallel(',
+            'DDP(',
+        ])
+        
+        # Check for NCCL backend (strong indicator of multi-GPU)
+        has_nccl = any(pattern in content for pattern in [
+            "backend='nccl'",
+            'backend="nccl"',
+            'backend = "nccl"',
+            'backend = \'nccl\'',
+        ])
+        
+        # Check for distributed environment variables (but not just setup code)
+        # Only count if it's actually used, not just set
+        has_world_size = 'WORLD_SIZE' in content and ('os.environ' in content or 'getenv' in content)
+        has_rank = 'RANK' in content and ('os.environ' in content or 'getenv' in content)
+        
+        # A benchmark is distributed if it has distributed imports AND operations
+        # OR if it explicitly uses NCCL backend
+        return (has_dist_import and has_dist_ops) or has_nccl or (has_world_size and has_rank and has_dist_ops)
+    except Exception:
         return False
 
 
-def verify_chapter(chapter_dir: Path) -> Dict[str, any]:
+def verify_chapter(chapter_dir: Path) -> Dict[str, Any]:
     """Verify all benchmarks in a chapter.
     
     Runs ALL tests. Only skips distributed benchmarks if num_gpus == 1,
@@ -281,6 +363,7 @@ def verify_chapter(chapter_dir: Path) -> Dict[str, any]:
 
 def main():
     import torch
+    import subprocess
     
     parser = argparse.ArgumentParser(description='Verify all baseline/optimized benchmarks')
     parser.add_argument('--chapter', type=str, help='Chapter to test (e.g., ch1) or "all"')
@@ -299,6 +382,32 @@ def main():
         if num_gpus == 1:
             print("WARNING: NOTE: Distributed benchmarks will be SKIPPED (require multiple GPUs)")
             print("   This will be clearly logged for each skipped benchmark")
+        
+        # Pre-compile CUDA extensions to avoid timeout issues during verification
+        print("\nPre-compiling CUDA extensions to avoid timeout issues...")
+        try:
+            precompile_path = repo_root / "tools" / "utilities" / "precompile_cuda_extensions.py"
+            if precompile_path.exists():
+                result = subprocess.run(
+                    [sys.executable, str(precompile_path)],
+                    capture_output=True,
+                    text=True,
+                    timeout=300  # 5 minutes for compilation
+                )
+                if result.returncode == 0:
+                    print("  [OK] CUDA extensions pre-compiled successfully")
+                else:
+                    print("  WARNING: Some CUDA extensions failed to pre-compile")
+                    print("    They will compile at runtime (may cause timeouts)")
+                    if result.stderr:
+                        print(f"    Error: {result.stderr[:200]}")
+            else:
+                print("  INFO: Pre-compilation script not found - extensions will compile at runtime")
+        except subprocess.TimeoutExpired:
+            print("  WARNING: Pre-compilation timed out - extensions will compile at runtime")
+        except Exception as e:
+            print(f"  WARNING: Could not pre-compile extensions: {e}")
+            print("    Extensions will compile at runtime (may cause timeouts)")
     else:
         print("System: No CUDA GPUs available")
         print("WARNING: NOTE: All GPU benchmarks will likely fail")
@@ -308,8 +417,10 @@ def main():
     if args.chapter and args.chapter != 'all':
         chapter_dirs = [repo_root / args.chapter]
     else:
+        # Sort chapters numerically (ch1, ch2, ..., ch10, ch11, ...) instead of lexicographically
         chapter_dirs = sorted([d for d in repo_root.iterdir() 
-                              if d.is_dir() and d.name.startswith('ch') and d.name[2:].isdigit()])
+                              if d.is_dir() and d.name.startswith('ch') and d.name[2:].isdigit()],
+                             key=lambda d: int(d.name[2:]))
     
     all_results = []
     total_files = 0
@@ -396,4 +507,3 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
-

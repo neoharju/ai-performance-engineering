@@ -1,6 +1,6 @@
-"""Metrics extraction from profiling tools (nsys, ncu).
+"""Metrics extraction from profiling tools (nsys, ncu, torch).
 
-Provides typed classes and functions for extracting metrics from nsys and ncu reports.
+Provides functions for extracting metrics from profiling reports and returning Pydantic models.
 """
 
 from __future__ import annotations
@@ -8,53 +8,17 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, Any, Type
 
-
-@dataclass
-class NsysMetrics:
-    """Extracted metrics from nsys profiling report."""
-    
-    total_gpu_time_ms: Optional[float] = None
-    raw_metrics: Dict[str, float] = field(default_factory=dict)
-    
-    def to_dict(self) -> Dict[str, float]:
-        """Convert to dictionary format."""
-        result = {}
-        if self.total_gpu_time_ms is not None:
-            result["nsys_total_gpu_time_ms"] = self.total_gpu_time_ms
-        result.update({f"nsys_{k}": v for k, v in self.raw_metrics.items()})
-        return result
-
-
-@dataclass
-class NcuMetrics:
-    """Extracted metrics from ncu profiling report."""
-    
-    kernel_time_ms: Optional[float] = None
-    sm_throughput_pct: Optional[float] = None
-    dram_throughput_pct: Optional[float] = None
-    l2_throughput_pct: Optional[float] = None
-    occupancy_pct: Optional[float] = None
-    raw_metrics: Dict[str, float] = field(default_factory=dict)
-    
-    def to_dict(self) -> Dict[str, float]:
-        """Convert to dictionary format."""
-        result = {}
-        if self.kernel_time_ms is not None:
-            result["ncu_kernel_time_ms"] = self.kernel_time_ms
-        if self.sm_throughput_pct is not None:
-            result["ncu_sm_throughput_pct"] = self.sm_throughput_pct
-        if self.dram_throughput_pct is not None:
-            result["ncu_dram_throughput_pct"] = self.dram_throughput_pct
-        if self.l2_throughput_pct is not None:
-            result["ncu_l2_throughput_pct"] = self.l2_throughput_pct
-        if self.occupancy_pct is not None:
-            result["ncu_occupancy_pct"] = self.occupancy_pct
-        result.update({f"ncu_{k}": v for k, v in self.raw_metrics.items()})
-        return result
+try:
+    from common.python.benchmark_models import NsysMetrics, NcuMetrics, TorchMetrics
+    PYDANTIC_AVAILABLE = True
+except ImportError:
+    PYDANTIC_AVAILABLE = False
+    NsysMetrics: Any = None  # type: ignore[no-redef]
+    NcuMetrics: Any = None  # type: ignore[no-redef]
+    TorchMetrics: Any = None  # type: ignore[no-redef]
 
 
 # Mapping of metric identifiers to natural language descriptions
@@ -70,6 +34,15 @@ NCU_METRIC_DESCRIPTIONS = {
     "l1tex__t_sectors_pipe_lsu_mem_global_op_st.sum": "L1 Global Memory Store Sectors",
     "l1tex__data_bank_conflicts_pipe_lsu_mem_shared_op_ld.sum": "Shared Memory Bank Conflicts",
     "sm__inst_executed_pipe_tensor.sum": "Tensor Core Instructions Executed",
+}
+
+NSYS_METRIC_KEY_MAP = {
+    "total_gpu_time": ["nsys_total_gpu_time_ms", "nsys_total_gpu_time"],
+    "kernel_time": ["nsys_kernel_time_ms", "nsys_kernel_time"],
+    "memory_throughput_gb_per_s": ["nsys_memory_throughput_gb_per_s"],
+    "compute_throughput_gflops": ["nsys_compute_throughput_gflops"],
+    "memory_bandwidth_utilization": ["nsys_memory_bandwidth_utilization_pct"],
+    "compute_utilization": ["nsys_compute_utilization_pct"],
 }
 
 
@@ -115,12 +88,16 @@ def extract_nsys_metrics(nsys_rep_path: Path, timeout: int = 60) -> NsysMetrics:
         timeout: Timeout for nsys stats command in seconds
         
     Returns:
-        NsysMetrics object with extracted metrics
+        NsysMetrics (Pydantic) object with extracted metrics
     """
-    metrics = NsysMetrics()
+    if not PYDANTIC_AVAILABLE or NsysMetrics is None:
+        raise ImportError("pydantic and NsysMetrics are required for extract_nsys_metrics")
     
     if not nsys_rep_path.exists():
-        return metrics
+        return NsysMetrics(total_gpu_time_ms=None, raw_metrics={}, schemaVersion="1.0")
+    
+    total_gpu_time_ms = None
+    raw_metrics = {}
     
     # Try using nsys stats command
     try:
@@ -134,12 +111,12 @@ def extract_nsys_metrics(nsys_rep_path: Path, timeout: int = 60) -> NsysMetrics:
         if result.returncode == 0:
             csv_metrics = _parse_nsys_csv(result.stdout)
             if "nsys_total_gpu_time_ms" in csv_metrics:
-                metrics.total_gpu_time_ms = csv_metrics["nsys_total_gpu_time_ms"]
+                total_gpu_time_ms = csv_metrics["nsys_total_gpu_time_ms"]
             # Store other metrics in raw_metrics
             for k, v in csv_metrics.items():
                 if k != "nsys_total_gpu_time_ms":
                     clean_key = k.replace("nsys_", "")
-                    metrics.raw_metrics[clean_key] = v
+                    raw_metrics[clean_key] = v
     except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
         pass
     
@@ -161,13 +138,13 @@ def extract_nsys_metrics(nsys_rep_path: Path, timeout: int = 60) -> NsysMetrics:
                 try:
                     value = float(value_str.replace(",", "").replace("%", ""))
                     clean_name = metric_name.lower().replace(" ", "_").replace("(", "").replace(")", "")
-                    metrics.raw_metrics[clean_name] = value
+                    raw_metrics[clean_name] = value
                 except (ValueError, AttributeError):
                     pass
     except (ImportError, Exception):
         pass
     
-    return metrics
+    return NsysMetrics(total_gpu_time_ms=total_gpu_time_ms, raw_metrics=raw_metrics, schemaVersion="1.0")
 
 
 def extract_ncu_metrics(ncu_rep_path: Path, timeout: int = 60) -> NcuMetrics:
@@ -178,12 +155,28 @@ def extract_ncu_metrics(ncu_rep_path: Path, timeout: int = 60) -> NcuMetrics:
         timeout: Timeout for ncu command in seconds
         
     Returns:
-        NcuMetrics object with extracted metrics
+        NcuMetrics (Pydantic) object with extracted metrics
     """
-    metrics = NcuMetrics()
+    if not PYDANTIC_AVAILABLE or NcuMetrics is None:
+        raise ImportError("pydantic and NcuMetrics are required for extract_ncu_metrics")
     
     if not ncu_rep_path.exists():
-        return metrics
+        return NcuMetrics(
+            kernel_time_ms=None,
+            sm_throughput_pct=None,
+            dram_throughput_pct=None,
+            l2_throughput_pct=None,
+            occupancy_pct=None,
+            raw_metrics={},
+            schemaVersion="1.0"
+        )
+    
+    kernel_time_ms = None
+    sm_throughput_pct = None
+    dram_throughput_pct = None
+    l2_throughput_pct = None
+    occupancy_pct = None
+    raw_metrics = {}
     
     # Try using ncu CLI to export metrics
     try:
@@ -196,7 +189,7 @@ def extract_ncu_metrics(ncu_rep_path: Path, timeout: int = 60) -> NcuMetrics:
         
         if result.returncode == 0:
             csv_metrics = _parse_ncu_csv(result.stdout)
-            _populate_ncu_metrics(metrics, csv_metrics)
+            kernel_time_ms, sm_throughput_pct, dram_throughput_pct, l2_throughput_pct, occupancy_pct, raw_metrics = _populate_ncu_metrics(csv_metrics)
     except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
         pass
     
@@ -206,15 +199,40 @@ def extract_ncu_metrics(ncu_rep_path: Path, timeout: int = 60) -> NcuMetrics:
         try:
             csv_text = companion_csv.read_text()
             csv_metrics = _parse_ncu_csv(csv_text)
-            _populate_ncu_metrics(metrics, csv_metrics)
+            kt, sm, dram, l2, occ, raw = _populate_ncu_metrics(csv_metrics)
+            if kernel_time_ms is None and kt is not None:
+                kernel_time_ms = kt
+            if sm_throughput_pct is None and sm is not None:
+                sm_throughput_pct = sm
+            if dram_throughput_pct is None and dram is not None:
+                dram_throughput_pct = dram
+            if l2_throughput_pct is None and l2 is not None:
+                l2_throughput_pct = l2
+            if occupancy_pct is None and occ is not None:
+                occupancy_pct = occ
+            raw_metrics.update(raw)
         except Exception:
             pass
     
-    return metrics
+    return NcuMetrics(
+        kernel_time_ms=kernel_time_ms,
+        sm_throughput_pct=sm_throughput_pct,
+        dram_throughput_pct=dram_throughput_pct,
+        l2_throughput_pct=l2_throughput_pct,
+        occupancy_pct=occupancy_pct,
+        raw_metrics=raw_metrics,
+        schemaVersion="1.0"
+    )
 
 
 def _parse_nsys_csv(csv_text: str) -> Dict[str, float]:
-    """Parse nsys CSV output for timing metrics.
+    """Parse nsys CSV output for timing and bandwidth metrics.
+    
+    NSYS CSV format has header row: "Metric,Value"
+    Example:
+        Metric,Value
+        Total GPU Time,1234.56
+        Memory Throughput GB/s,500.25
     
     Args:
         csv_text: CSV text from nsys stats command
@@ -224,12 +242,60 @@ def _parse_nsys_csv(csv_text: str) -> Dict[str, float]:
     """
     metrics = {}
     
-    # Extract total GPU time
-    match = re.search(r"Total GPU Time.*?,(\d+\.?\d*)", csv_text, re.IGNORECASE)
-    if match:
+    lines = csv_text.strip().split("\n")
+    if len(lines) < 2:
+        # Try regex fallback for older format
+        match = re.search(r"Total GPU Time.*?,(\d+\.?\d*)", csv_text, re.IGNORECASE)
+        if match:
+            try:
+                metrics["nsys_total_gpu_time_ms"] = float(match.group(1))
+            except (ValueError, IndexError):
+                pass
+        return metrics
+    
+    # Parse CSV with header
+    header = lines[0].split(",")
+    if len(header) < 2 or header[0].strip().lower() != "metric":
+        # Fallback to regex
+        match = re.search(r"Total GPU Time.*?,(\d+\.?\d*)", csv_text, re.IGNORECASE)
+        if match:
+            try:
+                metrics["nsys_total_gpu_time_ms"] = float(match.group(1))
+            except (ValueError, IndexError):
+                pass
+        return metrics
+    
+    # Parse data rows
+    for line in lines[1:]:
+        line = line.strip()
+        if not line:
+            continue
+        
+        parts = line.split(",")
+        if len(parts) < 2:
+            continue
+        
+        metric_name = parts[0].strip()
+        value_str = parts[1].strip()
+        
+        if not metric_name or not value_str:
+            continue
+        
         try:
-            metrics["nsys_total_gpu_time_ms"] = float(match.group(1))
-        except (ValueError, IndexError):
+            value = float(value_str)
+            clean_name = (
+                metric_name.lower()
+                .replace(" ", "_")
+                .replace("/", "_per_")
+                .replace("(", "")
+                .replace(")", "")
+            )
+            mapped_keys = NSYS_METRIC_KEY_MAP.get(clean_name)
+            if not mapped_keys:
+                continue
+            for target in mapped_keys:
+                metrics[target] = value
+        except ValueError:
             pass
     
     return metrics
@@ -238,82 +304,114 @@ def _parse_nsys_csv(csv_text: str) -> Dict[str, float]:
 def _parse_ncu_csv(csv_text: str) -> Dict[str, float]:
     """Parse ncu CSV output for comprehensive roofline and performance metrics.
     
+    NCU CSV format is "metric,value" per line with no header.
+    Example:
+        "gpu__time_duration.avg","10.500"
+        "sm__throughput.avg.pct_of_peak_sustained_elapsed","85.25"
+    
     Args:
         csv_text: CSV text from ncu export or companion CSV file
         
     Returns:
         Dictionary of metric identifiers to values
     """
-    metrics = {}
+    metrics: Dict[str, float] = {}
     
     # Parse CSV lines
     lines = csv_text.strip().split("\n")
-    if len(lines) < 2:
+    if not lines:
         return metrics
     
-    # Find header row (usually first line)
-    header = lines[0].split(",")
-    
-    # Find data rows
-    for line in lines[1:]:
-        if not line.strip():
+    # NCU CSV format: "metric","value" per line (no header)
+    for line in lines:
+        line = line.strip()
+        if not line:
             continue
         
-        values = line.split(",")
-        if len(values) != len(header):
+        # Parse CSV line (handles quoted values)
+        # Format: "metric_name","value"
+        parts = line.split(",")
+        if len(parts) < 2:
             continue
         
-        # Map header to values
-        for i, col_name in enumerate(header):
-            col_name = col_name.strip().strip('"')
-            if i < len(values):
-                value_str = values[i].strip().strip('"')
-                if value_str and col_name:
-                    try:
-                        # Try to parse as float
-                        value = float(value_str)
-                        # Use metric ID as key
-                        clean_name = col_name.replace(" ", "_").lower()
-                        metrics[col_name] = value  # Keep original ID
-                        metrics[f"ncu_{clean_name}"] = value  # Also add clean name
-                    except ValueError:
-                        pass
+        # Extract metric name (first column, remove quotes)
+        metric_name = parts[0].strip().strip('"')
+        if not metric_name:
+            continue
+        
+        # Extract value (second column, remove quotes)
+        value_str = parts[1].strip().strip('"')
+        if not value_str:
+            continue
+        
+        try:
+            value = float(value_str)
+            metrics[metric_name] = value
+        except ValueError:
+            # Skip non-numeric values
+            pass
     
     return metrics
 
 
-def _populate_ncu_metrics(metrics: NcuMetrics, csv_metrics: Dict[str, float]) -> None:
-    """Populate NcuMetrics object from parsed CSV metrics.
+def _populate_ncu_metrics(csv_metrics: Dict[str, float]) -> tuple:
+    """Extract NcuMetrics fields from parsed CSV metrics.
     
     Args:
-        metrics: NcuMetrics object to populate
         csv_metrics: Dictionary of metric identifiers to values
+        
+    Returns:
+        Tuple of (kernel_time_ms, sm_throughput_pct, dram_throughput_pct, l2_throughput_pct, occupancy_pct, raw_metrics)
     """
+    kernel_time_ms = None
+    sm_throughput_pct = None
+    dram_throughput_pct = None
+    l2_throughput_pct = None
+    occupancy_pct = None
+    raw_metrics = {}
+    recognized_keys = set()
+    
     # Map known metric IDs to fields
-    if "gpu__time_duration.avg" in csv_metrics:
-        metrics.kernel_time_ms = csv_metrics["gpu__time_duration.avg"]
+    kernel_key = "gpu__time_duration.avg"
+    if kernel_key in csv_metrics:
+        kernel_time_ms = csv_metrics[kernel_key]
+        recognized_keys.add(kernel_key)
     
-    if "sm__throughput.avg.pct_of_peak_sustained_elapsed" in csv_metrics:
-        metrics.sm_throughput_pct = csv_metrics["sm__throughput.avg.pct_of_peak_sustained_elapsed"]
+    sm_key = "sm__throughput.avg.pct_of_peak_sustained_elapsed"
+    if sm_key in csv_metrics:
+        sm_throughput_pct = csv_metrics[sm_key]
+        recognized_keys.add(sm_key)
     
-    if "gpu__dram_throughput.avg.pct_of_peak_sustained_elapsed" in csv_metrics:
-        metrics.dram_throughput_pct = csv_metrics["gpu__dram_throughput.avg.pct_of_peak_sustained_elapsed"]
+    dram_keys = [
+        "gpu__dram_throughput.avg.pct_of_peak_sustained_elapsed",
+        "dram__throughput.avg.pct_of_peak_sustained_elapsed",
+    ]
+    for key in dram_keys:
+        if key in csv_metrics:
+            dram_throughput_pct = csv_metrics[key]
+            recognized_keys.add(key)
+            break
     
-    if "lts__throughput.avg.pct_of_peak_sustained_elapsed" in csv_metrics:
-        metrics.l2_throughput_pct = csv_metrics["lts__throughput.avg.pct_of_peak_sustained_elapsed"]
+    l2_keys = [
+        "lts__throughput.avg.pct_of_peak_sustained_elapsed",
+        "l2__throughput.avg.pct_of_peak_sustained_elapsed",
+    ]
+    for key in l2_keys:
+        if key in csv_metrics:
+            l2_throughput_pct = csv_metrics[key]
+            recognized_keys.add(key)
+            break
     
-    if "sm__warps_active.avg.pct_of_peak_sustained_active" in csv_metrics:
-        metrics.occupancy_pct = csv_metrics["sm__warps_active.avg.pct_of_peak_sustained_active"]
+    occupancy_key = "sm__warps_active.avg.pct_of_peak_sustained_active"
+    if occupancy_key in csv_metrics:
+        occupancy_pct = csv_metrics[occupancy_key]
+        recognized_keys.add(occupancy_key)
     
     # Store all other metrics in raw_metrics
     for key, value in csv_metrics.items():
-        if key not in [
-            "gpu__time_duration.avg",
-            "sm__throughput.avg.pct_of_peak_sustained_elapsed",
-            "gpu__dram_throughput.avg.pct_of_peak_sustained_elapsed",
-            "lts__throughput.avg.pct_of_peak_sustained_elapsed",
-            "sm__warps_active.avg.pct_of_peak_sustained_active",
-        ]:
-            clean_key = key.replace("ncu_", "") if key.startswith("ncu_") else key
-            metrics.raw_metrics[clean_key] = value
-
+        if key in recognized_keys:
+            continue
+        clean_key = key.replace("ncu_", "") if key.startswith("ncu_") else key
+        raw_metrics[clean_key] = value
+    
+    return (kernel_time_ms, sm_throughput_pct, dram_throughput_pct, l2_throughput_pct, occupancy_pct, raw_metrics)

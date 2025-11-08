@@ -21,6 +21,7 @@ from torch.utils.checkpoint import checkpoint
 
 from typing import Optional
 
+from common.python.compile_utils import enable_tf32
 from common.python.benchmark_harness import (
     Benchmark,
     BenchmarkConfig,
@@ -62,10 +63,8 @@ class OptimizedMemoryProfilingBenchmark(Benchmark):
         self.device = resolve_device()
         self.model = None
         # Optimization: Compile model for kernel fusion and optimization
-        try:
 
         # Optimization: Compile model for kernel fusion and optimization
-        try:
 
         self.inputs = None
         self.targets = None
@@ -82,20 +81,14 @@ class OptimizedMemoryProfilingBenchmark(Benchmark):
             torch.backends.cudnn.benchmark = True
             torch.backends.cudnn.deterministic = False
             # Enable TF32 for faster matmul on Ampere+ GPUs
-            torch.backends.cuda.matmul.allow_tf32 = True
-            torch.backends.cudnn.allow_tf32 = True
+            enable_tf32()
         torch.manual_seed(42)
         torch.cuda.reset_peak_memory_stats()
         
         # Optimized model with gradient checkpointing
         self.model = OptimizedModel(hidden_dim=self.hidden_dim).to(self.device)
-        # Optimization: Use FP16 for faster computation
-        if self.device.type == "cuda":
-            try:
-                self.model = self.model.half()
-            except Exception:
-                pass  # Fallback to FP32 if FP16 not supported
-        
+        # Keep model in FP32 - checkpointing is about memory, not precision
+        # Converting to FP16 would require matching input dtype
         self.model.train()
         self.inputs = torch.randn(self.batch_size, self.hidden_dim, device=self.device, dtype=torch.float32)
         self.targets = torch.randn(self.batch_size, self.hidden_dim, device=self.device, dtype=torch.float32)
@@ -144,7 +137,7 @@ class OptimizedMemoryProfilingBenchmark(Benchmark):
         """Validate benchmark result."""
         if self.model is None:
             return "Model not initialized"
-        return None and self.peak_memory_mb > 0
+        return None
 
 def get_benchmark() -> Benchmark:
     """Factory function for benchmark discovery."""
@@ -157,6 +150,5 @@ if __name__ == "__main__":
         config=benchmark.get_config()
     )
     result = harness.benchmark(benchmark)
-    print(f"\nOptimized Memory Profiling: {result.mean_ms:.3f} ms")
+    print(f"\nOptimized Memory Profiling: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")
     print(f"Peak Memory: {benchmark.peak_memory_mb:.2f} MB")
-

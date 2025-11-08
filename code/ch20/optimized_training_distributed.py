@@ -67,10 +67,8 @@ class OptimizedTrainingDistributedBenchmark(Benchmark):
         self.device = resolve_device()
         self.model = None
         # Optimization: Compile model for kernel fusion and optimization
-        try:
 
         # Optimization: Compile model for kernel fusion and optimization
-        try:
 
         self.inputs = None
         self.targets = None
@@ -178,5 +176,9 @@ if __name__ == "__main__":
         config=benchmark.get_config()
     )
     result = harness.benchmark(benchmark)
-    print(f"\nOptimized Distributed Training: {result.mean_ms:.3f} ms")
+    timing = result.timing
+    if timing:
+        print(f"\nOptimized Distributed Training: {timing.mean_ms:.3f} ms")
+    else:
+        print("No timing data available")
 

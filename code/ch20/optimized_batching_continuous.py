@@ -54,10 +54,8 @@ class OptimizedBatchingContinuousBenchmark(Benchmark):
         self.device = resolve_device()
         self.model = None
         # Optimization: Compile model for kernel fusion and optimization
-        try:
 
         # Optimization: Compile model for kernel fusion and optimization
-        try:
 
         self.request_queue = None
         self.hidden_dim = 1024
@@ -153,5 +151,5 @@ if __name__ == "__main__":
         config=benchmark.get_config()
     )
     result = harness.benchmark(benchmark)
-    print(f"\nOptimized Continuous Batching: {result.mean_ms:.3f} ms")
+    print(f"\nOptimized Continuous Batching: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")
 

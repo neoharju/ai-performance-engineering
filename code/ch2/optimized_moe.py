@@ -69,15 +69,22 @@ class MoELayer(nn.Module):
         # Process with selected experts (MoE: sparse computation optimized for hardware)
         output = torch.zeros_like(x)
         for expert_idx in range(self.num_experts):
-            expert_mask = (top_k_indices == expert_idx).any(dim=-1)
+            # Find which positions use this expert (across batch and sequence)
+            expert_mask = (top_k_indices == expert_idx).any(dim=-1)  # (batch_size, seq_len)
             if expert_mask.any():
-                expert_input = x[expert_mask]
-        expert_output = self.experts[expert_idx](expert_input)
+                expert_input = x[expert_mask]  # (num_selected, hidden_dim)
+                expert_output = self.experts[expert_idx](expert_input)  # (num_selected, hidden_dim)
                 
-        # Weight by router probability (MoE: weighted combination)
-        expert_probs = top_k_probs[expert_mask]
-        expert_weight = expert_probs[:, top_k_indices[expert_mask] == expert_idx].sum(dim=-1, keepdim=True)
-        output[expert_mask] += expert_output * expert_weight
+                # Weight by router probability (MoE: weighted combination)
+                # Get probabilities for this expert at selected positions
+                selected_probs = top_k_probs[expert_mask]  # (num_selected, top_k)
+                selected_indices = top_k_indices[expert_mask]  # (num_selected, top_k)
+                # Find which of the top_k positions correspond to this expert
+                expert_pos_mask = (selected_indices == expert_idx)  # (num_selected, top_k)
+                # Sum probabilities for this expert (weighted combination)
+                expert_weight = (selected_probs * expert_pos_mask).sum(dim=-1, keepdim=True)  # (num_selected, 1)
+                
+                output[expert_mask] += expert_output * expert_weight
         
         return output
 
@@ -114,7 +121,18 @@ class OptimizedMoeBenchmark(Benchmark):
                  pass
         self.model.eval()
         
-        self.input = torch.randn(32, hidden_dim, device=self.device)
+        # Input should be 3D: (batch_size, seq_len, hidden_dim) for MoE layer
+        batch_size = 32
+        seq_len = 1
+        self.input = torch.randn(batch_size, seq_len, hidden_dim, device=self.device)
+        # Convert input to match model dtype (FP16 if model was converted)
+        # Check dtype of first parameter to determine model dtype
+        try:
+            first_param = next(self.model.parameters())
+            if first_param.dtype == torch.float16:
+                self.input = self.input.half()
+        except StopIteration:
+            pass  # No parameters, use default dtype
         torch.cuda.synchronize()
     
     def benchmark_fn(self) -> None:
@@ -183,9 +201,9 @@ def main() -> None:
     print("=" * 70)
     print(f"Optimized: moe")
     print("=" * 70)
-    print(f"Average time: {result.mean_ms:.3f} ms")
-    print(f"Median: {result.median_ms:.3f} ms")
-    print(f"Std: {result.std_ms:.3f} ms")
+    print(f"Average time: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")
+    print(f"Median: {result.timing.median_ms if result.timing else 0.0:.3f} ms")
+    print(f"Std: {result.timing.std_ms if result.timing else 0.0:.3f} ms")
 
 if __name__ == "__main__":
     main()

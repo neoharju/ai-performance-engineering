@@ -45,12 +45,13 @@ from torch.nn.attention.flex_attention import flex_attention, create_block_mask
 import time
 from typing import Dict, Tuple
 
+from common.python.compile_utils import enable_tf32
+
 assert torch.cuda.is_available(), "CUDA required for FlexAttention scaling demo"
 _major, _minor = torch.cuda.get_device_capability()
 assert _major >= 12, f"Blackwell expected (sm_120); got sm_{_major}{_minor}"
 
-torch.set_float32_matmul_precision("high")
-torch.backends.cudnn.conv.fp32_precision = "tf32"
+enable_tf32()
 
 QUICK_MODE = any(
     os.getenv(flag, "0") == "1"
@@ -68,8 +69,7 @@ BENCH_ITERS = 10 if QUICK_MODE else 50
 def configure_for_flex_attention():
     """Configure PyTorch for FlexAttention peak performance"""
     # NEW PyTorch 2.9 API (no warnings!)
-    torch.set_float32_matmul_precision("high")
-    torch.backends.cudnn.conv.fp32_precision = "tf32"
+    enable_tf32()
     torch.backends.cuda.enable_flash_sdp(True)
     torch.backends.cuda.enable_mem_efficient_sdp(True)
     torch._inductor.config.triton.cudagraphs = True

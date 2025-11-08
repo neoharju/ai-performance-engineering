@@ -63,6 +63,7 @@ class OptimizedTritonMemoryBenchmark(Benchmark):
     def __init__(self):
         self.device = resolve_device()
         self.input = None
+        self.input_b = None
         self.output = None
         self.N = 1_000_000
     
@@ -80,6 +81,7 @@ class OptimizedTritonMemoryBenchmark(Benchmark):
         # Enables explicit optimization of memory management
         
         self.input = torch.randn(self.N, device=self.device, dtype=torch.float32)
+        self.input_b = torch.randn(self.N, device=self.device, dtype=torch.float32)
         self.output = torch.empty(self.N, device=self.device, dtype=torch.float32)
         torch.cuda.synchronize()
     
@@ -95,29 +97,24 @@ class OptimizedTritonMemoryBenchmark(Benchmark):
 
         with nvtx_range("optimized_triton_memory", enable=enable_nvtx):
             if TRITON_AVAILABLE:
-                pass
-        # Optimization: Use Triton kernel for efficient memory operations
-        # Triton provides Python-like syntax for CUDA kernel development
-        # Enables explicit optimization of memory access patterns
-        # Blocksize optimization for better GPU utilization
                 grid = lambda meta: (triton.cdiv(self.N, meta['BLOCK_SIZE']),)
                 triton_add_kernel[grid](
                     self.input,
+                    self.input_b,
                     self.output,
                     self.N,
                     BLOCK_SIZE=1024,
                 )
-        # Apply additional operation
-                self.output = self.output * 2.0 + 1.0
-        # Triton kernels enable fine-grained optimization of memory access
             else:
-        # Fallback if Triton not available
-                self.output = self.input * 2.0 + 1.0
+                torch.add(self.input, self.input_b, out=self.output)
+            self.output.mul_(2.0).add_(1.0)
+            torch.cuda.synchronize()
 
     
     def teardown(self) -> None:
         """Teardown: Clean up resources."""
         self.input = None
+        self.input_b = None
         self.output = None
         torch.cuda.empty_cache()
     
@@ -147,7 +144,7 @@ if __name__ == '__main__':
         config=benchmark.get_config()
     )
     result = harness.benchmark(benchmark)
-    print(f"\nOptimized Triton Memory: {result.mean_ms:.3f} ms")
+    print(f"\nOptimized Triton Memory: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")
     if TRITON_AVAILABLE:
         print(" Tip: Triton kernels enable efficient memory access pattern optimization")
     else:

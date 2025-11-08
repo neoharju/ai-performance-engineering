@@ -130,7 +130,7 @@ if __name__ == '__main__':
     result = harness.benchmark(benchmark)
     
     metrics = benchmark.get_roofline_metrics()
-    print(f"\nBaseline GEMM ILP: {result.mean_ms:.3f} ms")
+    print(f"\nBaseline GEMM ILP: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")
     print(f"Matrix size: {benchmark.M}×{benchmark.M}")
     print(f"Arithmetic Intensity: {metrics.get('ai', 0):.2f} FLOP/Byte")
     print(f"FLOPs: {metrics.get('flops', 0):.2e}")

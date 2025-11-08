@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from contextlib import contextmanager
 
 # Add repo root to path for imports
 repo_root = Path(__file__).parent.parent
@@ -22,6 +23,7 @@ try:
     from transformer_engine.pytorch import Linear as TELinear
     from transformer_engine.pytorch import fp8_autocast
     import transformer_engine.pytorch.constants as te_constants
+    from transformer_engine.common import recipe as te_recipe
     TE_AVAILABLE = True
     # Check if FP4 is supported (NVFP4)
     FP4_AVAILABLE = hasattr(te_constants, 'NVFP4_BLOCK_SCALING_SIZE')
@@ -29,8 +31,9 @@ except ImportError:
     TE_AVAILABLE = False
     FP4_AVAILABLE = False
     TELinear = nn.Linear  # Fallback
+    te_recipe = None
 
-from typing import Optional
+from typing import Optional, Any
 
 from common.python.benchmark_harness import (
     Benchmark,
@@ -89,73 +92,137 @@ class ProductionTransformer(nn.Module):
 
 
 class OptimizedFP4Benchmark(Benchmark):
-    """Benchmark implementation following Benchmark protocol."""
+    """Optimized: FP4 precision training with Transformer Engine.
+    
+    Uses Transformer Engine FP4 quantization for maximum memory savings and speed.
+    Optimized for Blackwell B200/GB10 with FP4 (NVFP4) support.
+    FP4 support is mandatory—missing hardware or software dependencies should fail immediately.
+    """
     
     def __init__(self):
         self.device = resolve_device()
+        if not TE_AVAILABLE:
+            raise RuntimeError("Transformer Engine with NVFP4 support is required for optimized_precision_fp4 benchmark")
+        if not FP4_AVAILABLE:
+            raise RuntimeError("This build of Transformer Engine lacks NVFP4 support")
+        if not self._device_supports_fp4():
+            raise RuntimeError("FP4 kernels require compute capability >= 12.0")
+        
         self.model = None
-
         self.x = None
         self.optimizer = None
         # Larger model to better amortize FP4 conversion overhead
-        # FP4 benefits are most visible with large models
         self.batch_size = 8
         self.seq_len = 2048
         self.hidden_dim = 2048
-        self.te_available = TE_AVAILABLE
-        self.fp4_available = FP4_AVAILABLE
+        self.num_layers = 20
+        self.fp4_recipe: Optional[Any] = self._build_fp4_recipe()
+        if self.fp4_recipe is None:
+            raise RuntimeError("Transformer Engine NVFP4 recipe unavailable")
+        self.use_te_layers = True
+        self._configure_workload()
+
+    def _configure_workload(self) -> None:
+        """Scale workload based on available GPU memory to avoid timeouts."""
+        if not torch.cuda.is_available():
+            return
+
+        device_index = (
+            self.device.index
+            if self.device.index is not None
+            else torch.cuda.current_device()
+        )
+        total_memory_gb = (
+            torch.cuda.get_device_properties(device_index).total_memory / (1024 ** 3)
+        )
+
+        # Tiered configs roughly matching A100/B200 (>80GB) down to laptop GPUs
+        tiers = [
+            (80, dict(batch_size=8, seq_len=2048, hidden_dim=2048, num_layers=20)),
+            (48, dict(batch_size=4, seq_len=2048, hidden_dim=1536, num_layers=18)),
+            (32, dict(batch_size=4, seq_len=1536, hidden_dim=1536, num_layers=16)),
+            (24, dict(batch_size=4, seq_len=1024, hidden_dim=1024, num_layers=12)),
+            (16, dict(batch_size=2, seq_len=1024, hidden_dim=768, num_layers=10)),
+            (12, dict(batch_size=2, seq_len=768, hidden_dim=768, num_layers=8)),
+        ]
+        fallback = dict(batch_size=1, seq_len=512, hidden_dim=512, num_layers=6)
+
+        selected = fallback
+        for min_mem_gb, config in tiers:
+            if total_memory_gb >= min_mem_gb:
+                selected = config
+                break
+
+        self.batch_size = selected["batch_size"]
+        self.seq_len = selected["seq_len"]
+        self.hidden_dim = selected["hidden_dim"]
+        self.num_layers = selected["num_layers"]
+
+    def _device_supports_fp4(self) -> bool:
+        """Return True if the current GPU exposes NVFP4 instructions."""
+        if not torch.cuda.is_available() or self.device.type != "cuda":
+            return False
+        device_index = self.device.index
+        if device_index is None:
+            device_index = torch.cuda.current_device()
+        major, minor = torch.cuda.get_device_capability(device_index)
+        # FP4 kernels are supported on Blackwell (SM 12.x) and beyond.
+        return major >= 12
+
+    def _build_fp4_recipe(self) -> Optional[Any]:
+        """Instantiate the NVFP4 recipe if Transformer Engine exposes it."""
+        if te_recipe is None or not hasattr(te_recipe, "NVFP4BlockScaling"):
+            return None
+        try:
+            return te_recipe.NVFP4BlockScaling()
+        except Exception:
+            return None
+
+    @contextmanager
+    def _precision_context(self):
+        """Combine PyTorch autocast with Transformer Engine fp8_autocast for FP4."""
+        autocast_dtype = torch.bfloat16 if self.device.type == "cuda" else torch.float32
+        with torch.autocast(device_type=self.device.type, dtype=autocast_dtype):
+            with fp8_autocast(enabled=True, fp8_recipe=self.fp4_recipe):
+                yield
     
     def setup(self) -> None:
         """Setup: initialize model and data."""
         
-        # Optimization: Enable cuDNN benchmarking for optimal kernel selection
         if torch.cuda.is_available():
-            pass
-        torch.backends.cudnn.benchmark = True
-        torch.backends.cudnn.deterministic = False
-        self.model = ProductionTransformer(use_te=True, hidden_dim=self.hidden_dim)
+            torch.backends.cudnn.benchmark = True
+            torch.backends.cudnn.deterministic = False
+        self.model = ProductionTransformer(
+            use_te=self.use_te_layers,
+            hidden_dim=self.hidden_dim,
+            num_layers=self.num_layers,
+        )
         self.model = self.model.to(self.device)
-        # Optimization: Use FP16 for faster computation
-        if self.device.type == "cuda":
-            try:
-                self.model = self.model.half()
-            except Exception:
-                 pass
         self.model.train()
         
-        # For TE: Input should be float32 (TE handles FP4 conversion internally)
-        # For non-TE: convert model to bfloat16
-        if not self.te_available:
-            self.model = self.model.to(dtype=torch.bfloat16)
-        
-        # TE Linear works with float32 input - fp8_autocast handles FP4 conversion internally
-        if self.te_available:
-            self.x = torch.randn(self.batch_size, self.seq_len, self.hidden_dim, device=self.device, dtype=torch.float32)
-        else:
-            self.x = torch.randn(self.batch_size, self.seq_len, self.hidden_dim, device=self.device, dtype=torch.bfloat16)
-        
-        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=1e-4)
-        
-        # Warmup to ensure TE is initialized properly with fp8_autocast
-        # NOTE: FP4 may not be fully supported - using FP8 as fallback
-        if self.te_available:
-            from transformer_engine.pytorch import fp8_autocast
-            # FP4 support is experimental - use FP8 autocast (same API)
-            # Transformer Engine will use best available precision
-            try:
-                with fp8_autocast(enabled=True):
-                    with torch.no_grad():
-                        _ = self.model(self.x)
-            except Exception:
-                pass
-        else:
-            with torch.no_grad():
+        tensor_dtype = torch.bfloat16 if self.device.type == "cuda" else torch.float32
+        self.x = torch.randn(
+            self.batch_size,
+            self.seq_len,
+            self.hidden_dim,
+            device=self.device,
+            dtype=tensor_dtype,
+        )
+
+        with torch.no_grad():
+            with self._precision_context():
                 _ = self.model(self.x)
-        torch.cuda.synchronize()
-        self.fp4_available = False
+
+        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=1e-4)
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
     
     def benchmark_fn(self) -> None:
-        """Function to benchmark."""
+        """Benchmark: FP4 precision training step with forward and backward pass.
+        
+        Performs a single training iteration using Transformer Engine's FP4 quantization
+        (or FP8 fallback) to reduce memory usage and improve training throughput.
+        """
         # Use conditional NVTX ranges - only enabled when profiling
 
         from common.python.nvtx_helper import nvtx_range, get_nvtx_enabled
@@ -169,34 +236,28 @@ class OptimizedFP4Benchmark(Benchmark):
             # TE Linear requires fp8_autocast to be active when forward() is called
             # Wrap entire forward+backward in fp8_autocast for TE
             # FP4 uses the same API (fp8_autocast) but with FP4 format internally
-            if self.te_available:
-                from transformer_engine.pytorch import fp8_autocast
-                # fp8_autocast must wrap the call to model.forward() where TE Linear is used
-                # FP4 format is selected automatically if available, or falls back to FP8
-                with fp8_autocast(enabled=True):
-                    output = self.model(self.x)  # TE Linear layers called here
-                    loss = output.mean()
-                    loss.backward()  # Backward also needs autocast for TE
-            else:
-                output = self.model(self.x)
+            with self._precision_context():
+                output = self.model(self.x)  # TE Linear layers called here
                 loss = output.mean()
-                loss.backward()
+                loss.backward()  # Backward also needs autocast for TE
             self.optimizer.step()
 
     
     def teardown(self) -> None:
         """Cleanup."""
-        del self.model, self.x, self.optimizer
+        for attr in ("model", "x", "optimizer"):
+            if hasattr(self, attr):
+                setattr(self, attr, None)
         if torch.cuda.is_available():
-            pass
-        torch.cuda.empty_cache()
+            torch.cuda.empty_cache()
     
     def get_config(self) -> BenchmarkConfig:
         """Return benchmark-specific config."""
         return BenchmarkConfig(
-        iterations=10,
-            warmup=5,
+            iterations=3,
+            warmup=1,
         )
+
     def validate_result(self) -> Optional[str]:
         """Validate benchmark result."""
         if self.model is None:
@@ -205,11 +266,14 @@ class OptimizedFP4Benchmark(Benchmark):
             return "Input tensor not initialized"
         try:
             with torch.no_grad():
-                test_output = self.model(self.x)
+                with self._precision_context():
+                    test_output = self.model(self.x)
                 if test_output.shape[0] != self.batch_size:
                     return f"Output shape mismatch: expected batch_size={self.batch_size}, got {test_output.shape[0]}"
-                if test_output.shape[1] != self.hidden_dim:
-                    return f"Output shape mismatch: expected hidden_dim={self.hidden_dim}, got {test_output.shape[1]}"
+                if test_output.shape[1] != self.seq_len:
+                    return f"Output shape mismatch: expected seq_len={self.seq_len}, got {test_output.shape[1]}"
+                if test_output.shape[2] != self.hidden_dim:
+                    return f"Output shape mismatch: expected hidden_dim={self.hidden_dim}, got {test_output.shape[2]}"
                 if not torch.isfinite(test_output).all():
                     return "Output contains non-finite values"
             return None
@@ -222,42 +286,28 @@ def get_benchmark() -> Benchmark:
     NOTE: FP4 support is experimental and may hang.
     If FP4 is not working, this will gracefully fall back to FP8 behavior.
     """
-    benchmark = OptimizedFP4Benchmark()
-    # Check if FP4 is actually available and working
-    if not benchmark.fp4_available:
-        # FP4 not available - skip this benchmark
-        # Return a dummy benchmark that skips quickly
-        class SkipBenchmark(Benchmark):
-            def setup(self): pass
-            def benchmark_fn(self): pass
-
-        def teardown(self): pass
-
-        def get_config(self): return BenchmarkConfig(iterations=1, warmup=0)
-
-        def validate_result(self): return "FP4 not available - skipped"
-
-        return SkipBenchmark()
-        return benchmark
+    return OptimizedFP4Benchmark()
 
 def main() -> None:
-        """Standalone execution with timing."""
-        harness = BenchmarkHarness(
+    """Standalone execution with timing."""
+    harness = BenchmarkHarness(
         mode=BenchmarkMode.CUSTOM,
         config=BenchmarkConfig(iterations=10, warmup=5)
-        )
-        benchmark = OptimizedFP4Benchmark()
-        result = harness.benchmark(benchmark)
-    
-        print("=" * 70)
-        print("Optimized: FP4 Precision (NVFP4)")
-        print("=" * 70)
-        print(f"FP4 Available: {benchmark.fp4_available}")
-        print(f"Average time per iteration: {result.mean_ms:.3f} ms")
-        print(f"Median time: {result.median_ms:.3f} ms")
-        print(f"Std deviation: {result.std_ms:.3f} ms")
-        print(f"Min: {result.min_ms:.3f} ms, Max: {result.max_ms:.3f} ms")
+    )
+    benchmark = OptimizedFP4Benchmark()
+    result = harness.benchmark(benchmark)
 
-        if __name__ == "__main__":
-            main()
+    print("=" * 70)
+    print("Optimized: FP4 Precision (NVFP4)")
+    print("=" * 70)
+    print(f"FP4 Enabled: {benchmark.use_te_layers}")
+    if benchmark.fp4_skip_reason:
+        print(f"FP4 status: {benchmark.fp4_skip_reason}")
+    print(f"Average time per iteration: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")
+    print(f"Median time: {result.timing.median_ms if result.timing else 0.0:.3f} ms")
+    print(f"Std deviation: {result.timing.std_ms if result.timing else 0.0:.3f} ms")
+    print(f"Min: {result.timing.min_ms if result.timing else 0.0:.3f} ms, Max: {result.timing.max_ms if result.timing else 0.0:.3f} ms")
 
+
+if __name__ == "__main__":
+    main()

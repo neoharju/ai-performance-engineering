@@ -38,7 +38,7 @@ def run(indices: torch.Tensor) -> float:
         end_event.record()
         end_event.synchronize()
         
-        return start_event.elapsed_time(end_event)  # Already in ms
+        return float(start_event.elapsed_time(end_event))  # Already in ms
     else:
         # CPU timing
         import time

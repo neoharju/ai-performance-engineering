@@ -8,10 +8,6 @@
 #include <cstdio>
 #include <cstdlib>
 
-#if defined(CUDART_VERSION) && (CUDART_VERSION >= 13000)
-#include "../common/cuda13_teasers.cuh"
-#endif
-
 namespace cg = cooperative_groups;
 
 #define CUDA_CHECK(call)                                                      \
@@ -691,14 +687,6 @@ int main() {
     printf("nsys profile --force-overwrite=true -o dynamic_parallelism ./dynamic_parallelism\n");
     printf("ncu --section LaunchStats --section WarpStateStats ./dynamic_parallelism\n");
     
-#if defined(CUDART_VERSION) && (CUDART_VERSION >= 13000)
-    // CUDA 13 teasers for Blackwell readers.
-    cuda13_teasers::stream_ordered_teaser();
-    cuda13_teasers::tma_teaser();
-#else
-    printf("CUDA 13 teasers require CUDA 13 headers; see later chapters for full demos.\n");
-#endif
-
     return 0;
 }
 

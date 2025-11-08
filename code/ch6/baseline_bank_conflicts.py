@@ -71,6 +71,8 @@ class BaselineBankConflictsBenchmark(Benchmark):
         with nvtx_range("baseline_bank_conflicts", enable=enable_nvtx):
             # Call CUDA extension kernel
             self._extension.bank_conflicts(self.output, self.input)
+            # Synchronize to catch any CUDA errors immediately
+            torch.cuda.synchronize()
 
     
     def teardown(self) -> None:
@@ -86,6 +88,7 @@ class BaselineBankConflictsBenchmark(Benchmark):
             warmup=10,
             enable_memory_tracking=False,
             enable_profiling=False,
+            setup_timeout_seconds=120,  # CUDA extension compilation can take time
         )
     
     def validate_result(self) -> Optional[str]:
@@ -113,4 +116,4 @@ if __name__ == '__main__':
         config=benchmark.get_config()
     )
     result = harness.benchmark(benchmark)
-    print(f"\nBaseline Bank Conflicts (CUDA Extension): {result.mean_ms:.3f} ms")
+    print(f"\nBaseline Bank Conflicts (CUDA Extension): {result.timing.mean_ms if result.timing else 0.0:.3f} ms")

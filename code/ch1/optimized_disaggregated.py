@@ -19,6 +19,7 @@ except ImportError:
 
 from typing import Optional
 
+from common.python.compile_utils import enable_tf32
 from common.python.benchmark_harness import (
     Benchmark,
     BenchmarkConfig,
@@ -57,8 +58,7 @@ class OptimizedDisaggregatedBenchmark(Benchmark):
             torch.backends.cudnn.benchmark = True
             torch.backends.cudnn.deterministic = False
             # Enable TF32 for faster matmul on Ampere+ GPUs
-            torch.backends.cuda.matmul.allow_tf32 = True
-            torch.backends.cudnn.allow_tf32 = True
+            enable_tf32()
         torch.manual_seed(42)
         
         # Optimization: Disaggregated inference
@@ -182,4 +182,4 @@ if __name__ == '__main__':
         config=benchmark.get_config()
     )
     result = harness.benchmark(benchmark)
-    print(f"\nOptimized Disaggregated: {result.mean_ms:.3f} ms")
+    print(f"\nOptimized Disaggregated: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")

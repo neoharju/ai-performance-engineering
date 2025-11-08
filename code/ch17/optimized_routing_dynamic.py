@@ -72,7 +72,6 @@ class OptimizedRoutingBenchmark(Benchmark):
         self.device = resolve_device()
         self.small_model = None
         # Optimization: Compile model for kernel fusion and optimization
-        try:
 
         self.medium_model = None
         self.large_model = None
@@ -187,9 +186,9 @@ def main() -> None:
     baseline_cost = 100
     cost_reduction = baseline_cost / avg_cost
     
-    print(f"Average time: {result.mean_ms:.3f} ms")
-    print(f"Median: {result.median_ms:.3f} ms")
-    print(f"Std: {result.std_ms:.3f} ms")
+    print(f"Average time: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")
+    print(f"Median: {result.timing.median_ms if result.timing else 0.0:.3f} ms")
+    print(f"Std: {result.timing.std_ms if result.timing else 0.0:.3f} ms")
     print(f"Routing distribution:")
     print(f"  Easy requests ({benchmark.easy_batches/50*100:.0f}%): Small model (8 layers)")
     print(f"  Medium requests ({benchmark.medium_batches/50*100:.0f}%): Medium model (16 layers)")

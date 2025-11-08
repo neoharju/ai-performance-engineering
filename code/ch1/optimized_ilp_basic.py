@@ -18,10 +18,12 @@ except ImportError:
 
 from typing import Optional
 
+from common.python.compile_utils import enable_tf32
 from common.python.benchmark_harness import (
     Benchmark,
     BenchmarkConfig,
 )
+from common.python.benchmark_utils import warn_benchmark_scaling
 
 
 def resolve_device() -> torch.device:
@@ -42,8 +44,10 @@ class OptimizedIlpBasicBenchmark(Benchmark):
         self.device = resolve_device()
         self.input = None
         self.output = None
+        # Target workload size for optimal ILP demonstration
+        original_N = 100_000_000  # 100M elements (~400 MB FP32)
+        
         # Scale workload based on available GPU memory
-        # Default: 100M elements (~400 MB FP32) for large GPUs
         # Scale down for smaller GPUs to ensure it fits
         if torch.cuda.is_available():
             total_memory_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
@@ -57,6 +61,15 @@ class OptimizedIlpBasicBenchmark(Benchmark):
                 self.N = 10_000_000  # 10M elements
         else:
             self.N = 100_000_000  # Fallback (shouldn't happen - CUDA required)
+        
+        # Warn if workload was reduced
+        warn_benchmark_scaling(
+            scaling_type="ILP workload size",
+            original_values={"N": original_N},
+            scaled_values={"N": self.N},
+            impact_description="Smaller workloads may not fully demonstrate ILP benefits; speedup ratios may be lower than production-scale",
+            recommendation="For accurate production benchmarks, use GPUs with >=16GB memory"
+        )
     
     
     def setup(self) -> None:
@@ -67,8 +80,7 @@ class OptimizedIlpBasicBenchmark(Benchmark):
             torch.backends.cudnn.benchmark = True
             torch.backends.cudnn.deterministic = False
             # Enable TF32 for faster matmul on Ampere+ GPUs
-            torch.backends.cuda.matmul.allow_tf32 = True
-            torch.backends.cudnn.allow_tf32 = True
+            enable_tf32()
         torch.manual_seed(42)
         # Optimization: Independent operations (high ILP)
         # Multiple independent operations can execute in parallel
@@ -165,4 +177,8 @@ if __name__ == '__main__':
         config=benchmark.get_config()
     )
     result = harness.benchmark(benchmark)
-    print(f"\nOptimized ILP Basic: {result.mean_ms:.3f} ms")
+    timing = result.timing
+    if timing:
+        print(f"\nOptimized ILP Basic: {timing.mean_ms:.3f} ms")
+    else:
+        print("\nOptimized ILP Basic: No timing data available")

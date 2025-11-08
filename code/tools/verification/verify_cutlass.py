@@ -4,6 +4,7 @@ Verify CUTLASS Backend is Working
 
 Quick test to ensure CUTLASS backend is properly configured and functional.
 """
+from common.python import compile_utils as _compile_utils_patch  # noqa: F401
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

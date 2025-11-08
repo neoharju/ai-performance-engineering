@@ -140,8 +140,8 @@ if __name__ == '__main__':
     
     result = harness.benchmark(benchmark)
     print(f"\nBaseline Double Buffering Benchmark Results:")
-    print(f"  Mean time: {result.mean_ms:.3f} ms")
-    print(f"  Std dev: {result.std_ms:.3f} ms")
-    print(f"  Min time: {result.min_ms:.3f} ms")
-    print(f"  Max time: {result.max_ms:.3f} ms")
+    print(f"  Mean time: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")
+    print(f"  Std dev: {result.timing.std_ms if result.timing else 0.0:.3f} ms")
+    print(f"  Min time: {result.timing.min_ms if result.timing else 0.0:.3f} ms")
+    print(f"  Max time: {result.timing.max_ms if result.timing else 0.0:.3f} ms")
 

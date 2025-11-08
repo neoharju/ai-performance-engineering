@@ -18,9 +18,13 @@ if str(repo_root) not in sys.path:
 import torch
 import torch.nn as nn
 
-from common.python.compile_utils import compile_model
-
 from typing import Optional
+
+from ch20.inductor_guard import (
+    disable_inductor_cudagraph_features,
+    restore_inductor_cudagraph_features,
+    InductorCudagraphState,
+)
 
 from common.python.benchmark_harness import (
     Benchmark,
@@ -46,48 +50,60 @@ class OptimizedAutotuningBenchmark(Benchmark):
         self.device = resolve_device()
         self.model = None
         self.input = None
+        self._inductor_cfg_state: InductorCudagraphState = None
     
     def setup(self) -> None:
         """Setup: Initialize model with autotuning."""
         
-        # Optimization: Enable cuDNN benchmarking for optimal kernel selection
-        if torch.cuda.is_available():
-            torch.backends.cudnn.benchmark = True
-            torch.backends.cudnn.deterministic = False
-        torch.manual_seed(42)
-        # Optimization: Autotuning to find optimal parameters
-        # Automatically searches for best kernel configuration
-        
-        self.model = nn.Sequential(
-            nn.Linear(256, 512),
-            nn.ReLU(),
-            nn.Linear(512, 256),
-        )
-        
-        # Optimization: Autotuning enabled
-        # torch.compile with max-autotune mode explores optimal configurations
-        # Searches tile sizes, block sizes, loop unrolling, etc.
-        self.model = self.model.to(self.device)
-        # Optimization: Use FP16 for faster computation
-        if self.device.type == "cuda":
-            try:
-                self.model = self.model.half()
-            except Exception:
-                pass  # Fallback to FP32 if FP16 not supported
-        self.model.eval()
-        # Enable autotuning via torch.compile with optimal mode
-        # This triggers automatic kernel parameter search
-        # Select optimal compile mode based on GPU SM count
-        from common.python.compile_utils import get_optimal_compile_mode
-        compile_mode = get_optimal_compile_mode("max-autotune")
+        self._inductor_cfg_state = disable_inductor_cudagraph_features()
         try:
+            # Optimization: Enable cuDNN benchmarking for optimal kernel selection
+            if torch.cuda.is_available():
+                torch.backends.cudnn.benchmark = True
+                torch.backends.cudnn.deterministic = False
+            torch.manual_seed(42)
+            # Optimization: Autotuning to find optimal parameters
+            # Automatically searches for best kernel configuration
+            
+            self.model = nn.Sequential(
+                nn.Linear(256, 512),
+                nn.ReLU(),
+                nn.Linear(512, 256),
+            )
+            
+            # Optimization: Autotuning enabled
+            # torch.compile with max-autotune mode explores optimal configurations
+            # Searches tile sizes, block sizes, loop unrolling, etc.
+            self.model = self.model.to(self.device)
+            # Optimization: Use FP16 for faster computation - FAIL FAST if not supported
+            if self.device.type != "cuda":
+                raise RuntimeError("CUDA required for optimized_autotuning benchmark")
+            self.model = self.model.half()
+            self.model.eval()
+            # Enable autotuning via torch.compile with optimal mode
+            # This triggers automatic kernel parameter search
+            # Select optimal compile mode based on GPU SM count
+            from common.python.compile_utils import get_optimal_compile_mode
+            compile_mode = get_optimal_compile_mode("max-autotune")
             self.model = torch.compile(self.model, mode=compile_mode, backend="inductor")
+            # Warmup to trigger compilation and catch errors early
+            test_input = torch.randn(4, 32, 256, device=self.device, dtype=torch.float16)
+            for _ in range(3):
+                with torch.no_grad():
+                    _ = self.model(test_input)
+            torch.cuda.synchronize()
+            
+            # Ensure input dtype matches model dtype - FAIL FAST if model has no parameters
+            params = list(self.model.parameters())
+            if not params:
+                raise RuntimeError("Model has no parameters - cannot determine dtype")
+            model_dtype = params[0].dtype
+            self.input = torch.randn(4, 32, 256, device=self.device, dtype=model_dtype)
+            torch.cuda.synchronize()
         except Exception:
-            # Fallback if torch.compile not available
-            self.model = compile_model(self.model, mode=compile_mode)
-        
-        self.input = torch.randn(4, 32, 256, device=self.device)
-        torch.cuda.synchronize()
+            restore_inductor_cudagraph_features(self._inductor_cfg_state)
+            self._inductor_cfg_state = None
+            raise
     
     def benchmark_fn(self) -> None:
         """Benchmark: Operations with autotuned parameters."""
@@ -113,12 +129,15 @@ class OptimizedAutotuningBenchmark(Benchmark):
         self.model = None
         self.input = None
         torch.cuda.empty_cache()
+        restore_inductor_cudagraph_features(self._inductor_cfg_state)
+        self._inductor_cfg_state = None
     
     def get_config(self) -> BenchmarkConfig:
         """Return benchmark configuration."""
         return BenchmarkConfig(
             iterations=10,
             warmup=2,
+            use_subprocess=False,
         )
     
     def validate_result(self) -> Optional[str]:
@@ -148,9 +167,9 @@ def main() -> None:
     print("=" * 70)
     print(f"Optimized: autotuning")
     print("=" * 70)
-    print(f"Average time: {result.mean_ms:.3f} ms")
-    print(f"Median: {result.median_ms:.3f} ms")
-    print(f"Std: {result.std_ms:.3f} ms")
+    print(f"Average time: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")
+    print(f"Median: {result.timing.median_ms if result.timing else 0.0:.3f} ms")
+    print(f"Std: {result.timing.std_ms if result.timing else 0.0:.3f} ms")
 
 
 if __name__ == "__main__":

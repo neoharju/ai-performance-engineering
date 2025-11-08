@@ -5,6 +5,7 @@ Extracts performance metrics from test outputs, NCU reports, Nsys reports,
 PyTorch profiler outputs, and benchmark JSON files.
 """
 
+from common.python import compile_utils as _compile_utils_patch  # noqa: F401
 import csv
 import json
 import re
@@ -214,6 +215,12 @@ def extract_from_benchmark_json(json_path: Path) -> Dict[str, float]:
         fp16_data = data["fp16_compute"]
         if "peak_tflops" in fp16_data:
             metrics["fp16_compute_tflops"] = fp16_data["peak_tflops"]
+    
+    # Extract BF16 compute
+    if "bf16_compute" in data:
+        bf16_data = data["bf16_compute"]
+        if "peak_tflops" in bf16_data:
+            metrics["bf16_compute_tflops"] = bf16_data["peak_tflops"]
     
     # Extract torch.compile speedup
     if "torch_compile" in data:
@@ -447,7 +454,7 @@ def discover_and_extract_all(directory: Path) -> Dict[str, Any]:
     Returns:
         Dictionary with extracted metrics organized by source
     """
-    results = {
+    results: Dict[str, Any] = {
         "test_outputs": {},
         "benchmark": {},
         "ncu": {},

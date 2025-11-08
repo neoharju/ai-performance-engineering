@@ -29,13 +29,13 @@ import torch.nn as nn
 import sys
 from pathlib import Path
 
+from common.python.compile_utils import enable_tf32
+
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-try:
-    torch.set_float32_matmul_precision("high")  # Prefer TF32 tensor cores when available
-except AttributeError:  # pragma: no cover - older PyTorch versions
-    pass
+# Prefer TF32 tensor cores when available using the shared helper.
+enable_tf32()
 
 # Import modules to test
 try:

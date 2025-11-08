@@ -36,6 +36,8 @@ from typing import Iterable, List, Optional
 import torch
 import torch.nn.functional as F
 
+from common.python.compile_utils import enable_tf32
+
 try:
     from torch.nn.attention import flex_attention
     HAS_FLEX = True
@@ -111,8 +113,7 @@ class FlexDecodingModule(torch.nn.Module):
         assert torch.cuda.is_available(), "CUDA required for FlexDecoding demo"
         major, minor = torch.cuda.get_device_capability()
         assert major >= 12, f"Blackwell expected (sm_120); got sm_{major}{minor}"
-        torch.set_float32_matmul_precision("high")
-        torch.backends.cudnn.conv.fp32_precision = "tf32"
+        enable_tf32()
         self.compile_mode = COMPILE_MODE
 
     def _compile(self, pattern: str = "causal") -> None:

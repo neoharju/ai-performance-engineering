@@ -20,6 +20,7 @@ from common.python.benchmark_harness import (
     BenchmarkHarness,
     BenchmarkMode
 )
+from common.python.benchmark_utils import warn_benchmark_scaling
 
 
 def resolve_device() -> torch.device:
@@ -57,13 +58,33 @@ class BaselineTrainingBenchmark(Benchmark):
         self.optimizer = None
         self.criterion = None
         
-        # Larger model to better demonstrate memory savings with checkpointing
-        # Increased layers: more activations stored, bigger memory benefit from checkpointing
-        # Reduced to 40 layers to avoid GPU OOM (50 layers = 75GB params+gradients is too tight)
-        # At 40 layers: ~60GB params+gradients, leaving safe margin for overhead
+        # Target model size for optimal demonstration of checkpointing benefits
+        # More layers = more activations stored = bigger memory benefit from checkpointing
+        original_num_layers = 50  # Target: 50 layers (~75GB params+gradients)
+        
+        # Scale down based on available GPU memory to prevent OOM
+        if torch.cuda.is_available():
+            total_memory_gb = torch.cuda.get_device_properties(0).total_memory / 1e9
+            if total_memory_gb >= 80:  # Large GPU - can use target size
+                self.num_layers = 50
+            elif total_memory_gb >= 60:  # Medium-large GPU
+                self.num_layers = 40  # ~60GB params+gradients
+            else:  # Smaller GPU
+                self.num_layers = 30  # ~45GB params+gradients
+        else:
+            self.num_layers = 40  # Fallback
+        
+        # Warn if model size was reduced
+        warn_benchmark_scaling(
+            scaling_type="Training model size",
+            original_values={"num_layers": original_num_layers},
+            scaled_values={"num_layers": self.num_layers},
+            impact_description="Fewer layers may reduce the memory savings benefit demonstrated by checkpointing; speedup ratios may differ",
+            recommendation="For accurate production benchmarks, use GPUs with >=80GB memory"
+        )
+        
         self.batch_size = 8
         self.hidden_dim = 4096
-        self.num_layers = 40  # Safe size that still shows checkpointing benefits
     
     def setup(self) -> None:
         """Setup: initialize model and data."""
@@ -150,9 +171,9 @@ def main() -> None:
     print(f"Model: {benchmark.num_layers} layers, {benchmark.hidden_dim} hidden dim")
     print(f"Batch: {benchmark.batch_size}")
     print("Mode: Standard (stores all activations)\n")
-    print(f"Average time per iteration: {result.mean_ms:.3f} ms")
-    print(f"Median: {result.median_ms:.3f} ms")
-    print(f"Std: {result.std_ms:.3f} ms")
+    print(f"Average time per iteration: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")
+    print(f"Median: {result.timing.median_ms if result.timing else 0.0:.3f} ms")
+    print(f"Std: {result.timing.std_ms if result.timing else 0.0:.3f} ms")
     print("Status: Standard training (fast but memory-heavy)")
     print("\n Tip: Use gradient checkpointing for 30-50% memory reduction (10-30% slower)")
 
