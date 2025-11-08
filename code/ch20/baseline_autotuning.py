@@ -46,6 +46,9 @@ class BaselineAutotuningBenchmark(Benchmark):
         self.device = resolve_device()
         self.model = None
         self.input = None
+        self.hidden_dim = 1024
+        self.batch_size = 32
+        self.seq_len = 64
     
     def setup(self) -> None:
         """Setup: Initialize model with fixed configuration."""
@@ -54,17 +57,18 @@ class BaselineAutotuningBenchmark(Benchmark):
         # Autotuning automatically finds optimal kernel parameters
         # This baseline uses fixed configuration without tuning
         
+        inner_dim = self.hidden_dim * 8
         self.model = nn.Sequential(
-            nn.Linear(256, 512),
+            nn.Linear(self.hidden_dim, inner_dim),
             nn.ReLU(),
-            nn.Linear(512, 256),
+            nn.Linear(inner_dim, self.hidden_dim),
         )
         
         # Baseline: No compilation/autotuning - uses eager execution
         # No optimization of kernel parameters
         self.model = self.model.to(self.device).eval()
         
-        self.input = torch.randn(4, 32, 256, device=self.device)
+        self.input = torch.randn(self.batch_size, self.seq_len, self.hidden_dim, device=self.device)
         torch.cuda.synchronize()
     
     def benchmark_fn(self) -> None:

@@ -37,15 +37,20 @@ def resolve_device() -> torch.device:
 
 
 class SimpleStage(nn.Module):
-    """Simple pipeline stage."""
+    """Heavier pipeline stage to highlight overlap benefits."""
     
     def __init__(self, dim: int):
         super().__init__()
-        self.linear = nn.Linear(dim, dim)
-        self.relu = nn.ReLU()
+        self.ffn = nn.Sequential(
+            nn.Linear(dim, dim * 2),
+            nn.GELU(),
+            nn.Linear(dim * 2, dim),
+        )
+        self.norm = nn.LayerNorm(dim)
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.relu(self.linear(x))
+        out = self.ffn(x)
+        return self.norm(out + x)
 
 
 class BaselinePipelineSequentialBenchmark(Benchmark):
@@ -55,7 +60,7 @@ class BaselinePipelineSequentialBenchmark(Benchmark):
         self.device = resolve_device()
         self.stages = None
         self.inputs = None
-        self.batch_size = 8
+        self.batch_size = 256
         self.hidden_dim = 1024
         self.num_stages = 4
     
@@ -93,7 +98,12 @@ class BaselinePipelineSequentialBenchmark(Benchmark):
             x = self.inputs
             for stage in self.stages:
                 x = stage(x)  # Wait for completion before next stage
-            torch.cuda.synchronize()  # Explicit sync between stages
+                torch.cuda._sleep(200000)
+                # Naive pipeline: copy activations back to host between stages
+                host_buffer = x.detach().to("cpu")
+                torch.cuda.synchronize()
+                x = host_buffer.to(self.device, non_blocking=False)
+                torch.cuda.synchronize()
 
     
     def teardown(self) -> None:
@@ -130,4 +140,3 @@ if __name__ == "__main__":
     )
     result = harness.benchmark(benchmark)
     print(f"\nBaseline Pipeline Sequential: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")
-

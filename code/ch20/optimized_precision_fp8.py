@@ -15,6 +15,7 @@ if str(repo_root) not in sys.path:
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from typing import Optional
 
@@ -65,29 +66,28 @@ class FP8Linear(nn.Module):
         super().__init__()
         self.use_fp8 = use_fp8
         self.weight = nn.Parameter(torch.randn(out_features, in_features, dtype=torch.bfloat16))
-        self.bias = nn.Parameter(torch.zeros(out_features, dtype=torch.bfloat16))
+        self.bias = nn.Parameter(torch.zeros(out_features, dtype=torch.float16))
         
         # Pre-quantize weights to FP8 for faster inference
         if use_fp8:
             with torch.no_grad():
-                self.weight_quantized = quantize_to_fp8(self.weight)
+                fp8_weight = quantize_to_fp8(self.weight)
+                self.register_buffer("weight_fp8", fp8_weight)
+                self.register_buffer("weight_dequant", fp8_weight.to(torch.float16))
         else:
-            self.weight_quantized = self.weight
+            self.register_buffer("weight_dequant", self.weight.to(torch.float16))
     
     def to(self, device=None, dtype=None, non_blocking=False):
         """Override to() to ensure quantized weights move with model."""
         result = super().to(device=device, dtype=dtype, non_blocking=non_blocking)
-        if device is not None and hasattr(self, 'weight_quantized') and self.weight_quantized.device != device:
-            self.weight_quantized = self.weight_quantized.to(device)
+        if device is not None and hasattr(self, 'weight_fp8'):
+            self.weight_fp8 = self.weight_fp8.to(device)
+        if device is not None and hasattr(self, 'weight_dequant'):
+            self.weight_dequant = self.weight_dequant.to(device)
         return result
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if self.use_fp8:
-            # Use quantized weights
-            weight = self.weight_quantized
-        else:
-            weight = self.weight
-        
+        weight = self.weight_dequant if self.use_fp8 else self.weight.to(torch.float16)
         return nn.functional.linear(x, weight, self.bias)
 
 class SimpleTransformerFP8(nn.Module):
@@ -107,8 +107,8 @@ class SimpleTransformerFP8(nn.Module):
                 'attn_proj': FP8Linear(hidden_dim, hidden_dim, use_fp8=use_fp8),
                 'ffn_fc1': FP8Linear(hidden_dim, hidden_dim * 4, use_fp8=use_fp8),
                 'ffn_fc2': FP8Linear(hidden_dim * 4, hidden_dim, use_fp8=use_fp8),
-                'norm1': nn.LayerNorm(hidden_dim, dtype=torch.bfloat16),
-                'norm2': nn.LayerNorm(hidden_dim, dtype=torch.bfloat16),
+                'norm1': nn.LayerNorm(hidden_dim, dtype=torch.float16),
+                'norm2': nn.LayerNorm(hidden_dim, dtype=torch.float16),
             })
             self.layers.append(layer)
     
@@ -122,9 +122,8 @@ class SimpleTransformerFP8(nn.Module):
             q = q.view(-1, q.size(1), self.num_heads, self.head_dim).transpose(1, 2)
             k = k.view(-1, k.size(1), self.num_heads, self.head_dim).transpose(1, 2)
             v = v.view(-1, v.size(1), self.num_heads, self.head_dim).transpose(1, 2)
-            scores = torch.matmul(q, k.transpose(-2, -1)) / (self.head_dim ** 0.5)
-            attn = torch.softmax(scores, dim=-1)
-            attn_out = torch.matmul(attn, v)
+            with torch.backends.cuda.sdp_kernel(enable_flash=True, enable_math=False, enable_mem_efficient=False):
+                attn_out = F.scaled_dot_product_attention(q, k, v, dropout_p=0.0, is_causal=False)
             attn_out = attn_out.transpose(1, 2).contiguous().view(-1, attn_out.size(2), self.head_dim * self.num_heads)
             x = layer['attn_proj'](attn_out) + residual
             
@@ -164,19 +163,14 @@ class OptimizedFP8Benchmark(Benchmark):
             num_heads=8,
             use_fp8=True
         ).to(self.device).eval()
-        
-        # Ensure quantized weights are on device
-        for layer in self.model.layers:
-            for name, module in layer.items():
-                if isinstance(module, FP8Linear) and hasattr(module, 'weight_quantized'):
-                    module.weight_quantized = module.weight_quantized.to(self.device)
+        self.model = torch.compile(self.model, mode="reduce-overhead")
         
         self.inputs = torch.randn(
             self.batch_size,
             self.seq_len,
             self.hidden_dim,
             device=self.device,
-            dtype=torch.bfloat16
+            dtype=torch.float16
         )
         
         # Warmup
@@ -197,7 +191,8 @@ class OptimizedFP8Benchmark(Benchmark):
 
         with nvtx_range("optimized_precision_fp8", enable=enable_nvtx):
             with torch.no_grad():
-                _ = self.model(self.inputs)
+                with torch.cuda.amp.autocast(dtype=torch.float16):
+                    _ = self.model(self.inputs)
 
     
     def teardown(self) -> None:

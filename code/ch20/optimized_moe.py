@@ -42,21 +42,22 @@ def resolve_device() -> torch.device:
 class MoELayer(nn.Module):
     """Mixture of Experts layer with sparse activation."""
     
-    def __init__(self, hidden_dim: int, num_experts: int = 4, top_k: int = 2):
+    def __init__(self, hidden_dim: int, num_experts: int = 8, top_k: int = 2):
         super().__init__()
         self.hidden_dim = hidden_dim
         self.num_experts = num_experts
         self.top_k = top_k
         
-        # Router: determines which experts to use
+        # Router scores which experts should activate
         self.router = nn.Linear(hidden_dim, num_experts)
         
-        # Multiple expert networks
+        # Expert MLPs operate at a smaller width; only top-k run per token
+        expert_inner = hidden_dim * 2
         self.experts = nn.ModuleList([
             nn.Sequential(
-                nn.Linear(hidden_dim, hidden_dim * 2),
+                nn.Linear(hidden_dim, expert_inner),
                 nn.ReLU(),
-                nn.Linear(hidden_dim * 2, hidden_dim),
+                nn.Linear(expert_inner, hidden_dim),
             )
             for _ in range(num_experts)
         ])
@@ -64,36 +65,35 @@ class MoELayer(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass with sparse expert activation."""
         batch_size, seq_len, hidden_dim = x.shape
+        tokens = x.view(-1, hidden_dim)
         
-        # Flatten for routing
-        x_flat = x.view(-1, hidden_dim)
-        
-        # Router: compute expert weights
-        router_logits = self.router(x_flat)  # (batch*seq, num_experts)
-        
-        # Select top-k experts (sparse activation)
+        router_logits = self.router(tokens)
         top_k_weights, top_k_indices = torch.topk(router_logits, self.top_k, dim=-1)
         top_k_weights = F.softmax(top_k_weights, dim=-1)
         
-        # Initialize output
-        output = torch.zeros_like(x_flat)
+        flat_experts = top_k_indices.reshape(-1)
+        flat_tokens = torch.arange(tokens.size(0), device=tokens.device).repeat_interleave(self.top_k)
+        flat_weights = top_k_weights.reshape(-1)
         
-        # Process with selected experts (sparse activation)
-        for i in range(self.num_experts):
-            # Find inputs that selected this expert
-            expert_mask = (top_k_indices == i).any(dim=-1)
-            if expert_mask.any():
-                expert_input = x_flat[expert_mask]
-                expert_output = self.experts[i](expert_input)
-                
-                # Weight by router confidence
-                expert_weights = top_k_weights[expert_mask]
-                expert_idx_in_topk = (top_k_indices[expert_mask] == i).nonzero(as_tuple=True)[1]
-                weights = expert_weights.gather(1, expert_idx_in_topk.unsqueeze(1)).squeeze(1)
-                
-                output[expert_mask] += expert_output * weights.unsqueeze(1)
+        sorted_experts, sort_idx = torch.sort(flat_experts)
+        flat_tokens = flat_tokens[sort_idx]
+        flat_weights = flat_weights[sort_idx]
+        expert_inputs = tokens[flat_tokens]
         
-        # Reshape back
+        counts = torch.bincount(sorted_experts, minlength=self.num_experts)
+        output = torch.zeros_like(tokens)
+        offset = 0
+        for expert_idx in range(self.num_experts):
+            count = int(counts[expert_idx].item())
+            if count == 0:
+                continue
+            chunk_tokens = expert_inputs[offset:offset + count]
+            chunk_outputs = self.experts[expert_idx](chunk_tokens)
+            weights = flat_weights[offset:offset + count].unsqueeze(1).to(chunk_outputs.dtype)
+            token_ids = flat_tokens[offset:offset + count]
+            output.index_add_(0, token_ids, chunk_outputs * weights)
+            offset += count
+        
         return output.view(batch_size, seq_len, hidden_dim)
 
 class OptimizedMoeBenchmark(Benchmark):
@@ -111,7 +111,11 @@ class OptimizedMoeBenchmark(Benchmark):
         # Optimization: Compile model for kernel fusion and optimization
 
         self.input = None
-        self.hidden_dim = 256
+        self.hidden_dim = 1024
+        self.batch_size = 8
+        self.seq_len = 64
+        self.num_experts = 8
+        self.top_k = 2
         self._inductor_cfg_state: InductorCudagraphState = None
     
     def setup(self) -> None:
@@ -129,7 +133,7 @@ class OptimizedMoeBenchmark(Benchmark):
             # Reduces computation while maintaining model capacity
             
             self.model = nn.Sequential(
-                MoELayer(self.hidden_dim, num_experts=4, top_k=2),  # MoE layer
+                MoELayer(self.hidden_dim, num_experts=self.num_experts, top_k=self.top_k),
                 nn.ReLU(),
                 nn.Linear(self.hidden_dim, self.hidden_dim),
             )
@@ -143,7 +147,7 @@ class OptimizedMoeBenchmark(Benchmark):
             # Compile model for kernel fusion and optimization
             self.model = torch.compile(self.model, mode="reduce-overhead")
             # Warmup to trigger compilation and catch errors early
-            test_input = torch.randn(4, 32, self.hidden_dim, device=self.device, dtype=torch.float16)
+            test_input = torch.randn(self.batch_size, self.seq_len, self.hidden_dim, device=self.device, dtype=torch.float16)
             for _ in range(3):
                 with torch.no_grad():
                     _ = self.model(test_input)
@@ -155,7 +159,7 @@ class OptimizedMoeBenchmark(Benchmark):
             if not params:
                 raise RuntimeError("Model has no parameters - cannot determine dtype")
             input_dtype = params[0].dtype
-            self.input = torch.randn(4, 32, self.hidden_dim, device=self.device, dtype=input_dtype)
+            self.input = torch.randn(self.batch_size, self.seq_len, self.hidden_dim, device=self.device, dtype=input_dtype)
             torch.cuda.synchronize()
         except Exception:
             restore_inductor_cudagraph_features(self._inductor_cfg_state)

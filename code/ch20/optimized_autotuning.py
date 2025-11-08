@@ -50,6 +50,9 @@ class OptimizedAutotuningBenchmark(Benchmark):
         self.device = resolve_device()
         self.model = None
         self.input = None
+        self.hidden_dim = 1024
+        self.batch_size = 32
+        self.seq_len = 64
         self._inductor_cfg_state: InductorCudagraphState = None
     
     def setup(self) -> None:
@@ -65,10 +68,11 @@ class OptimizedAutotuningBenchmark(Benchmark):
             # Optimization: Autotuning to find optimal parameters
             # Automatically searches for best kernel configuration
             
+            inner_dim = self.hidden_dim * 8
             self.model = nn.Sequential(
-                nn.Linear(256, 512),
+                nn.Linear(self.hidden_dim, inner_dim),
                 nn.ReLU(),
-                nn.Linear(512, 256),
+                nn.Linear(inner_dim, self.hidden_dim),
             )
             
             # Optimization: Autotuning enabled
@@ -87,7 +91,7 @@ class OptimizedAutotuningBenchmark(Benchmark):
             compile_mode = get_optimal_compile_mode("max-autotune")
             self.model = torch.compile(self.model, mode=compile_mode, backend="inductor")
             # Warmup to trigger compilation and catch errors early
-            test_input = torch.randn(4, 32, 256, device=self.device, dtype=torch.float16)
+            test_input = torch.randn(self.batch_size, self.seq_len, self.hidden_dim, device=self.device, dtype=torch.float16)
             for _ in range(3):
                 with torch.no_grad():
                     _ = self.model(test_input)
@@ -98,7 +102,7 @@ class OptimizedAutotuningBenchmark(Benchmark):
             if not params:
                 raise RuntimeError("Model has no parameters - cannot determine dtype")
             model_dtype = params[0].dtype
-            self.input = torch.randn(4, 32, 256, device=self.device, dtype=model_dtype)
+            self.input = torch.randn(self.batch_size, self.seq_len, self.hidden_dim, device=self.device, dtype=model_dtype)
             torch.cuda.synchronize()
         except Exception:
             restore_inductor_cudagraph_features(self._inductor_cfg_state)

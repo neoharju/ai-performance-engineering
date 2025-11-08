@@ -1,7 +1,7 @@
-"""optimized_training_distributed.py - Distributed training optimization (optimized).
+"""optimized_training_distributed.py - Optimized training loop (optimized).
 
-Multi-GPU distributed training using DDP.
-Scales training across multiple GPUs for better throughput.
+Uses fused AdamW, Ampere mixed precision, and compilation to simulate
+high-throughput training even on a single GPU.
 
 Implements Benchmark protocol for harness integration.
 """
@@ -9,7 +9,6 @@ Implements Benchmark protocol for harness integration.
 from __future__ import annotations
 
 import sys
-import os
 from pathlib import Path
 
 repo_root = Path(__file__).parent.parent
@@ -18,18 +17,6 @@ if str(repo_root) not in sys.path:
 
 import torch
 import torch.nn as nn
-import torch.distributed as dist
-
-try:
-    from distributed_helper import setup_single_gpu_env
-except ImportError:
-    def setup_single_gpu_env():
-        if "RANK" not in os.environ:
-            os.environ.setdefault("RANK", "0")
-            os.environ.setdefault("WORLD_SIZE", "1")
-            os.environ.setdefault("MASTER_ADDR", "localhost")
-            os.environ.setdefault("MASTER_PORT", "29500")
-            os.environ.setdefault("LOCAL_RANK", "0")
 
 from typing import Optional
 
@@ -61,93 +48,68 @@ class SimpleModel(nn.Module):
         return x
 
 class OptimizedTrainingDistributedBenchmark(Benchmark):
-    """Distributed training optimization - multi-GPU scaling."""
+    """Optimized training loop leveraging AMP, fused optimizers, and compilation."""
     
     def __init__(self):
         self.device = resolve_device()
         self.model = None
-        # Optimization: Compile model for kernel fusion and optimization
-
-        # Optimization: Compile model for kernel fusion and optimization
-
         self.inputs = None
         self.targets = None
         self.optimizer = None
         self.criterion = None
-        self.batch_size = 16  # Larger effective batch with multiple GPUs
-        self.hidden_dim = 1024
-        self.rank = 0
-        self.world_size = 1
-        self.initialized = False
+        self.scaler = None
+        self.batch_size = 8
+        self.hidden_dim = 4096
     
     def setup(self) -> None:
-        """Setup: Initialize distributed model and data."""
-        
-        # Optimization: Enable cuDNN benchmarking for optimal kernel selection
+        """Setup: Initialize optimized single-GPU training stack."""
         if torch.cuda.is_available():
             torch.backends.cudnn.benchmark = True
             torch.backends.cudnn.deterministic = False
-        setup_single_gpu_env()
-        
-        if not dist.is_initialized():
-            dist.init_process_group(backend="nccl", init_method="env://")
-            self.initialized = True
-        
-        self.rank = dist.get_rank()
-        self.world_size = dist.get_world_size()
-        torch.cuda.set_device(0)
-        
         torch.manual_seed(42)
         
-        # Distributed model (simulated multi-GPU with DDP)
-        model = SimpleModel(hidden_dim=self.hidden_dim).to(self.device).half().train()
+        base_model = SimpleModel(hidden_dim=self.hidden_dim).to(self.device).half().train()
+        self.model = torch.compile(base_model, mode="reduce-overhead")
         
-        if self.world_size > 1:
-            self.model = nn.parallel.DistributedDataParallel(
-                model,
-                device_ids=[self.device.index] if self.device.type == "cuda" else None,
-            )
-        else:
-            # Single GPU: simulate distributed benefits with larger batch
-            self.model = model
-        
-        # Larger effective batch size with distributed training
-        effective_batch = self.batch_size * max(1, self.world_size)
         self.inputs = torch.randn(self.batch_size, self.hidden_dim, device=self.device, dtype=torch.float16)
         self.targets = torch.randn(self.batch_size, self.hidden_dim, device=self.device, dtype=torch.float16)
-        self.optimizer = torch.optim.SGD(self.model.parameters(), lr=0.01)
+        try:
+            self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=0.01, fused=True)
+        except TypeError:
+            self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=0.01)
         self.criterion = nn.MSELoss()
+        self.scaler = torch.cuda.amp.GradScaler(enabled=True)
         
-        # Warmup
         for _ in range(3):
-            self.optimizer.zero_grad()
-            _ = self.model(self.inputs)
+            self.optimizer.zero_grad(set_to_none=True)
+            with torch.cuda.amp.autocast(dtype=torch.float16):
+                outputs = self.model(self.inputs)
+                loss = self.criterion(outputs, self.targets)
+            self.scaler.scale(loss).backward()
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
         torch.cuda.synchronize()
     
     def benchmark_fn(self) -> None:
-        """Function to benchmark - distributed training."""
-        # Use conditional NVTX ranges - only enabled when profiling
-
+        """Function to benchmark - optimized training."""
         from common.python.nvtx_helper import nvtx_range, get_nvtx_enabled
 
         config = self.get_config()
-
         enable_nvtx = get_nvtx_enabled(config) if config else False
 
         with nvtx_range("optimized_training_distributed", enable=enable_nvtx):
-            self.optimizer.zero_grad()
-            outputs = self.model(self.inputs)
-            loss = self.criterion(outputs, self.targets)
-            loss.backward()
-            # DDP handles gradient synchronization automatically
-            self.optimizer.step()
+            self.optimizer.zero_grad(set_to_none=True)
+            with torch.cuda.amp.autocast(dtype=torch.float16):
+                outputs = self.model(self.inputs)
+                loss = self.criterion(outputs, self.targets)
+            self.scaler.scale(loss).backward()
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
 
     
     def teardown(self) -> None:
         """Cleanup."""
-        if dist.is_initialized() and self.initialized:
-            dist.destroy_process_group()
-        del self.model, self.inputs, self.targets, self.optimizer, self.criterion
+        del self.model, self.inputs, self.targets, self.optimizer, self.criterion, self.scaler
         torch.cuda.empty_cache()
     
     def get_config(self) -> BenchmarkConfig:
@@ -181,4 +143,3 @@ if __name__ == "__main__":
         print(f"\nOptimized Distributed Training: {timing.mean_ms:.3f} ms")
     else:
         print("No timing data available")
-

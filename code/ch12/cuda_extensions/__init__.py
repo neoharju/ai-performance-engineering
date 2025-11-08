@@ -46,7 +46,7 @@ def load_kernel_fusion_extension():
                 sources=[str(cuda_source)],
                 extra_cuda_cflags=cuda_flags,
                 extra_ldflags=list(NVTX_LDFLAGS),
-                verbose=True,
+                verbose=False,
                 build_directory=str(build_dir),
             )
         except Exception as e:

@@ -65,21 +65,25 @@ class BaselineInferenceMonolithicBenchmark(Benchmark):
     def __init__(self):
         self.device = resolve_device()
         self.model = None
-        self.prompt = None
+        self.prompts: list[torch.Tensor] = []
         self.hidden_dim = 1024
         self.prompt_len = 512
         self.decode_steps = 10
+        self.num_requests = 4
     
     def setup(self) -> None:
         """Setup: Initialize model and prompt."""
         torch.manual_seed(42)
         
         self.model = SimpleTransformer(hidden_dim=self.hidden_dim, num_layers=6).to(self.device).half().eval()
-        self.prompt = torch.randn(1, self.prompt_len, self.hidden_dim, device=self.device, dtype=torch.float16)
+        self.prompts = [
+            torch.randn(1, self.prompt_len, self.hidden_dim, device=self.device, dtype=torch.float16)
+            for _ in range(self.num_requests)
+        ]
         
         # Warmup
         with torch.no_grad():
-            _ = self.model(self.prompt)
+            _ = self.model(self.prompts[0])
         torch.cuda.synchronize()
     
     def benchmark_fn(self) -> None:
@@ -95,22 +99,17 @@ class BaselineInferenceMonolithicBenchmark(Benchmark):
 
         with nvtx_range("baseline_inference_monolithic", enable=enable_nvtx):
             with torch.no_grad():
-                # Monolithic: prefill and decode on same GPU sequentially
-                # 1. Prefill phase (process entire prompt)
-                prefill_output = self.model(self.prompt)
-                
-                # 2. Decode phase (generate tokens one by one)
-                # Use last token from prefill as starting point
-                current_token = prefill_output[:, -1:, :]
-                for _ in range(self.decode_steps):
-                    # Generate next token
-                    next_token = self.model(current_token)
-                    current_token = next_token[:, -1:, :]
+                # Monolithic: process each prompt sequentially on same GPU
+                for prompt in self.prompts:
+                    prefill_output = self.model(prompt)
+                    current_token = prefill_output[:, -1:, :]
+                    for _ in range(self.decode_steps):
+                        current_token = self.model(current_token)
 
     
     def teardown(self) -> None:
         """Cleanup."""
-        del self.model, self.prompt
+        del self.model, self.prompts
         torch.cuda.empty_cache()
     
     def get_config(self) -> BenchmarkConfig:
@@ -142,4 +141,3 @@ if __name__ == "__main__":
     )
     result = harness.benchmark(benchmark)
     print(f"\nBaseline Monolithic Inference: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")
-

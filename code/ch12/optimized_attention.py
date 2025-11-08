@@ -41,12 +41,8 @@ class OptimizedAttentionBenchmark(Benchmark):
     def __init__(self):
         self.device = resolve_device()
         self.model = None
-        # Optimization: Compile model for kernel fusion and optimization
-
-        # Optimization: Compile model for kernel fusion and optimization
-
         self.input = None
-        self.graph = None
+        self._graph_callable = None
     
     def setup(self) -> None:
         """Setup: Initialize attention model with CUDA graphs."""
@@ -69,13 +65,20 @@ class OptimizedAttentionBenchmark(Benchmark):
         # Attention: prepare input for CUDA graph capture
         self.input = torch.randn(4, 128, hidden_dim, device=self.device)
         
-        # CUDA graphs: capture attention computation
-        # Attention: capture kernels into CUDA graph
-        self.graph = torch.cuda.CUDAGraph()
-        with torch.cuda.graph(self.graph):
-            with torch.no_grad():
-                _ = self.model(self.input, self.input, self.input)
-        
+        # CUDA graphs: capture attention computation via make_graphed_callables
+        if hasattr(torch.cuda, "make_graphed_callables"):
+            try:
+                self._graph_callable = torch.cuda.make_graphed_callables(
+                    self.model, (self.input, self.input, self.input)
+                )
+            except RuntimeError as exc:
+                raise RuntimeError(
+                    "Failed to create graphed callable for optimized attention. "
+                    "Ensure CUDA graphs are supported on this platform."
+                ) from exc
+        else:
+            # Fallback to eager execution if graphs are unavailable
+            self._graph_callable = None
         torch.cuda.synchronize()
     
     def benchmark_fn(self) -> None:
@@ -90,15 +93,11 @@ class OptimizedAttentionBenchmark(Benchmark):
 
         with nvtx_range("optimized_attention", enable=enable_nvtx):
             with torch.no_grad():
-                # Optimization: Attention with CUDA graphs
-                # Attention: replay captured kernels (low overhead)
-                # CUDA graphs: reduces kernel launch overhead
-                self.graph.replay()
-                
-                # Optimization: CUDA graphs benefits for attention
-                # - Reduced kernel launch overhead
-                # - Faster attention computation
-                # - Better performance through graph replay
+                if self._graph_callable is not None:
+                    # CUDA graphs replay path
+                    _ = self._graph_callable(self.input, self.input, self.input)
+                else:
+                    _ = self.model(self.input, self.input, self.input)[0]
                 _ = self.input.sum()  # Use input for validation
 
     
@@ -106,7 +105,7 @@ class OptimizedAttentionBenchmark(Benchmark):
         """Teardown: Clean up resources."""
         self.model = None
         self.input = None
-        self.graph = None
+        self._graph_callable = None
         torch.cuda.empty_cache()
     
     def get_config(self) -> BenchmarkConfig:
@@ -148,4 +147,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

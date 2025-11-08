@@ -210,41 +210,41 @@ def warn_benchmark_scaling(
         return  # No scaling occurred, no warning needed
     
     # Build warning message
-    print("\n" + "!" * 80)
-    print(f"⚠️  WARNING: {scaling_type} has been REDUCED to prevent OOM (Out of Memory) kills")
-    print("!" * 80)
-    
-    # Show original vs scaled values
-    print("   Original values:")
+    lines = [
+        "\n" + "!" * 80,
+        f"⚠️  WARNING: {scaling_type} has been REDUCED to prevent OOM (Out of Memory) kills",
+        "!" * 80,
+        "   Original values:",
+    ]
     for key, value in original_values.items():
-        print(f"      {key}: {value}")
+        lines.append(f"      {key}: {value}")
     
-    print("   Using scaled values:")
+    lines.append("   Using scaled values:")
     for key, value in scaled_values.items():
         if key in original_values:
             orig_val = original_values[key]
             if isinstance(orig_val, (int, float)) and isinstance(value, (int, float)):
                 if value < orig_val:
-                    print(f"      {key}: {value} (reduced from {orig_val})")
+                    lines.append(f"      {key}: {value} (reduced from {orig_val})")
                 else:
-                    print(f"      {key}: {value}")
+                    lines.append(f"      {key}: {value}")
             else:
-                print(f"      {key}: {value}")
+                lines.append(f"      {key}: {value}")
         else:
-            print(f"      {key}: {value}")
+            lines.append(f"      {key}: {value}")
     
     # Impact description
-    print("\n   ⚠️  IMPORTANT: This scaling may affect measured speedup of optimizations!")
+    lines.append("\n   ⚠️  IMPORTANT: This scaling may affect measured speedup of optimizations!")
     if impact_description:
-        print(f"      - {impact_description}")
+        lines.append(f"      - {impact_description}")
     else:
-        print("      - Smaller workloads may not fully demonstrate optimization benefits")
-        print("      - Speedup ratios may differ from production-scale workloads")
+        lines.append("      - Smaller workloads may not fully demonstrate optimization benefits")
+        lines.append("      - Speedup ratios may differ from production-scale workloads")
     
     if recommendation:
-        print(f"      - {recommendation}")
+        lines.append(f"      - {recommendation}")
     else:
-        print("      - For accurate production benchmarks, use larger GPUs or reduce batch sizes manually")
+        lines.append("      - For accurate production benchmarks, use larger GPUs or reduce batch sizes manually")
     
-    print("!" * 80 + "\n")
-
+    lines.append("!" * 80 + "\n")
+    logger.warning("\n".join(lines))

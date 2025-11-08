@@ -37,15 +37,20 @@ def resolve_device() -> torch.device:
 
 
 class SimpleStage(nn.Module):
-    """Simple pipeline stage."""
+    """Heavier pipeline stage to highlight overlap benefits."""
     
     def __init__(self, dim: int):
         super().__init__()
-        self.linear = nn.Linear(dim, dim)
-        self.relu = nn.ReLU()
+        self.ffn = nn.Sequential(
+            nn.Linear(dim, dim * 2),
+            nn.GELU(),
+            nn.Linear(dim * 2, dim),
+        )
+        self.norm = nn.LayerNorm(dim)
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.relu(self.linear(x))
+        out = self.ffn(x)
+        return self.norm(out + x)
 
 
 class OptimizedPipelineOverlapBenchmark(Benchmark):
@@ -54,73 +59,83 @@ class OptimizedPipelineOverlapBenchmark(Benchmark):
     def __init__(self):
         self.device = resolve_device()
         self.stages = None
+        self.stage_streams = None
         self.inputs = None
-        self.streams = None
-        self.batch_size = 8
+        self.batch_size = 256
         self.hidden_dim = 1024
         self.num_stages = 4
+        self.num_micro_batches = 8
     
     def setup(self) -> None:
         """Setup: Initialize pipeline stages and streams."""
         
-        # Optimization: Enable cuDNN benchmarking for optimal kernel selection
         if torch.cuda.is_available():
             torch.backends.cudnn.benchmark = True
             torch.backends.cudnn.deterministic = False
         torch.manual_seed(42)
         
-        # Pipeline stages
-        self.stages = nn.ModuleList([
-            SimpleStage(self.hidden_dim).to(self.device).half()
-            for _ in range(self.num_stages)
-        ]).eval()
+        self.stages = nn.ModuleList(
+            [SimpleStage(self.hidden_dim).to(self.device).half() for _ in range(self.num_stages)]
+        ).eval()
+        self.stage_streams = [torch.cuda.Stream() for _ in range(self.num_stages)]
         
-        self.inputs = torch.randn(self.batch_size, self.hidden_dim, device=self.device, dtype=torch.float16)
+        self.inputs = torch.randn(
+            self.batch_size, self.hidden_dim, device=self.device, dtype=torch.float16
+        )
         
-        # Create streams for each stage to enable overlap
-        self.streams = [torch.cuda.Stream() for _ in range(self.num_stages)]
-        
-        # Warmup
-        x = self.inputs
-        for stage in self.stages:
-            x = stage(x)
+        # Warmup each stage individually
+        data = self.inputs
+        with torch.no_grad():
+            for stage in self.stages:
+                data = stage(data)
         torch.cuda.synchronize()
     
     def benchmark_fn(self) -> None:
         """Function to benchmark - pipeline with overlap."""
-        # Use conditional NVTX ranges - only enabled when profiling
-
         from common.python.nvtx_helper import nvtx_range, get_nvtx_enabled
 
         config = self.get_config()
-
         enable_nvtx = get_nvtx_enabled(config) if config else False
 
-
         with nvtx_range("optimized_pipeline_overlap", enable=enable_nvtx):
-            # Pipeline overlap: stages execute concurrently
-            # Split batch across stages for overlap
-            batch_per_stage = self.batch_size // self.num_stages
-            
-            # Launch stages on different streams
-            outputs = []
-            for i, stage in enumerate(self.stages):
-                with torch.cuda.stream(self.streams[i]):
-                    # Process subset of batch on this stream
-                    start_idx = i * batch_per_stage
-                    end_idx = start_idx + batch_per_stage if i < self.num_stages - 1 else self.batch_size
-                    stage_input = self.inputs[start_idx:end_idx]
-                    stage_output = stage(stage_input)
-                    outputs.append(stage_output)
-            
-            # Synchronize all streams
-            for stream in self.streams:
-                stream.synchronize()
+            micro_batches = list(self.inputs.chunk(self.num_micro_batches))
+            with torch.no_grad():
+                self._run_pipeline(micro_batches)
+            torch.cuda.synchronize()
+
+    def _run_pipeline(self, micro_batches: list[torch.Tensor]) -> None:
+        if self.stage_streams is None or self.stages is None:
+            raise RuntimeError("Pipeline stages not initialized")
+        num_micro = len(micro_batches)
+        ready_events = [
+            [torch.cuda.Event(blocking=False) for _ in range(num_micro)]
+            for _ in range(self.num_stages)
+        ]
+        activations = [dict() for _ in range(self.num_stages)]
+        total_steps = num_micro + self.num_stages - 1
+        for step in range(total_steps):
+            for stage_idx in range(self.num_stages):
+                micro_idx = step - stage_idx
+                if micro_idx < 0 or micro_idx >= num_micro:
+                    continue
+                stream = self.stage_streams[stage_idx]
+                with torch.cuda.stream(stream):
+                    if stage_idx == 0:
+                        tensor = micro_batches[micro_idx]
+                    else:
+                        stream.wait_event(ready_events[stage_idx - 1][micro_idx])
+                        tensor = activations[stage_idx - 1].pop(micro_idx)
+                    tensor = self.stages[stage_idx](tensor)
+                    activations[stage_idx][micro_idx] = tensor
+                    ready_events[stage_idx][micro_idx].record(stream)
+        for ev in ready_events[-1]:
+            ev.synchronize()
+        activations[-1].clear()
 
     
     def teardown(self) -> None:
         """Cleanup."""
-        del self.stages, self.inputs, self.streams
+        del self.stages, self.stage_streams, self.inputs
         torch.cuda.empty_cache()
     
     def get_config(self) -> BenchmarkConfig:
@@ -156,4 +171,3 @@ if __name__ == "__main__":
         print(f"\nOptimized Pipeline Overlap: {timing.mean_ms:.3f} ms")
     else:
         print("No timing data available")
-

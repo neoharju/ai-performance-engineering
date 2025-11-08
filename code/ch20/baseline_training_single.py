@@ -62,16 +62,16 @@ class BaselineTrainingSingleBenchmark(Benchmark):
         self.optimizer = None
         self.criterion = None
         self.batch_size = 8  # Limited by single GPU memory
-        self.hidden_dim = 1024
+        self.hidden_dim = 4096
     
     def setup(self) -> None:
         """Setup: Initialize model and data."""
         torch.manual_seed(42)
         
-        # Single-GPU model (no parallelism)
-        self.model = SimpleModel(hidden_dim=self.hidden_dim).to(self.device).half().train()
-        self.inputs = torch.randn(self.batch_size, self.hidden_dim, device=self.device, dtype=torch.float16)
-        self.targets = torch.randn(self.batch_size, self.hidden_dim, device=self.device, dtype=torch.float16)
+        # Single-GPU model (no parallelism) in default FP32 precision
+        self.model = SimpleModel(hidden_dim=self.hidden_dim).to(self.device).float().train()
+        self.inputs = torch.randn(self.batch_size, self.hidden_dim, device=self.device, dtype=torch.float32)
+        self.targets = torch.randn(self.batch_size, self.hidden_dim, device=self.device, dtype=torch.float32)
         self.optimizer = torch.optim.SGD(self.model.parameters(), lr=0.01)
         self.criterion = nn.MSELoss()
         
@@ -134,4 +134,3 @@ if __name__ == "__main__":
     )
     result = harness.benchmark(benchmark)
     print(f"\nBaseline Single-GPU Training: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")
-

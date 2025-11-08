@@ -58,7 +58,7 @@ class BaselineBatchingStaticBenchmark(Benchmark):
         self.device = resolve_device()
         self.model = None
         self.request_queue = None
-        self.batch_size = 8  # Must wait for full batch
+        self.batch_size = 64  # Must wait for full batch
         self.hidden_dim = 1024
     
     def setup(self) -> None:
@@ -71,7 +71,9 @@ class BaselineBatchingStaticBenchmark(Benchmark):
         # Static batching: must wait until batch_size requests arrive
         self.request_queue = []
         for i in range(self.batch_size):
-            seq_len = 64 + (i * 8)  # Different lengths: 64, 72, 80, ...
+            base = 64 + (i % 16) * 8
+            burst = (i // 16) * 32
+            seq_len = base + burst
             x = torch.randn(1, seq_len, self.hidden_dim, device=self.device, dtype=torch.float16)
             self.request_queue.append(x)
         
@@ -162,4 +164,3 @@ if __name__ == "__main__":
     )
     result = harness.benchmark(benchmark)
     print(f"\nBaseline Static Batching: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")
-

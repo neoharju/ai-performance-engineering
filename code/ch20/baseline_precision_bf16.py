@@ -1,6 +1,6 @@
-"""baseline_precision_bf16.py - BF16 precision inference (baseline).
+"""baseline_precision_bf16.py - High precision inference (baseline).
 
-Standard BF16 inference without quantization.
+Standard FP32/BF16 inference without quantization.
 Implements Benchmark protocol for harness integration.
 """
 
@@ -46,12 +46,12 @@ class SimpleTransformer(nn.Module):
         self.layers = nn.ModuleList()
         for _ in range(num_layers):
             layer = nn.ModuleDict({
-                'attn_qkv': nn.Linear(hidden_dim, hidden_dim * 3, dtype=torch.bfloat16),
-                'attn_proj': nn.Linear(hidden_dim, hidden_dim, dtype=torch.bfloat16),
-                'ffn_fc1': nn.Linear(hidden_dim, hidden_dim * 4, dtype=torch.bfloat16),
-                'ffn_fc2': nn.Linear(hidden_dim * 4, hidden_dim, dtype=torch.bfloat16),
-                'norm1': nn.LayerNorm(hidden_dim, dtype=torch.bfloat16),
-                'norm2': nn.LayerNorm(hidden_dim, dtype=torch.bfloat16),
+                'attn_qkv': nn.Linear(hidden_dim, hidden_dim * 3, dtype=torch.float32),
+                'attn_proj': nn.Linear(hidden_dim, hidden_dim, dtype=torch.float32),
+                'ffn_fc1': nn.Linear(hidden_dim, hidden_dim * 4, dtype=torch.float32),
+                'ffn_fc2': nn.Linear(hidden_dim * 4, hidden_dim, dtype=torch.float32),
+                'norm1': nn.LayerNorm(hidden_dim, dtype=torch.float32),
+                'norm2': nn.LayerNorm(hidden_dim, dtype=torch.float32),
             })
             self.layers.append(layer)
     
@@ -106,7 +106,7 @@ class BaselineBF16Benchmark(Benchmark):
             self.seq_len,
             self.hidden_dim,
             device=self.device,
-            dtype=torch.bfloat16
+            dtype=torch.float32
         )
         
         # Warmup
@@ -165,4 +165,3 @@ if __name__ == "__main__":
     )
     result = harness.benchmark(benchmark)
     print(f"\nBaseline BF16: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")
-

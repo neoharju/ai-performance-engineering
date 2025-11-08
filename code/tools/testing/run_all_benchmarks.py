@@ -156,6 +156,17 @@ def extract_from_pytorch_trace(trace_path: Path) -> Dict[str, float]:
     return metrics
 
 
+PROOF_OF_BENEFIT_REQUIREMENTS: Dict[str, Dict[str, float]] = {
+    "ch20": {
+        "integrated": 1.05,
+        "kv": 1.05,
+        "pipeline": 1.05,
+        "precision": 1.05,
+        "training": 1.05,
+    },
+}
+
+
 def format_time_ms(time_ms: float) -> str:
     """Format time in milliseconds with adaptive precision.
     
@@ -1642,6 +1653,27 @@ def test_chapter(chapter_dir: Path, enable_profiling: bool = False, smoke_test: 
                 if cold_start:
                     reset_gpu_state()
         
+        required_speedup = PROOF_OF_BENEFIT_REQUIREMENTS.get(chapter_name, {}).get(example_name)
+        if (
+            required_speedup is not None
+            and result_entry.get('baseline_time_ms') is not None
+        ):
+            result_entry['required_speedup'] = required_speedup
+            if result_entry['best_speedup'] < required_speedup:
+                msg = (
+                    f"Proof-of-benefit requirement not met "
+                    f"({result_entry['best_speedup']:.2f}x < {required_speedup:.2f}x)"
+                )
+                logger.error(f"    ❌ {msg}")
+                result_entry['status'] = 'failed'
+                result_entry['error'] = msg
+                failed += 1
+                benchmark_results.append(result_entry)
+                reset_cuda_state()
+                if cold_start:
+                    reset_gpu_state()
+                continue
+
         if result_entry['status'] == 'skipped':
             # Already handled - distributed benchmark skipped
             pass

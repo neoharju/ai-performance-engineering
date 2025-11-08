@@ -40,8 +40,8 @@ class OptimizedCudaGraphsBenchmark(Benchmark):
         self.device = resolve_device()
         self.model = None
         self.input_data = None
-        self.graph = None
         self.static_input = None
+        self._graph_callable = None
         self.batch_size = 8
     
     def setup(self) -> None:
@@ -67,11 +67,17 @@ class OptimizedCudaGraphsBenchmark(Benchmark):
         # Create static input for graph capture
         self.static_input = torch.randn(self.batch_size, 256, device=self.device)
         
-        # Capture CUDA graph
-        self.graph = torch.cuda.CUDAGraph()
-        with torch.cuda.graph(self.graph):
-            with torch.no_grad():
-                _ = self.model(self.static_input)
+        if hasattr(torch.cuda, "make_graphed_callables"):
+            try:
+                self._graph_callable = torch.cuda.make_graphed_callables(
+                    self.model, (self.static_input,)
+                )
+            except RuntimeError as exc:
+                raise RuntimeError(
+                    "Failed to capture CUDA graph for optimized CUDA graphs benchmark."
+                ) from exc
+        else:
+            self._graph_callable = None
         
         # Create input for actual execution
         self.input_data = torch.randn(self.batch_size, 256, device=self.device)
@@ -89,8 +95,10 @@ class OptimizedCudaGraphsBenchmark(Benchmark):
         with nvtx_range("optimized_cuda_graphs", enable=enable_nvtx):
             # Copy input to static input buffer
             self.static_input.copy_(self.input_data)
-            # Replay graph
-            self.graph.replay()
+            if self._graph_callable is not None:
+                self._graph_callable(self.static_input)
+            else:
+                _ = self.model(self.static_input)
         torch.cuda.synchronize()
     
     def teardown(self) -> None:
@@ -98,7 +106,7 @@ class OptimizedCudaGraphsBenchmark(Benchmark):
         self.model = None
         self.input_data = None
         self.static_input = None
-        self.graph = None
+        self._graph_callable = None
         torch.cuda.empty_cache()
     
     def get_config(self) -> BenchmarkConfig:
@@ -112,8 +120,8 @@ class OptimizedCudaGraphsBenchmark(Benchmark):
         """Validate benchmark result."""
         if self.model is None:
             return "Model not initialized"
-        if self.graph is None:
-            return "CUDA graph not initialized"
+        if self._graph_callable is None:
+            return "CUDA graph callable not initialized"
         return None
 
 
@@ -132,4 +140,3 @@ if __name__ == '__main__':
     )
     result = harness.benchmark(benchmark)
     print(result)
-

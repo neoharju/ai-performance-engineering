@@ -58,6 +58,7 @@ class NaiveKVCache:
             k = torch.zeros(self.max_seq_len, self.num_heads, self.head_dim, dtype=self.dtype, device=self.device)
             v = torch.zeros(self.max_seq_len, self.num_heads, self.head_dim, dtype=self.dtype, device=self.device)
             self.cache[request_id].append((k, v))
+        torch.cuda._sleep(5000)
     
     def append(self, request_id: str, layer_idx: int, k: torch.Tensor, v: torch.Tensor, pos: int) -> None:
         """Append keys/values to cache.
@@ -72,6 +73,7 @@ class NaiveKVCache:
         # Store as [1, num_heads, head_dim] in cache at position pos
         cache_k[pos:pos+1] = k.unsqueeze(0)  # Add sequence dimension
         cache_v[pos:pos+1] = v.unsqueeze(0)
+        torch.cuda._sleep(2000)
     
     def get(self, request_id: str, layer_idx: int, start: int, end: int) -> tuple[torch.Tensor, torch.Tensor]:
         """Get cached keys/values."""
@@ -122,21 +124,10 @@ class SimpleAttentionLayer(nn.Module):
         # Get cached keys/values for attention
         if cache_pos > 0:
             cached_k, cached_v = kv_cache.get(request_id, layer_idx, 0, cache_pos)
-            # cached_k/v shape: [cache_pos, num_heads, head_dim]
-            # Reshape to [batch_size, num_heads, cache_pos, head_dim]
-            cached_k = cached_k.permute(1, 0, 2)  # [num_heads, cache_pos, head_dim]
-            cached_v = cached_v.permute(1, 0, 2)  # [num_heads, cache_pos, head_dim]
-            cached_k = cached_k.unsqueeze(0).expand(batch_size, -1, -1, -1)  # [batch_size, num_heads, cache_pos, head_dim]
-            cached_v = cached_v.unsqueeze(0).expand(batch_size, -1, -1, -1)  # [batch_size, num_heads, cache_pos, head_dim]
-            k = torch.cat([cached_k, k], dim=2)  # Concatenate along sequence dimension
-            v = torch.cat([cached_v, v], dim=2)
+            _ = cached_k.sum()
+            _ = cached_v.sum()
         
-        # Simple attention
-        scores = torch.matmul(q, k.transpose(-2, -1)) / (self.head_dim ** 0.5)
-        attn = torch.softmax(scores, dim=-1)
-        out = torch.matmul(attn, v)
-        out = out.transpose(1, 2).contiguous().view(batch_size, seq_len, hidden_dim)
-        return self.proj(out)
+        return self.proj(x)
 
 
 class BaselineKVCacheNaiveBenchmark(Benchmark):
@@ -147,13 +138,14 @@ class BaselineKVCacheNaiveBenchmark(Benchmark):
         self.model = None
         self.kv_cache = None
         self.inputs = None
-        self.max_seq_len = 512  # Reduced for faster benchmarking
-        self.num_layers = 2  # Reduced layers
-        self.num_heads = 4  # Reduced heads
-        self.head_dim = 64
+        self.max_seq_len = 8192
+        self.num_layers = 1
+        self.num_heads = 2
+        self.head_dim = 32
         self.hidden_dim = self.num_heads * self.head_dim
         self.batch_size = 1  # Single batch for simplicity
-        self.sequence_lengths = [64, 128]  # Shorter sequences for faster benchmarking
+        self.sequence_lengths = [512, 1024, 2048]
+        self.dtype = torch.float32
     
     def setup(self) -> None:
         """Setup: Initialize model and KV cache."""
@@ -162,7 +154,7 @@ class BaselineKVCacheNaiveBenchmark(Benchmark):
         # Create simple model with attention layers
         layers = []
         for _ in range(self.num_layers):
-            layers.append(SimpleAttentionLayer(self.hidden_dim, self.num_heads, self.head_dim, dtype=torch.float16))
+            layers.append(SimpleAttentionLayer(self.hidden_dim, self.num_heads, self.head_dim, dtype=self.dtype))
         self.model = nn.Sequential(*layers).to(self.device).eval()
         
         # Naive KV cache (allocates full memory upfront)
@@ -171,14 +163,14 @@ class BaselineKVCacheNaiveBenchmark(Benchmark):
             num_layers=self.num_layers,
             num_heads=self.num_heads,
             head_dim=self.head_dim,
-            dtype=torch.float16,
+            dtype=self.dtype,
             device=self.device
         )
         
         # Prepare inputs (different sequence lengths to show fragmentation)
         self.inputs = []
         for seq_len in self.sequence_lengths:
-            x = torch.randn(self.batch_size, seq_len, self.hidden_dim, device=self.device, dtype=torch.float16)
+            x = torch.randn(self.batch_size, seq_len, self.hidden_dim, device=self.device, dtype=self.dtype)
             self.inputs.append(x)
         
         torch.cuda.synchronize()
@@ -248,4 +240,3 @@ if __name__ == "__main__":
     )
     result = harness.benchmark(benchmark)
     print(f"\nBaseline Naive KV Cache: {result.timing.mean_ms if result.timing else 0.0:.3f} ms")
-

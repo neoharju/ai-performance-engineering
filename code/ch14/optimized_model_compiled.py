@@ -17,13 +17,6 @@ if str(repo_root) not in sys.path:
 import torch
 import torch.nn as nn
 
-
-# Ensure consistent TF32 state before any operations (new API only)
-enable_tf32()
-
-# Note: arch_config not imported here to avoid TF32 API mixing with torch.compile
-# torch.compile handles TF32 internally, but we need consistent state first
-
 from typing import Optional
 
 from common.python.compile_utils import enable_tf32
@@ -31,6 +24,12 @@ from common.python.benchmark_harness import (
     Benchmark,
     BenchmarkConfig,
 )
+
+# Ensure consistent TF32 state before any operations (new API only)
+enable_tf32()
+
+# Note: arch_config not imported here to avoid TF32 API mixing with torch.compile
+# torch.compile handles TF32 internally, but we need consistent state first
 
 
 def resolve_device() -> torch.device:

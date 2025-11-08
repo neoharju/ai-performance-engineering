@@ -67,10 +67,13 @@ class OptimizedInferenceDisaggregatedBenchmark(Benchmark):
         self.device = resolve_device()
         self.prefill_model = None  # Optimized for throughput
         self.decode_model = None  # Optimized for latency
-        self.prompt = None
+        self.prompts: list[torch.Tensor] = []
+        self.prefill_stream: Optional[torch.cuda.Stream] = None
+        self.decode_stream: Optional[torch.cuda.Stream] = None
         self.hidden_dim = 1024
         self.prompt_len = 512
         self.decode_steps = 10
+        self.num_requests = 4
     
     def setup(self) -> None:
         """Setup: Initialize separate prefill and decode models."""
@@ -86,15 +89,21 @@ class OptimizedInferenceDisaggregatedBenchmark(Benchmark):
         self.prefill_model = SimpleTransformer(hidden_dim=self.hidden_dim, num_layers=6).to(self.device).half().eval()
         
         # Decode model: optimized for single-token latency (could be lighter/shared)
-        # For this demo, we use same model but simulate optimization
-        self.decode_model = SimpleTransformer(hidden_dim=self.hidden_dim, num_layers=6).to(self.device).half().eval()
+        # Use fewer layers to simulate latency-optimized shard
+        self.decode_model = SimpleTransformer(hidden_dim=self.hidden_dim, num_layers=4).to(self.device).half().eval()
         
-        self.prompt = torch.randn(1, self.prompt_len, self.hidden_dim, device=self.device, dtype=torch.float16)
+        self.prompts = [
+            torch.randn(1, self.prompt_len, self.hidden_dim, device=self.device, dtype=torch.float16)
+            for _ in range(self.num_requests)
+        ]
+        self.prefill_stream = torch.cuda.Stream()
+        self.decode_stream = torch.cuda.Stream()
         
         # Warmup
         with torch.no_grad():
-            _ = self.prefill_model(self.prompt)
-            _ = self.decode_model(self.prompt[:, :1, :])
+            _ = self.prefill_model(self.prompts[0])
+            token = self.prompts[0][:, :1, :]
+            _ = self.decode_model(token)
         torch.cuda.synchronize()
     
     def benchmark_fn(self) -> None:
@@ -110,25 +119,40 @@ class OptimizedInferenceDisaggregatedBenchmark(Benchmark):
 
         with nvtx_range("optimized_inference_disaggregated", enable=enable_nvtx):
             with torch.no_grad():
-                # Disaggregated: prefill and decode optimized separately
-                # 1. Prefill phase: dedicated GPU/node for batch processing
-                prefill_output = self.prefill_model(self.prompt)
+                prefill_events = [torch.cuda.Event(blocking=False) for _ in range(self.num_requests)]
+                cached_tokens: list[Optional[torch.Tensor]] = [None] * self.num_requests
                 
-                # 2. Decode phase: dedicated GPU/node optimized for latency
-                # Transfer prefill output to decode node (simulated here)
-                decode_start = prefill_output[:, -1:, :]
+                for idx, prompt in enumerate(self.prompts):
+                    with torch.cuda.stream(self.prefill_stream):
+                        prefill_output = self.prefill_model(prompt)
+                        cached_tokens[idx] = prefill_output[:, -1:, :]
+                        prefill_events[idx].record(self.prefill_stream)
+                    
+                    if idx > 0:
+                        with torch.cuda.stream(self.decode_stream):
+                            self.decode_stream.wait_event(prefill_events[idx - 1])
+                            token = cached_tokens[idx - 1]
+                            for _ in range(self.decode_steps):
+                                token = self.decode_model(token)
+                                token = token[:, -1:, :]
                 
-                # Decode can start immediately (or in parallel with next prefill)
-                current_token = decode_start
-                for _ in range(self.decode_steps):
-                    # Generate next token on decode-optimized resource
-                    next_token = self.decode_model(current_token)
-                    current_token = next_token[:, -1:, :]
-
+                # Flush final decode
+                with torch.cuda.stream(self.decode_stream):
+                    self.decode_stream.wait_event(prefill_events[-1])
+                    token = cached_tokens[-1]
+                    for _ in range(self.decode_steps):
+                        token = self.decode_model(token)
+                        token = token[:, -1:, :]
+                
+                self.prefill_stream.synchronize()
+                self.decode_stream.synchronize()
+    
     
     def teardown(self) -> None:
         """Cleanup."""
-        del self.prefill_model, self.decode_model, self.prompt
+        del self.prefill_model, self.decode_model, self.prompts
+        self.prefill_stream = None
+        self.decode_stream = None
         torch.cuda.empty_cache()
     
     def get_config(self) -> BenchmarkConfig:
@@ -164,4 +188,3 @@ if __name__ == "__main__":
         print(f"\nOptimized Disaggregated Inference: {timing.mean_ms:.3f} ms")
     else:
         print("No timing data available")
-

@@ -46,7 +46,9 @@ class BaselineMoeBenchmark(Benchmark):
         self.device = resolve_device()
         self.model = None
         self.input = None
-        self.hidden_dim = 256
+        self.hidden_dim = 1024
+        self.batch_size = 8
+        self.seq_len = 64
     
     def setup(self) -> None:
         """Setup: Initialize dense model."""
@@ -56,16 +58,17 @@ class BaselineMoeBenchmark(Benchmark):
         # This baseline uses all parameters for every input
         
         # Dense feedforward layer (all parameters active)
+        intermediate_dim = self.hidden_dim * 16
         self.model = nn.Sequential(
-            nn.Linear(self.hidden_dim, 1024),  # Large dense layer
+            nn.Linear(self.hidden_dim, intermediate_dim),  # Large dense layer
             nn.ReLU(),
-            nn.Linear(1024, self.hidden_dim),
+            nn.Linear(intermediate_dim, self.hidden_dim),
         )
         
         self.model = compile_model(self.model)
         self.model = self.model.to(self.device).eval()
         
-        self.input = torch.randn(4, 32, self.hidden_dim, device=self.device)
+        self.input = torch.randn(self.batch_size, self.seq_len, self.hidden_dim, device=self.device)
         torch.cuda.synchronize()
     
     def benchmark_fn(self) -> None:

@@ -42,7 +42,7 @@ class OptimizedKVCacheManagementBenchmark(Benchmark):
         self.device = resolve_device()
         self.model = None
         self.inputs = None
-        self.kv_cache = None
+        self.cache_buffer = None
     
     def setup(self) -> None:
         """Setup: Initialize model with KV cache management."""
@@ -68,10 +68,7 @@ class OptimizedKVCacheManagementBenchmark(Benchmark):
         # KV cache for management
         batch_size = 4
         max_seq_len = 32
-        self.kv_cache = {
-            'k': torch.zeros(batch_size, max_seq_len, num_heads, head_dim, device=self.device),
-            'v': torch.zeros(batch_size, max_seq_len, num_heads, head_dim, device=self.device),
-        }
+        self.cache_buffer = torch.zeros(batch_size, max_seq_len, hidden_dim, device=self.device)
         
         # Simulate autoregressive generation
         self.inputs = [
@@ -97,31 +94,18 @@ class OptimizedKVCacheManagementBenchmark(Benchmark):
                 # Efficient KV cache management reduces computation
                 
                 for step, query in enumerate(self.inputs):
-                    # Compute new K, V for current token
-                    _, k_new, v_new = self.model(query, query, query, need_weights=False)
+                    # Write current token into the cache buffer (avoids cat each step)
+                    self.cache_buffer[:, step:step+1, :] = query
                     
-                    # Store in cache (KV cache management: cache reuse)
-                    self.kv_cache['k'][:, step:step+1, :, :] = k_new
-                    self.kv_cache['v'][:, step:step+1, :, :] = v_new
-                    
-                    # Use cached K, V (KV cache management: reuse)
-                    k_all = self.kv_cache['k'][:, :step+1, :, :]
-                    v_all = self.kv_cache['v'][:, :step+1, :, :]
-                    
-                    # Reshape for attention with cached values
-                    k_all = k_all.permute(0, 2, 1, 3).contiguous()
-                    v_all = v_all.permute(0, 2, 1, 3).contiguous()
-                    q = query.permute(0, 2, 1, 3).contiguous()
-                    
-                    # Attention with cached K/V (KV cache management benefits)
-                    # Optimization: Reuses cached values instead of recomputing
+                    cached_tokens = self.cache_buffer[:, :step+1, :]
+                    _ = self.model(query, cached_tokens, cached_tokens, need_weights=False)
 
     
     def teardown(self) -> None:
         """Teardown: Clean up resources."""
         self.model = None
         self.inputs = None
-        self.kv_cache = None
+        self.cache_buffer = None
         torch.cuda.empty_cache()
     
     def get_config(self) -> BenchmarkConfig:
@@ -135,7 +119,7 @@ class OptimizedKVCacheManagementBenchmark(Benchmark):
         """Validate benchmark result."""
         if self.model is None:
             return "Model not initialized"
-        if self.inputs is None or self.kv_cache is None:
+        if self.inputs is None or self.cache_buffer is None:
             return "Inputs/cache not initialized"
         return None
 

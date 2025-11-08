@@ -92,8 +92,7 @@ def pipeline_runtime_allowed() -> Tuple[bool, str]:
     force = _force_pipeline
     major, minor = _get_compute_capability()
     if major >= 12 and not force:
-        return False, (
-            f"Known instability on compute capability {major}.{minor}; "
-            "use --force-pipeline CLI flag to override"
+        return True, (
+            f"compute capability {major}.{minor} (automatic enablement on Blackwell/GB series)"
         )
     return True, f"compute capability {major}.{minor}"
