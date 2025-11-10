@@ -16,10 +16,11 @@ import sys
 from pathlib import Path
 import json
 import argparse
-from typing import Dict, List, Any, Optional, Set
+from typing import Dict, List, Any, Optional, Set, Tuple
 from datetime import datetime
 from collections import defaultdict
 import statistics
+import math
 from dataclasses import dataclass
 
 # Ensure repository root on sys.path before importing helpers
@@ -36,14 +37,18 @@ import subprocess
 import time
 import os
 import tempfile
-from typing import List, Tuple, Any
 from common.python.chapter_compare_template import discover_benchmarks, load_benchmark
 from common.python.benchmark_harness import BenchmarkHarness, BenchmarkMode, BenchmarkConfig
-from common.python.run_manifest import reset_gpu_state
+from common.python.run_manifest import reset_gpu_state, get_git_info
 try:
     from common.python.cuda_binary_benchmark import detect_supported_arch
 except ImportError:  # pragma: no cover - optional dependency during docs builds
     detect_supported_arch = None  # type: ignore[assignment]
+from common.python.expectations import (
+    ExpectationsStore,
+    METRIC_DIRECTIONS,
+    detect_expectation_key,
+)
 
 # Import logger
 try:
@@ -156,27 +161,6 @@ def extract_from_pytorch_trace(trace_path: Path) -> Dict[str, float]:
     return metrics
 
 
-PROOF_OF_BENEFIT_REQUIREMENTS: Dict[str, Dict[str, float]] = {
-    "ch20": {
-        "integrated": 1.05,
-        "kv": 1.05,
-        "pipeline": 1.05,
-        "precision": 1.05,
-        "training": 1.05,
-    },
-    "capstone": {
-        "01_system_foundations": 1.05,
-        "02_cluster_parallelism": 1.05,
-        "03_io_pipeline": 1.05,
-        "04_kernel_optimization": 1.05,
-        "05_streams_and_graphs": 1.05,
-        "06_compiler_stack": 1.05,
-        "07_inference_attention": 1.05,
-        "08_low_precision": 1.05,
-        "09_end_to_end": 1.05,
-    },
-}
-
 INFORMATIONAL_BENCHMARKS: Dict[str, Set[str]] = {}
 
 SMOKE_CUDA_ITERATION_OVERRIDES: Dict[str, int] = {
@@ -242,6 +226,153 @@ def serialize_throughput(throughput_obj: Optional[Any]) -> Optional[Dict[str, An
     if hasattr(throughput_obj, "__dict__"):
         return dict(throughput_obj.__dict__)
     return None
+
+
+EXPECTATION_THROUGHPUT_FIELDS: Tuple[str, ...] = (
+    "requests_per_s",
+    "tokens_per_s",
+    "samples_per_s",
+    "goodput",
+    "latency_ms",
+)
+
+
+def expectation_example_key(example_name: str, bench_type: str) -> str:
+    bench_type = (bench_type or "python").lower()
+    if bench_type == "python":
+        return example_name
+    return f"{example_name}_{bench_type}"
+
+
+def find_best_optimization_entry(optimizations: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    best_entry: Optional[Dict[str, Any]] = None
+    best_speed = float("-inf")
+    for opt in optimizations or []:
+        if opt.get("status") != "succeeded":
+            continue
+        speed = float(opt.get("speedup") or 0.0)
+        if speed > best_speed:
+            best_entry = opt
+            best_speed = speed
+    return best_entry
+
+
+def _capture_metric(metrics: Dict[str, float], key: str, value: Optional[float]) -> None:
+    if value is None:
+        return
+    if key in METRIC_DIRECTIONS:
+        try:
+            metrics[key] = float(value)
+        except (TypeError, ValueError):
+            pass
+
+
+def _capture_payload(metrics: Dict[str, float], prefix: str, payload: Optional[Dict[str, Any]]) -> None:
+    if not payload or not isinstance(payload, dict):
+        return
+    for field in EXPECTATION_THROUGHPUT_FIELDS:
+        metric_key = f"{prefix}.{field}"
+        if metric_key not in METRIC_DIRECTIONS:
+            continue
+        value = payload.get(field)
+        if isinstance(value, (int, float)):
+            metrics[metric_key] = float(value)
+
+
+def _capture_custom_metrics(metrics: Dict[str, float], prefix: str, payload: Optional[Dict[str, Any]]) -> None:
+    if not payload or not isinstance(payload, dict):
+        return
+    for key, value in payload.items():
+        metric_key = f"{prefix}.{key}"
+        if metric_key not in METRIC_DIRECTIONS:
+            continue
+        if isinstance(value, (int, float)):
+            metrics[metric_key] = float(value)
+
+
+def collect_expectation_metrics(result_entry: Dict[str, Any]) -> Tuple[Dict[str, float], Optional[Dict[str, Any]]]:
+    metrics: Dict[str, float] = {}
+    _capture_metric(metrics, "best_speedup", result_entry.get("best_speedup"))
+    _capture_metric(metrics, "baseline_time_ms", result_entry.get("baseline_time_ms"))
+
+    baseline_throughput = result_entry.get("baseline_throughput")
+    _capture_payload(metrics, "baseline_throughput", baseline_throughput)
+
+    baseline_custom = result_entry.get("baseline_custom_metrics")
+    _capture_custom_metrics(metrics, "baseline_custom", baseline_custom)
+
+    best_opt = find_best_optimization_entry(result_entry.get("optimizations", []))
+    if best_opt:
+        _capture_metric(metrics, "best_optimized_time_ms", best_opt.get("time_ms"))
+        _capture_metric(metrics, "best_optimized_speedup", best_opt.get("speedup"))
+        _capture_payload(metrics, "best_optimized_throughput", best_opt.get("throughput"))
+        _capture_custom_metrics(metrics, "best_optimized_custom", best_opt.get("custom_metrics"))
+
+    return metrics, best_opt
+
+
+def build_expectation_metadata(
+    result_entry: Dict[str, Any],
+    best_opt: Optional[Dict[str, Any]],
+    git_commit: Optional[str],
+) -> Dict[str, Any]:
+    metadata: Dict[str, Any] = {
+        "example": result_entry.get("example"),
+        "type": result_entry.get("type", "python"),
+    }
+    if git_commit:
+        metadata["git_commit"] = git_commit
+    if best_opt:
+        metadata["best_optimization"] = best_opt.get("technique") or best_opt.get("file")
+        metadata["best_optimization_file"] = best_opt.get("file")
+        metadata["best_optimization_speedup"] = best_opt.get("speedup")
+        metadata["best_optimization_time_ms"] = best_opt.get("time_ms")
+    return metadata
+
+
+def _format_metric_value(value: Optional[float]) -> str:
+    if value is None or (isinstance(value, float) and math.isnan(value)):
+        return "n/a"
+    if abs(value) >= 1000:
+        return f"{value:,.2f}"
+    if abs(value) >= 1:
+        return f"{value:.3f}"
+    return f"{value:.5f}"
+
+
+def log_expectation_evaluation(
+    logger,
+    evaluation: Optional[Any],
+    repo_root: Path,
+) -> None:
+    if evaluation is None:
+        return
+    rel_path = None
+    if evaluation.expectation_path:
+        try:
+            rel_path = evaluation.expectation_path.relative_to(repo_root)
+        except ValueError:
+            rel_path = evaluation.expectation_path
+    header = f"    Expectations [{evaluation.hardware_key}]"
+    if rel_path:
+        header += f": {rel_path}"
+    logger.info(header)
+    for comp in evaluation.comparisons:
+        delta_pct = comp.get("delta_pct")
+        pct_str = "n/a"
+        if delta_pct is not None and not math.isinf(delta_pct):
+            pct_str = f"{delta_pct:+.2f}%"
+        elif delta_pct is not None and math.isinf(delta_pct):
+            pct_str = "+inf%" if delta_pct > 0 else "-inf%"
+        logger.info(
+            "      %s -> obs=%s, exp=%s, Δ=%s (%s) [%s]",
+            comp["metric"],
+            _format_metric_value(comp.get("observed")),
+            _format_metric_value(comp.get("expected")),
+            _format_metric_value(comp.get("delta")),
+            pct_str,
+            comp.get("status"),
+        )
 
 
 def reset_cuda_state():
@@ -1210,6 +1341,19 @@ def _test_chapter_impl(chapter_dir: Path, enable_profiling: bool = False, smoke_
     logger.info(f"\n{'='*80}")
     logger.info(f"Testing {chapter_name.upper()}")
     logger.info(f"{'='*80}")
+
+    expectation_hardware_key = detect_expectation_key()
+    expectations_store = ExpectationsStore(chapter_dir, expectation_hardware_key)
+    try:
+        expectation_path = expectations_store.path.relative_to(repo_root)
+    except ValueError:
+        expectation_path = expectations_store.path
+    logger.info(f"  Expectations key: {expectation_hardware_key} (file: {expectation_path})")
+    git_commit = None
+    try:
+        git_commit = get_git_info().get("commit")
+    except Exception:
+        git_commit = None
     
     if not torch.cuda.is_available():
         return {
@@ -1310,7 +1454,8 @@ def _test_chapter_impl(chapter_dir: Path, enable_profiling: bool = False, smoke_
     
     benchmark_results = []
     successful = 0
-    failed = 0
+    failed_error = 0
+    failed_regression = 0
     skipped_hw = 0
     skipped_distributed = 0
     informational_skipped = 0
@@ -1332,12 +1477,13 @@ def _test_chapter_impl(chapter_dir: Path, enable_profiling: bool = False, smoke_
         
         result_entry = {
             'example': example_name,
+            'type': 'python',
             'baseline_file': baseline_path.name,
             'baseline_time_ms': None,
-             'baseline_throughput': None,
+            'baseline_throughput': None,
             'optimizations': [],
             'best_speedup': 1.0,
-            'status': 'failed',
+            'status': 'failed_error',
             'error': None,
         }
         
@@ -1364,7 +1510,7 @@ def _test_chapter_impl(chapter_dir: Path, enable_profiling: bool = False, smoke_
         if baseline_benchmark is None:
             result_entry['error'] = 'Failed to load baseline'
             benchmark_results.append(result_entry)
-            failed += 1
+            failed_error += 1
             reset_cuda_state()  # Reset after failure
             if cold_start:
                 reset_gpu_state()
@@ -1508,7 +1654,7 @@ def _test_chapter_impl(chapter_dir: Path, enable_profiling: bool = False, smoke_
                 skipped_hw += 1
             else:
                 result_entry['error'] = f'Baseline execution failed: {error_str}'
-                failed += 1
+                failed_error += 1
                 maybe_reset_gpu_for_error(error_str, f"{chapter_name}:{example_name}:baseline")
             
             benchmark_results.append(result_entry)
@@ -1544,7 +1690,7 @@ def _test_chapter_impl(chapter_dir: Path, enable_profiling: bool = False, smoke_
                 result_entry['optimizations'].append({
                     'file': opt_name,
                     'technique': technique,
-                    'status': 'failed',
+                    'status': 'failed_error',
                     'error': 'Failed to load',
                 })
                 continue
@@ -1651,7 +1797,7 @@ def _test_chapter_impl(chapter_dir: Path, enable_profiling: bool = False, smoke_
                 opt_result = {
                     'file': opt_name,
                     'technique': technique,
-                    'status': 'success',
+                    'status': 'succeeded',
                     'time_ms': optimized_time,
                     'speedup': speedup,
                 }
@@ -1825,7 +1971,7 @@ def _test_chapter_impl(chapter_dir: Path, enable_profiling: bool = False, smoke_
                     result_entry['optimizations'].append({
                         'file': opt_name,
                         'technique': technique,
-                        'status': 'failed',
+                        'status': 'failed_error',
                         'error': error_full,  # Store full error with type
                     })
                     maybe_reset_gpu_for_error(error_full, f"{chapter_name}:{example_name}:{opt_name}")
@@ -1835,50 +1981,47 @@ def _test_chapter_impl(chapter_dir: Path, enable_profiling: bool = False, smoke_
                 if cold_start:
                     reset_gpu_state()
         
-        required_speedup = PROOF_OF_BENEFIT_REQUIREMENTS.get(chapter_name, {}).get(example_name)
-        if (
-            required_speedup is not None
-            and result_entry.get('baseline_time_ms') is not None
-        ):
-            result_entry['required_speedup'] = required_speedup
-            if result_entry['best_speedup'] < required_speedup:
-                msg = (
-                    f"Proof-of-benefit requirement not met "
-                    f"({result_entry['best_speedup']:.2f}x < {required_speedup:.2f}x)"
-                )
-                logger.error(f"    ❌ {msg}")
-                result_entry['status'] = 'failed'
-                result_entry['error'] = msg
-                failed += 1
-                benchmark_results.append(result_entry)
-                reset_cuda_state()
-                if cold_start:
-                    reset_gpu_state()
-                continue
-
         if result_entry['status'] == 'skipped':
-            # Already handled - distributed benchmark skipped
-            pass
-        elif result_entry.get('baseline_time_ms') is not None:
-            # Baseline ran successfully
-            if result_entry['optimizations'] and any(opt['status'] == 'success' for opt in result_entry['optimizations']):
-                # Has successful optimizations
-                result_entry['status'] = 'success'
-                successful += 1
-            elif result_entry['optimizations'] and all(opt['status'] == 'skipped' for opt in result_entry['optimizations']):
-                # All optimizations skipped (e.g., distributed), but baseline ran successfully
-                result_entry['status'] = 'success'
-                successful += 1
-            elif not result_entry['optimizations']:
-                # No optimizations to test, but baseline ran successfully
-                result_entry['status'] = 'success'
-                successful += 1
+            benchmark_results.append(result_entry)
+            continue
+
+        baseline_ok = result_entry.get('baseline_time_ms') is not None
+        optimizations = result_entry.get('optimizations', [])
+        has_success = any(opt.get('status') == 'succeeded' for opt in optimizations)
+        all_skipped_opt = bool(optimizations) and all(opt.get('status') == 'skipped' for opt in optimizations)
+
+        evaluation = None
+        if baseline_ok and has_success:
+            metrics, best_opt = collect_expectation_metrics(result_entry)
+            metadata = build_expectation_metadata(result_entry, best_opt, git_commit)
+            example_key = expectation_example_key(result_entry['example'], result_entry.get('type', 'python'))
+            evaluation = expectations_store.evaluate(example_key, metrics, metadata)
+            if evaluation:
+                result_entry['expectation'] = evaluation.to_dict()
+            log_expectation_evaluation(logger, evaluation, repo_root)
+            if evaluation and evaluation.regressed:
+                result_entry['status'] = 'failed_regression'
+                regression_details = evaluation.regressions[0] if evaluation.regressions else None
+                if regression_details:
+                    result_entry['error'] = (
+                        f"Expectation regression on {regression_details['metric']}: "
+                        f"observed {_format_metric_value(regression_details.get('observed'))} vs "
+                        f"expected {_format_metric_value(regression_details.get('expected'))}"
+                    )
+                else:
+                    result_entry['error'] = 'Expectation regression detected'
+                failed_regression += 1
             else:
-                # Baseline ran but optimizations failed
-                failed += 1
+                result_entry['status'] = 'succeeded'
+                successful += 1
+        elif baseline_ok and (all_skipped_opt or not optimizations):
+            result_entry['status'] = 'succeeded'
+            successful += 1
         else:
-            # Baseline failed or didn't run
-            failed += 1
+            result_entry['status'] = 'failed_error'
+            if not result_entry.get('error'):
+                result_entry['error'] = 'Baseline or optimization failed'
+            failed_error += 1
         
         benchmark_results.append(result_entry)
         
@@ -1905,7 +2048,7 @@ def _test_chapter_impl(chapter_dir: Path, enable_profiling: bool = False, smoke_
             'baseline_throughput': None,
             'optimizations': [],
             'best_speedup': 1.0,
-            'status': 'failed',
+            'status': 'failed_error',
             'error': None,
         }
         
@@ -1914,7 +2057,7 @@ def _test_chapter_impl(chapter_dir: Path, enable_profiling: bool = False, smoke_
         if baseline_executable is None:
             result_entry['error'] = f'Baseline executable not found for {baseline_cu_path.name}'
             benchmark_results.append(result_entry)
-            failed += 1
+            failed_error += 1
             reset_cuda_state()  # Reset after failure
             if cold_start:
                 reset_gpu_state()
@@ -1937,7 +2080,7 @@ def _test_chapter_impl(chapter_dir: Path, enable_profiling: bool = False, smoke_
         if baseline_result is None:
             result_entry['error'] = f'Baseline execution failed or timed out ({cuda_timeout}s timeout)'
             benchmark_results.append(result_entry)
-            failed += 1
+            failed_error += 1
             reset_cuda_state()  # Reset after failure
             if cold_start:
                 reset_gpu_state()
@@ -2051,7 +2194,7 @@ def _test_chapter_impl(chapter_dir: Path, enable_profiling: bool = False, smoke_
                 result_entry['optimizations'].append({
                     'file': opt_name,
                     'technique': technique,
-                    'status': 'failed',
+                    'status': 'failed_error',
                     'error': 'Executable not found',
                 })
                 continue
@@ -2066,7 +2209,7 @@ def _test_chapter_impl(chapter_dir: Path, enable_profiling: bool = False, smoke_
                 result_entry['optimizations'].append({
                     'file': opt_name,
                     'technique': technique,
-                    'status': 'failed',
+                    'status': 'failed_error',
                     'error': f'Execution failed or timed out ({cuda_timeout}s timeout)',
                 })
                 continue
@@ -2127,7 +2270,7 @@ def _test_chapter_impl(chapter_dir: Path, enable_profiling: bool = False, smoke_
             opt_result = {
                 'file': opt_name,
                 'technique': technique,
-                'status': 'success',
+                'status': 'succeeded',
                 'time_ms': optimized_time,
                 'speedup': speedup,
             }
@@ -2195,21 +2338,52 @@ def _test_chapter_impl(chapter_dir: Path, enable_profiling: bool = False, smoke_
                 result_entry['best_speedup'] = speedup
                 speedups.append(speedup)
         
-        # Determine final status
-        if result_entry['optimizations'] and any(opt['status'] == 'success' for opt in result_entry['optimizations']):
-            result_entry['status'] = 'success'
-            successful += 1
-        elif result_entry['optimizations'] and all(opt['status'] == 'skipped' for opt in result_entry['optimizations']):
-            result_entry['status'] = 'success'
-            successful += 1
-        elif not result_entry['optimizations']:
-            result_entry['status'] = 'success'
+        if result_entry['status'] == 'skipped':
+            benchmark_results.append(result_entry)
+            continue
+
+        optimizations = result_entry.get('optimizations', [])
+        has_success = any(opt.get('status') == 'succeeded' for opt in optimizations)
+        all_skipped_opt = bool(optimizations) and all(opt.get('status') == 'skipped' for opt in optimizations)
+        baseline_ok = result_entry.get('baseline_time_ms') is not None
+
+        evaluation = None
+        if baseline_ok and has_success:
+            metrics, best_opt = collect_expectation_metrics(result_entry)
+            metadata = build_expectation_metadata(result_entry, best_opt, git_commit)
+            example_key = expectation_example_key(result_entry['example'], result_entry.get('type', 'python'))
+            evaluation = expectations_store.evaluate(example_key, metrics, metadata)
+            if evaluation:
+                result_entry['expectation'] = evaluation.to_dict()
+            log_expectation_evaluation(logger, evaluation, repo_root)
+            if evaluation and evaluation.regressed:
+                result_entry['status'] = 'failed_regression'
+                regression_details = evaluation.regressions[0] if evaluation.regressions else None
+                if regression_details:
+                    result_entry['error'] = (
+                        f"Expectation regression on {regression_details['metric']}: "
+                        f"observed {_format_metric_value(regression_details.get('observed'))} vs "
+                        f"expected {_format_metric_value(regression_details.get('expected'))}"
+                    )
+                else:
+                    result_entry['error'] = 'Expectation regression detected'
+                failed_regression += 1
+            else:
+                result_entry['status'] = 'succeeded'
+                successful += 1
+        elif baseline_ok and (all_skipped_opt or not optimizations):
+            result_entry['status'] = 'succeeded'
             successful += 1
         else:
-            failed += 1
+            result_entry['status'] = 'failed_error'
+            if not result_entry.get('error'):
+                result_entry['error'] = 'Baseline or optimization failed'
+            failed_error += 1
         
         benchmark_results.append(result_entry)
     
+    expectations_store.save()
+
     # Calculate summary statistics
     avg_speedup = sum(speedups) / len(speedups) if speedups else 1.0
     max_speedup = max(speedups) if speedups else 1.0
@@ -2218,8 +2392,10 @@ def _test_chapter_impl(chapter_dir: Path, enable_profiling: bool = False, smoke_
     logger.info("\n" + "-" * 80)
     logger.info(f"{chapter_name.upper()} SUMMARY")
     total_skipped = skipped_hw + skipped_distributed
+    total_failed = failed_error + failed_regression
     logger.info(
-        f"Benchmarks: {len(benchmark_results)} | Successful: {successful} | Failed: {failed} | "
+        f"Benchmarks: {len(benchmark_results)} | Succeeded: {successful} | "
+        f"Failed: {total_failed} (errors={failed_error}, regressions={failed_regression}) | "
         f"Skipped: {total_skipped} (HW: {skipped_hw}, Dist: {skipped_distributed}) | "
         f"Informational: {informational_skipped}"
     )
@@ -2236,7 +2412,9 @@ def _test_chapter_impl(chapter_dir: Path, enable_profiling: bool = False, smoke_
         'summary': {
             'total_benchmarks': len(benchmark_results),
             'successful': successful,
-            'failed': failed,
+            'failed': total_failed,
+            'failed_error': failed_error,
+            'failed_regression': failed_regression,
             'skipped_hardware': skipped_hw,
             'skipped_distributed': skipped_distributed,
             'total_skipped': total_skipped,
@@ -2295,7 +2473,7 @@ def generate_markdown_report(results: List[Dict[str, Any]], output_path: Path) -
         for r in results:
             if r['status'] == 'completed':
                 for bench in r['benchmarks']:
-                    if bench['status'] == 'success':
+                    if bench['status'] == 'succeeded':
                         all_speedups.append(bench['best_speedup'])
         
         avg_speedup = sum(all_speedups) / len(all_speedups) if all_speedups else 1.0
@@ -2306,10 +2484,14 @@ def generate_markdown_report(results: List[Dict[str, Any]], output_path: Path) -
         f.write(f"- **Chapters with no benchmarks:** {no_benchmarks}\n")
         total_skipped_hw = sum(r['summary'].get('skipped_hardware', 0) for r in results)
         total_informational = sum(r['summary'].get('informational', 0) for r in results)
+        total_regressions = sum(r['summary'].get('failed_regression', 0) for r in results)
+        total_failed_errors = sum(r['summary'].get('failed_error', 0) for r in results)
         
         f.write(f"- **Total benchmarks:** {total_benchmarks}\n")
         f.write(f"- **Successful:** {total_successful}\n")
         f.write(f"- **Failed:** {total_failed}\n")
+        f.write(f"  - Errors: {total_failed_errors}\n")
+        f.write(f"  - Regressions: {total_regressions}\n")
         f.write(f"- **Informational (not benchmarked):** {total_informational}\n")
         if total_skipped_hw > 0:
             f.write(f"- **WARNING: Skipped (hardware/software limitations):** {total_skipped_hw}\n")
@@ -2369,13 +2551,16 @@ def generate_markdown_report(results: List[Dict[str, Any]], output_path: Path) -
                     f.write(f" | {' | '.join(profiler_links)}")
                 f.write("\n")
                 
-                if bench['status'] == 'failed':
+                bench_status = bench.get('status')
+                if bench_status == 'failed_error':
                     f.write(f"- Failed: {bench.get('error', 'Unknown error')}\n")
-                elif bench['status'] == 'skipped':
+                elif bench_status == 'failed_regression':
+                    f.write(f"- Regression: {bench.get('error', 'Expectation regression detected')}\n")
+                elif bench_status == 'skipped':
                     f.write(f"- WARNING: **SKIPPED**: {bench.get('skip_reason', bench.get('error', 'Hardware/software limitation'))}\n")
                 else:
                     for opt in bench['optimizations']:
-                        if opt['status'] == 'success':
+                        if opt['status'] == 'succeeded':
                             f.write(f"- `{opt['file']}`: {opt['time_ms']:.2f} ms ({opt['speedup']:.2f}x speedup)")
                             profiler_links = []
                             if opt.get('optimized_nsys_rep'):
@@ -2556,12 +2741,14 @@ def main():
     total_benchmarks = sum(r['summary']['total_benchmarks'] for r in all_results)
     total_successful = sum(r['summary']['successful'] for r in all_results)
     total_failed = sum(r['summary']['failed'] for r in all_results)
+    total_failed_errors = sum(r['summary'].get('failed_error', 0) for r in all_results)
+    total_failed_regressions = sum(r['summary'].get('failed_regression', 0) for r in all_results)
     total_skipped_hw = sum(r['summary'].get('skipped_hardware', 0) for r in all_results)
     total_informational = sum(r['summary'].get('informational', 0) for r in all_results)
     
     logger.info(f"Total benchmarks tested: {total_benchmarks}")
-    logger.info(f"Successful: {total_successful}")
-    logger.info(f"Failed: {total_failed}")
+    logger.info(f"Succeeded: {total_successful}")
+    logger.info(f"Failed: {total_failed} (errors={total_failed_errors}, regressions={total_failed_regressions})")
     logger.info(f"Informational (not benchmarked): {total_informational}")
     if total_skipped_hw > 0:
         logger.warning(f"WARNING: Skipped (hardware/software limitations): {total_skipped_hw}")
@@ -2581,7 +2768,7 @@ def main():
     for r in all_results:
         if r['status'] == 'completed':
             for bench in r['benchmarks']:
-                if bench['status'] == 'success' and bench['best_speedup'] > 1.0:
+                if bench['status'] == 'succeeded' and bench['best_speedup'] > 1.0:
                     all_speedups.append(bench['best_speedup'])
     
     if all_speedups:

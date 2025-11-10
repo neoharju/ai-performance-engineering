@@ -75,7 +75,7 @@ def _file_exists(repo_root: Path, chapter_name: str, filename: Optional[str]) ->
 def _should_treat_failure_as_skip(benchmark: Dict, notes: str) -> bool:
     """Return True when a reported failure really means the test was skipped."""
     status = (benchmark.get("status") or "").lower()
-    if status != "failed":
+    if status not in ("failed", "failed_error"):
         return False
     notes_lower = notes.lower()
     if "failed to load baseline" in notes_lower:
@@ -139,7 +139,7 @@ def classify_entry(
             return None
         if not any(_file_exists(repo_root, chapter_name, opt_file) for opt_file in opt_files):
             return None
-    if status == "failed":
+    if status in {"failed", "failed_error", "failed_regression"}:
         severity = "fail"
     elif status == "skipped":
         severity = "skipped"

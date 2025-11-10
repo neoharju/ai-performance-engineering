@@ -26,12 +26,9 @@ def ensure_tcgen05_supported(
         raise RuntimeError(
             "SKIPPED: tcgen05 kernels require SM100-class Tensor Cores."
         )
-    if major > 10:
+    if major == 12 and minor == 1:
         raise RuntimeError(
-            (
-                "SKIPPED: tcgen05 kernels currently target SM100 (B100/B200) "
-                f"but detected sm_{major}{minor:02d} hardware."
-            )
+            "SKIPPED: tcgen05 kernels are not supported on sm_121 (GB10)."
         )
     if loader is None:
         return

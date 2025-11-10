@@ -35,7 +35,7 @@ Production playbook for validating, tuning, and documenting PyTorch/CUDA/Triton 
 | **ch19** | Low-precision training (FP4/FP6/FP8), Transformer Engine | 15 |
 | **ch20** | End-to-end optimization case studies | 14 |
 
-### Learning Themes
+### Themes
 1. **Performance fundamentals (ch1–ch3)** – profiling, hardware awareness, system tuning.
 2. **Kernel optimization (ch6–ch10, ch12)** – occupancy, ILP, async pipelines, CUDA Graphs.
 3. **Memory strategies (ch7, ch19)** – coalescing, tiling, precision reduction.
@@ -98,7 +98,7 @@ code/
 2. Warm up kernels and cache graph compilations before timing.
 3. Capture smoke runs for quick validation, then full runs for production numbers.
 4. Record artifacts (`benchmark_test_results.json`/`.md`, logs) under timestamped folders.
-5. Run `tools/analysis/generate_proof_of_benefit.py` after capturing new artifacts.
+5. Run `tools/analysis/analyze_expectations.py` after capturing new artifacts.
 6. Document findings (speedup, throughput, applied optimizations) for reproducibility.
 
 ---
@@ -136,8 +136,8 @@ Artifacts land under `artifacts/<timestamp>/<example>/results/benchmark_test_res
 
 ### Reporting & Proof-of-Benefit
 1. Run the desired benchmarks (smoke or full) and stash artifacts.
-2. Invoke `python tools/analysis/generate_proof_of_benefit.py --artifacts-dir artifacts --output-csv reports/proof_of_benefit.csv`.
-3. Review `reports/proof_of_benefit.csv` for entries still below the 1.05× goal.
+2. Invoke `python tools/analysis/analyze_expectations.py --artifacts-dir artifacts --output-csv reports/proof_of_benefit.csv` (or point `--output-csv` at another expectations report path).
+3. Review the generated CSV for any rows flagged as failed/regressed to identify benchmarks that slipped below their stored expectations.
 
 ### Integration Tests
 ```bash
@@ -201,12 +201,7 @@ Stops running processes, toggles persistence mode, reloads NVIDIA kernel modules
 ### GB10 / SM121 tcgen05 support gap
 - CUDA 13.0 + driver 580.95 on GB10 (SM 12.1) lacks the multicast/TMA features required for CUTLASS tcgen05 lowering.
 - `ptxas` fails with `Feature '.multicast::cluster::all' not supported on .target 'sm_121'`, so no cubin/SASS is produced.
-- Workarounds: run on hardware that natively exposes SM100+/SM110 tcgen05 (B200/B300) or wait for a CUDA/firmware drop that enables the feature on SM121. Until then, tcgen05 examples stay in `tools/` as diagnostics rather than chapter benchmarks.
+- Workarounds: run on hardware that natively exposes SM100+/SM103 tcgen05 (B200/B300) or wait for a CUDA/firmware drop that enables the feature on SM121. Until then, tcgen05 examples will be skipped.
 
 ### Thread block clusters without DSMEM (ch10)
 - GB10/SM121 exposes thread block clusters but not Distributed Shared Memory (DSMEM), so DSMEM-enabled cluster kernels cannot launch.
-- `ch10` now ships DSMEM-free binaries (`baseline_cluster_group_no_dsmem.*`, `optimized_cluster_group_no_dsmem.*`). Build them with:  
-  `make -C ch10 baseline_cluster_group_no_dsmem_sm121 optimized_cluster_group_no_dsmem_sm121`
-- Run via the harness:  
-  `PYTHONPATH=. python tools/testing/run_all_benchmarks.py --chapter ch10 --only-examples cluster_group_no_dsmem`
-- `optimized_cluster_group.py` automatically falls back to the DSMEM-free variant whenever `cudaDevAttrClusterLaunch` or DSMEM capability checks fail, keeping PoB runs valid on SM121 hardware.
