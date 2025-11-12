@@ -5,9 +5,9 @@
 #
 # This script installs EVERYTHING you need:
 #   1. NVIDIA Driver 580+ (auto-upgrades if needed)
-#   2. Python 3.11 (PyTorch 2.9 compatible)
-#   3. CUDA 13.0 repository and toolchain
-#   4. PyTorch 2.9.0 with CUDA 13.0 support (pinned)
+#   2. Python 3.12 (PyTorch 2.10-dev compatible)
+#   3. CUDA 13.0.2 (Update 2) repository and toolchain
+#   4. Environment for PyTorch 2.10-dev source build with CUDA 13.0.2
 #   5. NVIDIA Nsight Systems 2025.3.2 (for timeline profiling)
 #   6. NVIDIA Nsight Compute 2025.3.1 (for kernel metrics)
 #   7. All Python dependencies from requirements_latest.txt
@@ -26,16 +26,16 @@
 # Duration: 10-20 minutes (first run may require reboot for driver upgrade)
 #
 # What it does:
-#   - Adds official NVIDIA CUDA 13.0 repository
+#   - Adds official NVIDIA CUDA 13.0 (Update 2) repository
 #   - Configures APT to prefer official NVIDIA packages
 #   - Fixes Python APT module (python3-apt) compatibility
 #   - Disables problematic command-not-found APT hook
 #   - Removes duplicate deadsnakes repository entries
-#   - Upgrades Python to 3.11 (required by PyTorch 2.9)
+#   - Upgrades Python to 3.12 (required by PyTorch 2.10 dev builds)
 #   - Auto-upgrades NVIDIA driver to 580+ if needed (will prompt reboot)
-#   - Installs CUDA 13.0 toolkit and libraries
+#   - Installs CUDA 13.0.2 toolkit and libraries
 #   - Installs latest Nsight tools (2025.x)
-#   - Installs PyTorch 2.9.0 (pinned) with CUDA 13.0
+#   - Prepares for PyTorch 2.10-dev (source build) with CUDA 13.0.2
 #   - Removes conflicting system packages (python3-optree, etc.)
 #   - Installs nvidia-ml-py (replaces deprecated pynvml)
 #   - Configures NVIDIA kernel modules for profiling
@@ -60,9 +60,9 @@ echo "AI Performance Engineering Setup Script"
 echo "=========================================="
 echo "This script will install:"
 echo "  • NVIDIA Driver 580+ (auto-upgrade if needed)"
-echo "  • Python 3.11 (PyTorch 2.9 compatible)"
-echo "  • CUDA 13.0 repository and toolchain"
-echo "  • PyTorch 2.9.0 with CUDA 13.0 support (pinned)"
+echo "  • Python 3.12 (PyTorch 2.10-dev compatible)"
+echo "  • CUDA 13.0.2 (Update 2) repository and toolchain"
+echo "  • Environment configured for PyTorch 2.10-dev source build"
 echo "  • NVIDIA Nsight Systems 2025.3.2 (latest)"
 echo "  • NVIDIA Nsight Compute 2025.3.1 (latest)"
 echo "  • All project dependencies"
@@ -72,7 +72,45 @@ echo "Note: If driver upgrade is needed, you'll be prompted to reboot."
 echo ""
 
 PROJECT_ROOT="$(dirname "$(realpath "$0")")"
-REQUIRED_DRIVER_VERSION="580.65.06"
+REQUIRED_DRIVER_VERSION="580.95.05"
+PYTHON_TARGET_VERSION="3.12"
+PYTHON_TARGET_MAJOR="${PYTHON_TARGET_VERSION%%.*}"
+PYTHON_TARGET_MINOR="${PYTHON_TARGET_VERSION##*.}"
+PYTHON_TARGET_BIN="python${PYTHON_TARGET_VERSION}"
+PYTHON_ABI_TAG="cp${PYTHON_TARGET_MAJOR}${PYTHON_TARGET_MINOR}"
+PYTHON_DIST_PACKAGES="/usr/local/lib/python${PYTHON_TARGET_VERSION}/dist-packages"
+CUDA_SHORT_VERSION="13.0"
+CUDA_FULL_VERSION="13.0.2.006"
+CUDNN_VERSION="9.14.0.64"
+NCCL_SHORT_VERSION="2.27.7"
+CUDA_HOME_DIR="/usr/local/cuda-${CUDA_SHORT_VERSION}"
+THIRD_PARTY_DIR="${PROJECT_ROOT}/third_party"
+mkdir -p "${THIRD_PARTY_DIR}"
+
+if command -v git >/dev/null 2>&1; then
+    git config --global --add safe.directory "${PROJECT_ROOT}" >/dev/null 2>&1 || true
+    if [ -d "${PROJECT_ROOT}/vendor/pytorch-src" ]; then
+        git config --global --add safe.directory "${PROJECT_ROOT}/vendor/pytorch-src" >/dev/null 2>&1 || true
+    fi
+    if git -C "${PROJECT_ROOT}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        if [ -f "${PROJECT_ROOT}/.gitmodules" ]; then
+            git -C "${PROJECT_ROOT}" submodule sync --recursive >/dev/null 2>&1 || true
+            git -C "${PROJECT_ROOT}" submodule update --init --recursive >/dev/null 2>&1 || true
+        fi
+    fi
+fi
+PYTORCH_REPO_URL="${PYTORCH_REPO_URL:-https://github.com/pytorch/pytorch.git}"
+PYTORCH_COMMIT="${PYTORCH_COMMIT:-145a3a7}"
+PYTORCH_SRC_DIR="${PYTORCH_SRC_DIR:-${THIRD_PARTY_DIR}/pytorch-src}"
+PYTORCH_BUILD_DIR="${PYTORCH_SRC_DIR}"
+PYTORCH_DIST_DIR="${PYTORCH_BUILD_DIR}/dist"
+PYTORCH_WHEEL_DIR="${THIRD_PARTY_DIR}/wheels"
+mkdir -p "${PYTORCH_WHEEL_DIR}"
+TORCH_CUDA_ARCH_LIST_VALUE="10.0;10.3;12.0;12.1+PTX"
+CMAKE_CUDA_ARCH_LIST_VALUE="100;103;120;121"
+TORCH_SM_ARCH_LIST_VALUE="sm_100;sm_103;sm_120;sm_121"
+PYTORCH_BUILD_VERSION="2.9.0a0+${PYTORCH_COMMIT}"
+PYTORCH_BUILD_NUMBER="0"
 echo "Project root: $PROJECT_ROOT"
 cd "$PROJECT_ROOT"
 
@@ -112,9 +150,9 @@ if command -v nvidia-smi &> /dev/null; then
         DRIVER_MAJOR=$(echo "$DRIVER_VERSION" | cut -d. -f1)
         if [ "$DRIVER_MAJOR" -lt 580 ]; then
             echo "Current NVIDIA driver: $DRIVER_VERSION"
-            echo "CUDA 13.0 requires driver 580+. This script will upgrade it automatically."
+            echo "CUDA ${CUDA_SHORT_VERSION} Update 2 requires driver 580+. This script will upgrade it automatically."
         else
-            echo "NVIDIA driver version: $DRIVER_VERSION (compatible with CUDA 13.0)"
+            echo "NVIDIA driver version: $DRIVER_VERSION (compatible with CUDA ${CUDA_SHORT_VERSION} Update 2)"
         fi
     fi
 else
@@ -236,9 +274,9 @@ else:
     print("DCGM Python bindings not found; pydcgm import may fail.")
 PY
 
-# Add NVIDIA CUDA 13.0 repository
+# Add NVIDIA CUDA ${CUDA_SHORT_VERSION} repository
 echo ""
-echo "Adding NVIDIA CUDA 13.0 repository..."
+echo "Adding NVIDIA CUDA ${CUDA_SHORT_VERSION} repository..."
 
 # Check if CUDA repository is already configured
 if [ ! -f /usr/share/keyrings/cuda-archive-keyring.gpg ] && [ ! -f /etc/apt/sources.list.d/cuda-ubuntu2204-x86_64.list ]; then
@@ -285,12 +323,12 @@ APT_PREF
 
 apt update
 
-# Install Python 3.11 or newer (PyTorch 2.9 supports Python 3.10, 3.11, 3.12)
+# Install target Python runtime
 echo ""
-echo "🐍 Installing Python 3.11..."
+echo "🐍 Installing Python ${PYTHON_TARGET_VERSION}..."
 
-# Check if Python 3.11 is already installed
-if ! command -v python3.11 &> /dev/null; then
+# Check if target Python is already installed
+if ! command -v "${PYTHON_TARGET_BIN}" &> /dev/null; then
     apt install -y software-properties-common
     
     # Check if deadsnakes PPA is already added
@@ -301,49 +339,49 @@ if ! command -v python3.11 &> /dev/null; then
     fi
     
     apt update || true
-    apt install -y python3.11 python3.11-dev python3.11-venv python3-pip
-    echo "Python 3.11 installed"
+    apt install -y "${PYTHON_TARGET_BIN}" "${PYTHON_TARGET_BIN}-dev" "${PYTHON_TARGET_BIN}-venv" python3-pip
+    echo "Python ${PYTHON_TARGET_VERSION} installed"
 else
-    CURRENT_PY311=$(python3.11 --version 2>&1 | awk '{print $2}')
-    echo "Python 3.11 already installed (version $CURRENT_PY311)"
+    CURRENT_TARGET_VERSION=$("${PYTHON_TARGET_BIN}" --version 2>&1 | awk '{print $2}')
+    echo "Python ${PYTHON_TARGET_VERSION} already installed (version $CURRENT_TARGET_VERSION)"
     # Still ensure dev packages are present
-    apt install -y python3.11-dev python3.11-venv python3-pip
+    apt install -y "${PYTHON_TARGET_BIN}-dev" "${PYTHON_TARGET_BIN}-venv" python3-pip
 fi
 
-# Set Python 3.11 as default if not already
+# Set target Python as default if not already
 CURRENT_PY3=$(python3 --version 2>&1 | awk '{print $2}')
-if [[ ! "$CURRENT_PY3" =~ ^3\.11\. ]]; then
-    echo "Setting Python 3.11 as default..."
-    update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
-    update-alternatives --set python3 /usr/bin/python3.11
+if [[ ! "$CURRENT_PY3" =~ ^${PYTHON_TARGET_MAJOR}\.${PYTHON_TARGET_MINOR}\. ]]; then
+    echo "Setting Python ${PYTHON_TARGET_VERSION} as default..."
+    update-alternatives --install /usr/bin/python3 python3 "/usr/bin/${PYTHON_TARGET_BIN}" 1
+    update-alternatives --set python3 "/usr/bin/${PYTHON_TARGET_BIN}"
 else
-    echo "Python 3.11 is already the default"
+    echo "Python ${PYTHON_TARGET_VERSION} is already the default"
 fi
 
-# Ensure `python` points to python3.11 for convenience
+# Ensure `python` convenience shim follows target Python
 if ! command -v python >/dev/null 2>&1; then
-    echo "Creating python -> python3.11 alternative..."
-    update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1
-    update-alternatives --set python /usr/bin/python3.11
+    echo "Creating python -> ${PYTHON_TARGET_BIN} alternative..."
+    update-alternatives --install /usr/bin/python python "/usr/bin/${PYTHON_TARGET_BIN}" 1
+    update-alternatives --set python "/usr/bin/${PYTHON_TARGET_BIN}"
 else
     PYTHON_VERSION_OUTPUT="$(python --version 2>/dev/null || true)"
-    if [[ "$PYTHON_VERSION_OUTPUT" != "Python 3.11."* ]]; then
-        echo "Updating python alternative to point at python3.11..."
-        update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1
-        update-alternatives --set python /usr/bin/python3.11
+    if [[ "$PYTHON_VERSION_OUTPUT" != "Python ${PYTHON_TARGET_VERSION}."* ]]; then
+        echo "Updating python alternative to point at ${PYTHON_TARGET_BIN}..."
+        update-alternatives --install /usr/bin/python python "/usr/bin/${PYTHON_TARGET_BIN}" 1
+        update-alternatives --set python "/usr/bin/${PYTHON_TARGET_BIN}"
     else
         echo "python points to $(python --version) (no change needed)"
     fi
 fi
 
-# Ensure pip is installed for Python 3.11
-if ! python3.11 -m pip --version &> /dev/null; then
-    echo "Installing pip for Python 3.11..."
-    curl -sS https://bootstrap.pypa.io/get-pip.py | python3.11
+# Ensure pip is installed for target Python
+if ! "${PYTHON_TARGET_BIN}" -m pip --version &> /dev/null; then
+    echo "Installing pip for Python ${PYTHON_TARGET_VERSION}..."
+    curl -sS https://bootstrap.pypa.io/get-pip.py | "${PYTHON_TARGET_BIN}"
 fi
 
 # Upgrade pip
-python3 -m pip install --upgrade --break-system-packages --ignore-installed pip setuptools packaging
+python3 -m pip install --upgrade --ignore-installed pip setuptools packaging
 
 # Ensure wheel build backend is available for manual builds
 python3 -m pip install --no-cache-dir --upgrade --ignore-installed wheel
@@ -369,7 +407,7 @@ if dpkg -s python3-flatbuffers >/dev/null 2>&1; then
     apt remove -y python3-flatbuffers
 fi
 
-# Upgrade NVIDIA driver to 580+ if needed (required for CUDA 13.0)
+# Upgrade NVIDIA driver to 580+ if needed (required for CUDA ${CUDA_SHORT_VERSION} Update 2)
 echo ""
 echo "Checking NVIDIA driver version..."
 if command -v nvidia-smi &> /dev/null; then
@@ -377,7 +415,7 @@ if command -v nvidia-smi &> /dev/null; then
     DRIVER_MAJOR=$(echo "$CURRENT_DRIVER" | cut -d. -f1)
     
     if [ "$DRIVER_MAJOR" -lt 580 ]; then
-        echo "Current driver ($CURRENT_DRIVER) is too old for CUDA 13.0"
+        echo "Current driver ($CURRENT_DRIVER) is too old for CUDA ${CUDA_SHORT_VERSION} Update 2"
         echo "Upgrading to NVIDIA driver 580 (open kernel modules)..."
         
         # Remove old driver packages that might conflict
@@ -411,19 +449,33 @@ if command -v nvidia-smi &> /dev/null; then
             exit 1
         fi
     else
-        echo "NVIDIA driver $CURRENT_DRIVER is compatible with CUDA 13.0"
+        echo "NVIDIA driver $CURRENT_DRIVER is compatible with CUDA ${CUDA_SHORT_VERSION} Update 2"
     fi
 fi
 
-# Install CUDA 13.0 toolchain
+# Install CUDA toolchain (13.0.2 Update 2)
 echo ""
-echo "Installing CUDA 13.0 toolchain..."
-apt install -y cuda-toolkit-13-0
+echo "Installing CUDA ${CUDA_FULL_VERSION} toolchain..."
+if ! apt install -y "cuda-toolkit-13-0=13.0.2-1"; then
+    echo "Pinned CUDA toolkit version unavailable; installing latest cuda-toolkit-13-0 package instead."
+    apt install -y cuda-toolkit-13-0
+fi
 
-# Install NCCL 2.28.7 for Blackwell optimizations
+# Install NCCL for Blackwell optimizations
 echo ""
-echo "Installing NCCL 2.28.7 (Blackwell-optimized)..."
-apt install -y libnccl2=2.28.7-1+cuda13.0 libnccl-dev=2.28.7-1+cuda13.0
+echo "Installing NCCL ${NCCL_SHORT_VERSION} (Blackwell-optimized)..."
+if ! apt install -y "libnccl2=${NCCL_SHORT_VERSION}-1+cuda13.0" "libnccl-dev=${NCCL_SHORT_VERSION}-1+cuda13.0"; then
+    echo "Pinned NCCL ${NCCL_SHORT_VERSION} packages unavailable; installing default libnccl2/libnccl-dev from CUDA repo."
+    apt install -y libnccl2 libnccl-dev
+fi
+
+# Install cuDNN matching CUDA Update 2
+echo ""
+echo "Installing cuDNN ${CUDNN_VERSION} for CUDA ${CUDA_SHORT_VERSION}..."
+if ! apt install -y "libcudnn9-cuda-13=${CUDNN_VERSION}-1+cuda13.0" "libcudnn9-dev-cuda-13=${CUDNN_VERSION}-1+cuda13.0"; then
+    echo "Pinned cuDNN packages unavailable; installing latest libcudnn9-cuda-13 packages from CUDA repo."
+    apt install -y libcudnn9-cuda-13 libcudnn9-dev-cuda-13
+fi
 
 # Install NVSHMEM 3.4.5 for CUDA 13 (enables SymmetricMemory fast paths)
 echo ""
@@ -540,36 +592,37 @@ fi
 # Nsight tools are already in PATH when installed via apt
 echo "Nsight tools installed and available in PATH"
 
-# Configure PATH and LD_LIBRARY_PATH for CUDA 13.0
+# Configure PATH and LD_LIBRARY_PATH for CUDA environment
 echo ""
-echo "Configuring CUDA 13.0 environment..."
-# Update /etc/environment for system-wide CUDA 13.0
-if ! grep -q "/usr/local/cuda-13.0/bin" /etc/environment; then
-    sed -i 's|PATH="\(.*\)"|PATH="/usr/local/cuda-13.0/bin:\1"|' /etc/environment
-    echo "Added CUDA 13.0 to system PATH"
+echo "Configuring CUDA ${CUDA_SHORT_VERSION} environment..."
+# Update /etc/environment for system-wide CUDA path
+if ! grep -q "${CUDA_HOME_DIR}/bin" /etc/environment; then
+    sed -i "s|PATH=\"\(.*\)\"|PATH=\"${CUDA_HOME_DIR}/bin:\1\"|" /etc/environment
+    echo "Added CUDA ${CUDA_SHORT_VERSION} to system PATH"
 fi
 
-# Create profile.d script for CUDA 13.0
-cat > /etc/profile.d/cuda-13.0.sh << 'PROFILE_EOF'
-# CUDA 13.0 environment variables
-export CUDA_HOME=/usr/local/cuda-13.0
-export PATH=/usr/local/cuda-13.0/bin:$PATH
-export LD_LIBRARY_PATH=/usr/local/cuda-13.0/lib64:$LD_LIBRARY_PATH
-export CUDA_PATH=/usr/local/cuda-13.0
+# Create profile.d script for CUDA
+CUDA_PROFILE_SCRIPT="/etc/profile.d/cuda-${CUDA_SHORT_VERSION}.sh"
+cat > "${CUDA_PROFILE_SCRIPT}" <<PROFILE_EOF
+# CUDA ${CUDA_SHORT_VERSION} environment variables
+export CUDA_HOME=${CUDA_HOME_DIR}
+export PATH=${CUDA_HOME_DIR}/bin:\$PATH
+export LD_LIBRARY_PATH=${CUDA_HOME_DIR}/lib64:\$LD_LIBRARY_PATH
+export CUDA_PATH=${CUDA_HOME_DIR}
 PROFILE_EOF
-chmod +x /etc/profile.d/cuda-13.0.sh
-echo "Created /etc/profile.d/cuda-13.0.sh for persistent CUDA 13.0 environment"
+chmod +x "${CUDA_PROFILE_SCRIPT}"
+echo "Created ${CUDA_PROFILE_SCRIPT} for persistent CUDA ${CUDA_SHORT_VERSION} environment"
 
-# Update nvcc symlink to CUDA 13.0 (override Ubuntu's default)
+# Update nvcc symlink to CUDA toolkit (override Ubuntu's default)
 rm -f /usr/bin/nvcc
-ln -s /usr/local/cuda-13.0/bin/nvcc /usr/bin/nvcc
-echo "Updated /usr/bin/nvcc symlink to CUDA 13.0"
+ln -s "${CUDA_HOME_DIR}/bin/nvcc" /usr/bin/nvcc
+echo "Updated /usr/bin/nvcc symlink to CUDA ${CUDA_SHORT_VERSION}"
 
 # Source the CUDA environment for current session
-source /etc/profile.d/cuda-13.0.sh
+source "${CUDA_PROFILE_SCRIPT}"
 
 # Persist CUDA toolchain settings for the remainder of the script
-export CUDA_HOME=/usr/local/cuda-13.0
+export CUDA_HOME="${CUDA_HOME_DIR}"
 export PATH="$CUDA_HOME/bin:$PATH"
 export LD_LIBRARY_PATH="$CUDA_HOME/lib64:${LD_LIBRARY_PATH:-}"
 
@@ -603,12 +656,12 @@ echo "Installing CUDA-dependent Python packages (prometheus-client, transformer-
 
 # Helper to ensure pip installs run with CUDA environment populated
 pip_cuda() {
-    local cuda_home="${CUDA_HOME:-/usr/local/cuda-13.0}"
+    local cuda_home="${CUDA_HOME:-${CUDA_HOME_DIR}}"
     CUDA_HOME="${cuda_home}" \
     TORCH_CUDA_HOME="${cuda_home}" \
     CUDA_PATH="${cuda_home}" \
     PATH="${cuda_home}/bin:${PATH}" \
-    LD_LIBRARY_PATH="${cuda_home}/lib64:${LD_LIBRARY_PATH:-}" \
+    LD_LIBRARY_PATH="${cuda_home}/lib64:${cuda_home}/lib64/stubs:${LD_LIBRARY_PATH:-}" \
     PYTHONPATH="${PROJECT_ROOT}/.cuda_env:${PYTHONPATH:-}" \
     python3 -m pip "$@"
 }
@@ -665,28 +718,115 @@ apt install -y \
     infiniband-diags \
     perftest \
     htop \
+    ripgrep \
     sysstat
+
+echo ""
+echo "Installing detect-secrets (system-wide)..."
+python3 -m pip install --no-cache-dir --upgrade --ignore-installed detect-secrets
 
 # Install ninja (required for PyTorch CUDA extensions)
 echo ""
 echo "Installing ninja (required for CUDA extensions)..."
 python3 -m pip install --no-cache-dir --upgrade --ignore-installed ninja==1.13.0
 
-# Install PyTorch 2.9.0 with CUDA 13.0 (pinned)
+# Build or reuse PyTorch wheel (SM100/120/121)
 echo ""
-echo "Installing PyTorch 2.9.0 (CUDA 13.0, pinned wheels)..."
-TORCHVISION_PKG="torchvision==0.24.0+cu130"
-if [ "$(uname -m)" = "aarch64" ]; then
-    TORCHVISION_PKG="torchvision==0.24.0"
+PYTORCH_WHEEL_GLOB="${PYTORCH_WHEEL_DIR}/torch-${PYTORCH_BUILD_VERSION}-${PYTHON_ABI_TAG}-${PYTHON_ABI_TAG}-*.whl"
+PYTORCH_WHEEL_PATH=""
+if compgen -G "${PYTORCH_WHEEL_GLOB}" >/dev/null; then
+    PYTORCH_WHEEL_PATH=$(ls ${PYTORCH_WHEEL_GLOB} | head -n 1)
+    echo "Using cached PyTorch wheel at ${PYTORCH_WHEEL_PATH}"
+else
+    echo "Building PyTorch from source (commit ${PYTORCH_COMMIT}) to mirror NVIDIA container..."
+    apt install -y git build-essential cmake libopenblas-dev libomp-dev ninja-build
+
+    mkdir -p "${PYTORCH_SRC_DIR}"
+    git config --global --add safe.directory "${PYTORCH_SRC_DIR}" >/dev/null 2>&1 || true
+    if [ ! -d "${PYTORCH_SRC_DIR}/.git" ]; then
+        rm -rf "${PYTORCH_SRC_DIR}"
+        git clone --recursive "${PYTORCH_REPO_URL}" "${PYTORCH_SRC_DIR}"
+    else
+        git -C "${PYTORCH_SRC_DIR}" reset --hard
+        git -C "${PYTORCH_SRC_DIR}" clean -fdx
+        git -C "${PYTORCH_SRC_DIR}" fetch --all --tags --prune --force
+    fi
+
+    git -C "${PYTORCH_SRC_DIR}" checkout "${PYTORCH_COMMIT}"
+    git -C "${PYTORCH_SRC_DIR}" submodule sync --recursive
+    git -C "${PYTORCH_SRC_DIR}" submodule update --init --recursive
+
+    python3 -m pip install --no-cache-dir --upgrade --ignore-installed setuptools wheel typing_extensions packaging cmake ninja
+    if [ -f "${PYTORCH_SRC_DIR}/requirements.txt" ]; then
+        python3 -m pip install --no-cache-dir --upgrade --ignore-installed -r "${PYTORCH_SRC_DIR}/requirements.txt"
+    fi
+
+    export USE_CUDA=1
+    export USE_CUDNN=1
+    export USE_NCCL=1
+    export USE_SYSTEM_NCCL=1
+    export USE_SYSTEM_CUDA=1
+    export FORCE_CUDA=1
+    export BUILD_TEST=0
+    export MAX_JOBS="${MAX_JOBS:-$(nproc)}"
+    export TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST_VALUE}"
+    export CMAKE_CUDA_ARCHITECTURES="${CMAKE_CUDA_ARCH_LIST_VALUE}"
+    export CUDA_HOME="${CUDA_HOME_DIR}"
+    export CUDNN_INCLUDE_DIR="/usr/include"
+    export CUDNN_LIBRARY_DIR="/usr/lib/x86_64-linux-gnu"
+    export CUDACXX="${CUDA_HOME_DIR}/bin/nvcc"
+    export CPATH="${CUDA_HOME_DIR}/include:${CPATH:-}"
+    export CPLUS_INCLUDE_PATH="${CUDA_HOME_DIR}/include:${CPLUS_INCLUDE_PATH:-}"
+    CUDA_LIB_DIR="${CUDA_HOME_DIR}/lib64"
+    CUDA_STUB_DIR="${CUDA_LIB_DIR}/stubs"
+    export LIBRARY_PATH="${CUDA_LIB_DIR}:${CUDA_STUB_DIR}:${LIBRARY_PATH:-}"
+    export LD_LIBRARY_PATH="${CUDA_LIB_DIR}:${CUDA_STUB_DIR}:${LD_LIBRARY_PATH:-}"
+    export LDFLAGS="-L${CUDA_LIB_DIR} -L${CUDA_STUB_DIR} ${LDFLAGS:-}"
+    export USE_PRIORITIZED_TEXT_FOR_LD=1
+    export PYTORCH_BUILD_VERSION
+    export PYTORCH_BUILD_NUMBER
+
+    pushd "${PYTORCH_SRC_DIR}" >/dev/null
+    rm -rf build "${PYTORCH_DIST_DIR}"
+    python3 setup.py clean >/dev/null 2>&1 || true
+    python3 setup.py bdist_wheel
+    popd >/dev/null
+
+    PYTORCH_NEW_WHEEL=$(find "${PYTORCH_DIST_DIR}" -maxdepth 1 -name "torch-*.whl" | head -n 1)
+    if [ -z "${PYTORCH_NEW_WHEEL}" ]; then
+        echo "ERROR: PyTorch wheel not produced at ${PYTORCH_DIST_DIR}"
+        exit 1
+    fi
+    PYTORCH_WHEEL_PATH="${PYTORCH_WHEEL_DIR}/$(basename "${PYTORCH_NEW_WHEEL}")"
+    cp "${PYTORCH_NEW_WHEEL}" "${PYTORCH_WHEEL_PATH}"
 fi
-if ! python3 -m pip install \
-    --no-cache-dir --upgrade --ignore-installed \
-    --index-url https://download.pytorch.org/whl/cu130 \
-    --extra-index-url https://pypi.org/simple \
-    torch==2.9.0+cu130 "$TORCHVISION_PKG"; then
-    echo "Pinned PyTorch wheel install failed; retrying with default index (may build from source)..."
-    python3 -m pip install --no-cache-dir --upgrade --ignore-installed torch==2.9.0 torchvision==0.24.0
+
+if [ -z "${PYTORCH_WHEEL_PATH}" ] || [ ! -f "${PYTORCH_WHEEL_PATH}" ]; then
+    echo "ERROR: PyTorch wheel not available in ${PYTORCH_WHEEL_DIR}"
+    exit 1
 fi
+
+export PYTORCH_WHEEL_PATH
+PYTORCH_WHEEL_BASENAME="$(basename "${PYTORCH_WHEEL_PATH}")"
+
+if ! compgen -G "${PYTORCH_WHEEL_PATH}.part*" >/dev/null; then
+    echo "Splitting PyTorch wheel into <50MB chunks under ${PYTORCH_WHEEL_DIR}"
+    split -b 45m -d -a 2 "${PYTORCH_WHEEL_PATH}" "${PYTORCH_WHEEL_PATH}.part"
+fi
+
+python3 -m pip install --no-cache-dir --force-reinstall --upgrade "${PYTORCH_WHEEL_PATH}"
+python3 - <<'PY'
+import torch
+print("PyTorch build installed from source")
+print("  version:", torch.__version__)
+print("  cuda:", torch.version.cuda)
+if not torch.cuda.is_available():
+    raise SystemExit("ERROR: torch.cuda.is_available() is False after build")
+arch_list = torch.cuda.get_arch_list()
+print("  arch list:", arch_list)
+if "sm_121" not in arch_list:
+    raise SystemExit(f"ERROR: Expected sm_121 in arch list, got {arch_list}")
+PY
 
 # Install project dependencies
 echo ""
@@ -749,23 +889,23 @@ echo ""
 echo "Ensuring monitoring/runtime packages (Prometheus, Transformer Engine)..."
 
 # Transformer Engine build requires CUDNN headers shipped with the Python wheel.
-CUDA_ROOT=/usr/local/cuda-13.0
-CUDNN_INCLUDE_DIR=/usr/local/lib/python3.11/dist-packages/nvidia/cudnn/include
-CUDNN_LIBRARY_DIR=/usr/local/lib/python3.11/dist-packages/nvidia/cudnn/lib
+CUDA_ROOT="${CUDA_HOME_DIR}"
+CUDNN_INCLUDE_DIR="${PYTHON_DIST_PACKAGES}/nvidia/cudnn/include"
+CUDNN_LIBRARY_DIR="${PYTHON_DIST_PACKAGES}/nvidia/cudnn/lib"
 export CPATH="${CUDNN_INCLUDE_DIR}:${CPATH:-}"
 export LIBRARY_PATH="${CUDNN_LIBRARY_DIR}:${LIBRARY_PATH:-}"
 
 # Remove conflicting binary wheels before installing the source build.
 python3 -m pip uninstall -y transformer_engine transformer-engine transformer_engine_cu12 transformer-engine-cu12 transformer-engine-cu13 transformer_engine_torch >/dev/null 2>&1 || true
 
-TE_WHEEL_BASE="transformer_engine-2.8.0+40c69e7-cp311-cp311-linux_aarch64.whl"
-TE_CU12_WHEEL_BASE="transformer_engine_cu12-2.8.0+40c69e7-cp311-cp311-linux_aarch64.whl"
+TE_WHEEL_BASE="transformer_engine-2.8.0+40c69e7-${PYTHON_ABI_TAG}-${PYTHON_ABI_TAG}-linux_aarch64.whl"
+TE_CU12_WHEEL_BASE="transformer_engine_cu12-2.8.0+40c69e7-${PYTHON_ABI_TAG}-${PYTHON_ABI_TAG}-linux_aarch64.whl"
 # The transformer_engine_torch wheel stays under Git's 50MB limit, so we cache the raw .whl (no split parts).
-TE_TORCH_WHEEL_BASE="transformer_engine_torch-2.8.0+40c69e7-cp311-cp311-linux_aarch64.whl"
+TE_TORCH_WHEEL_BASE="transformer_engine_torch-2.8.0+40c69e7-${PYTHON_ABI_TAG}-${PYTHON_ABI_TAG}-linux_aarch64.whl"
 
 install_wheel_from_cache() {
     local wheel_name="$1"
-    local full_path="$PROJECT_ROOT/vendor/wheels/${wheel_name}"
+    local full_path="${THIRD_PARTY_DIR}/wheels/${wheel_name}"
     local parts_prefix="${full_path}.part"
 
     if [ -f "$full_path" ]; then
@@ -790,10 +930,12 @@ install_wheel_from_cache() {
 
 install_te_from_source() {
     python3 -m pip install --no-input --upgrade --ignore-installed pybind11
-    if TORCH_CUDA_ARCH_LIST=120 \
+    local torch_wheel="${PYTORCH_WHEEL_PATH}"
+    if TORCH_CUDA_ARCH_LIST="${TORCH_SM_ARCH_LIST_VALUE}" \
        CUDNN_INCLUDE_DIR="${CUDNN_INCLUDE_DIR}" \
        CUDNN_LIBRARY_DIR="${CUDNN_LIBRARY_DIR}" \
        python3 -m pip install --no-input --upgrade --ignore-installed --no-build-isolation \
+           "${torch_wheel}" \
            git+https://github.com/NVIDIA/TransformerEngine.git; then
         echo "Transformer Engine installed (FP8 kernels ready where supported)"
         return 0
@@ -811,6 +953,8 @@ else
     echo "Cached Transformer Engine wheels unavailable; attempting source build..."
     install_te_from_source
 fi
+
+# Ensure our custom PyTorch wheel remains installed after Transformer Engine setup
 
 python3 <<'PY'
 import importlib.util
@@ -896,7 +1040,7 @@ else:
                 ).strip()
             )
     else:
-        print("CUDA runtime not available. Ensure the NVIDIA driver meets CUDA 13.0 requirements and reboot if this is a fresh install.")
+        print("CUDA runtime not available. Ensure the NVIDIA driver meets CUDA 13.0 Update 2 requirements and reboot if this is a fresh install.")
 PY
 
 # Check CUDA tools
@@ -1050,7 +1194,7 @@ export TORCH_COMPILE_DEBUG=0
 export TORCH_LOGS="+dynamo"
 
 # CUDA paths
-export CUDA_HOME=/usr/local/cuda-13.0
+export CUDA_HOME="${CUDA_HOME_DIR}"
 export PATH=$CUDA_HOME/bin:$PATH
 export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
 
@@ -1205,7 +1349,7 @@ echo "================================================================="
 #   - C++ headers for direct CUDA C++ kernel development
 #   - All CUTLASS library headers (1000+ header files)
 echo "Installing nvidia-cutlass-dsl and cuda-python (pinned versions)..."
-pip install --no-cache-dir --upgrade --ignore-installed "nvidia-cutlass-dsl==4.2.1" "cuda-python==13.0.3"
+python3 -m pip install --no-cache-dir --upgrade --ignore-installed "nvidia-cutlass-dsl==4.2.1" "cuda-python==13.0.3"
 
 if [ $? -eq 0 ]; then
     echo "CUTLASS backend packages installed (pinned versions)"
@@ -1378,9 +1522,9 @@ echo "Setup Complete!"
 echo "=================="
 echo ""
 echo "Installed:"
-echo "  • PyTorch 2.9.0 with CUDA 13.0 (pinned)"
-echo "  • CUDA 13.0 toolchain and development tools"
-echo "  • NCCL 2.28.7 (Blackwell-optimized with NVLS support)"
+echo "  • PyTorch nightly commit ${PYTORCH_COMMIT} (source build with NVIDIA arch list)"
+echo "  • CUDA ${CUDA_FULL_VERSION} toolchain and development tools"
+echo "  • NCCL ${NCCL_SHORT_VERSION} (Blackwell-optimized with NVLS support)"
 echo "  • NVSHMEM 3.4.5 runtime and headers (CUDA 13)"
 echo "  • GPUDirect Storage (GDS) tools, drivers, and kvikio library"
 echo "  • NVIDIA Nsight Systems (latest available)"
@@ -1393,6 +1537,18 @@ echo "  • PyTorch installation and CUDA functionality"
 echo "  • NVLink connectivity (if multi-GPU)"
 echo "  • CUTLASS backend configuration"
 echo "  • GPUDirect Storage (GDS) functionality"
+echo ""
+echo "Post-Run Checklist:"
+echo "  • Verify Python runtime:          python --version  (expect 3.12.x)"
+echo "  • Verify CUDA compiler:           nvcc --version    (expect release 13.0.88 / Update 2)"
+echo "  • Verify driver & GPU status:     nvidia-smi        (expect driver ${REQUIRED_DRIVER_VERSION})"
+echo "  • Verify PyTorch arch coverage:   python - <<'PY'"
+echo "                                      import torch"
+echo "                                      print(torch.cuda.get_arch_list())"
+echo "                                    PY"
+echo "                                    (expect ['sm_100', 'sm_120', 'sm_121', 'compute_121'])"
+echo "  • cuDNN reminder: container ships cuDNN ${CUDNN_VERSION} (build links system libcudnn9 packages)"
+echo "  • Before additional builds: source /etc/profile.d/cuda-${CUDA_SHORT_VERSION}.sh (or start a new shell)"
 echo ""
 echo "Quick Start:"
 echo "  1. Run: python3 ch1/performance_basics.py"

@@ -189,6 +189,7 @@ class BenchmarkConfig:
           This ensures bitwise reproducibility but may impact performance:
           * cuDNN algorithms may be slower (no autotuning)
           * Some operations may use less efficient deterministic implementations
+          * Operations without deterministic implementations may raise errors at runtime
           * Performance impact typically 5-20% depending on workload
           * Use only when reproducibility is more important than performance
         
@@ -613,7 +614,7 @@ class BenchmarkHarness:
         if self.config.deterministic and LOGGER_AVAILABLE:
             logger.info(
                 "Deterministic mode enabled (may impact performance by 5-20%). "
-                "This ensures bitwise reproducibility but uses slower deterministic algorithms."
+                "This ensures bitwise reproducibility, but forces slower fallback kernels and ops without deterministic support may raise."
             )
         
         return seed_info

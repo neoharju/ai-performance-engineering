@@ -186,7 +186,7 @@ config = BenchmarkConfig(
 **Deterministic mode**:
 - `torch.use_deterministic_algorithms(True)` - Uses slower but reproducible algorithms
 - `torch.backends.cudnn.deterministic = True` - Disables cuDNN autotuning
-- **Trade-off**: 5-20% performance impact, but ensures identical results
+- **Trade-off**: Falls back to slower kernels (often 5–20% hit) and ops without deterministic support raise at runtime
 
 #### Run Manifest
 
@@ -515,7 +515,7 @@ python tools/cli/benchmark_cli.py run --targets ch13
 python tools/cli/benchmark_cli.py run --reproducible
 ```
 
-**Result**: All seeds set to 42, deterministic algorithms enabled, identical results across runs.
+**Result**: All seeds set to 42, deterministic algorithms enabled; expect matching outputs at the cost of slower kernels and possible op errors if deterministic paths are missing.
 
 ### Example 3: Extended Timeouts for Slow Systems
 

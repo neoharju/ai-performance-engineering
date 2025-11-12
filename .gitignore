@@ -40,3 +40,6 @@ github_repo.tar.gz
 master_profile_*/
 profile_suite.log
 *.log
+code/third_party/pytorch-src/
+code/third_party/pytorch-src/
+code/vendor/pytorch-src/

@@ -223,7 +223,7 @@ def _execute_benchmarks_impl(
     if timeout_multiplier != 1.0:
         logger.info(f"TIMEOUT MULTIPLIER: {timeout_multiplier}x (all timeouts scaled by this factor)")
     if reproducible:
-        logger.info("REPRODUCIBLE MODE: All seeds set to 42, deterministic algorithms enabled (may impact performance)")
+        logger.info("REPRODUCIBLE MODE: All seeds set to 42, deterministic algorithms enabled; slower fallback kernels and ops lacking deterministic support may raise.")
     if cold_start:
         logger.info("COLD START MODE: GPU state will be reset between benchmarks")
     
@@ -368,7 +368,7 @@ if TYPER_AVAILABLE:
         enable_profiling: bool = Option(False, "--profile", help="Enable profiling (nsys/ncu/PyTorch). Disabled by default to avoid long GPU stalls.", is_flag=True),
         suite_timeout: Optional[int] = Option(None, "--suite-timeout", help="Suite timeout in seconds (default: 14400 = 4 hours, 0 = disabled)"),
         timeout_multiplier: float = Option(1.0, "--timeout-multiplier", help="Multiply all benchmark timeouts by this factor (e.g., 2.0 = double all timeouts)"),
-        reproducible: bool = Option(False, "--reproducible", help="Enable reproducible mode: set all seeds to 42 and enable deterministic algorithms (may impact performance)"),
+        reproducible: bool = Option(False, "--reproducible", help="Enable reproducible mode: set all seeds to 42 and force deterministic algorithms (uses slower fallbacks; ops without deterministic support may error)."),
         cold_start: bool = Option(False, "--cold-start", help="Reset GPU state between benchmarks for cold start measurements"),
         iterations: Optional[int] = Option(None, "--iterations", help="Number of benchmark iterations (default: 20)"),
         warmup: Optional[int] = Option(None, "--warmup", help="Number of warmup iterations (default: 5)"),

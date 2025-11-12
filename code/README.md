@@ -129,7 +129,7 @@ Artifacts land under `artifacts/<timestamp>/<example>/results/benchmark_test_res
 
 ### Options & Controls
 - `--timeout-multiplier`, `--suite-timeout` – stretch or cap run time.
-- `--reproducible` – force deterministic seeds and algorithms.
+- `--reproducible` – force deterministic seeds/algorithms; slower fallback kernels and ops without deterministic support may fail.
 - `--cold-start` – extra cleanup between benchmarks (includes garbage collection and CUDA context resets).
 - `--profile/--no-profile` – opt into Nsight/Torch tracing when needed.
 - `--iterations`, `--warmup` – override the default 20/5 sampling when you need quicker local experiments.

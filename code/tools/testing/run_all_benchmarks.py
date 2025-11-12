@@ -1453,7 +1453,7 @@ def _test_chapter_impl(
         enable_profiling: If True, generate profiling files (nsys, ncu, PyTorch) alongside benchmarks
         smoke_test: If True, reduce iterations/warmup for quick validation runs
         timeout_multiplier: Multiply all timeouts by this factor (e.g., 2.0 = double all timeouts)
-        reproducible: If True, set all seeds to 42 and enable deterministic algorithms
+        reproducible: If True, set all seeds to 42 and force deterministic algorithms (slower fallbacks; ops without deterministic support may fail)
         cold_start: If True, perform additional GPU state cleanup (gc.collect()) between benchmarks for cold start measurements. CUDA state is always reset by default.
         iterations: Number of benchmark iterations (defaults to 20 if not provided)
         warmup: Number of warmup iterations (defaults to 5 if not provided)
@@ -2901,7 +2901,7 @@ def main():
     parser.add_argument(
         '--reproducible',
         action='store_true',
-        help='Force deterministic seeds and algorithms for reproducible comparisons.'
+        help='Force deterministic seeds/algorithms for reproducible comparisons (slower fallbacks; ops without deterministic support may fail).'
     )
     parser.add_argument(
         '--cold-start',

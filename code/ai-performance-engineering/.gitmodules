@@ -4,6 +4,4 @@
 [submodule "code/third_party/TransformerEngine"]
 	path = code/third_party/TransformerEngine
 	url = https://github.com/NVIDIA/TransformerEngine.git
-[submodule "third_party/TransformerEngine"]
-	path = third_party/TransformerEngine
-	url = https://github.com/NVIDIA/TransformerEngine.git
+
