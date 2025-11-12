@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Optional
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,10 @@ class Chapter10Workload:
 
     warp_elements: int = 16_777_216
     warp_branch_iterations: int = 32
+
+    def warp_branch_iterations_for_mode(self, mode: Optional[str] = None) -> int:
+        """Return iterations for warp divergence demos (mode reserved for future use)."""
+        return self.warp_branch_iterations
 
 
 WORKLOAD = Chapter10Workload()
