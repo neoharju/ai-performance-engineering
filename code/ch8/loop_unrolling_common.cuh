@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cuda_runtime.h>
+#include <cstdint>
 
 namespace ch8 {
 
@@ -13,6 +14,7 @@ constexpr int kRedundantAccums = 16;
 constexpr int kThreadsPerGroup = 32;
 constexpr int kRowPairsPerIter = kThreadsPerBlock / kThreadsPerGroup;
 static_assert(kThreadsPerBlock % kThreadsPerGroup == 0, "Block size must be a multiple of warp size");
+static_assert(kWeightPeriod <= kThreadsPerGroup, "Weight period must fit within a warp");
 
 __global__ void loop_unrolling_naive_kernel(
     const float* __restrict__ inputs,
@@ -52,6 +54,17 @@ __global__ void loop_unrolling_optimized_kernel(
 
     const int group_id = threadIdx.x / kThreadsPerGroup;
     const int group_lane = threadIdx.x % kThreadsPerGroup;
+    const unsigned weight_warp_mask = __activemask();
+
+    float weight_cache[kWeightPeriod];
+    float lane_weight = 0.0f;
+    if (group_lane < kWeightPeriod) {
+        lane_weight = weights[group_lane];
+    }
+#pragma unroll
+    for (int w = 0; w < kWeightPeriod; ++w) {
+        weight_cache[w] = __shfl_sync(weight_warp_mask, lane_weight, w, kThreadsPerGroup);
+    }
 
     for (int block_row_base = blockIdx.x * kRowPairsPerIter * kRowsPerThread;
          block_row_base < rows;
@@ -81,7 +94,7 @@ __global__ void loop_unrolling_optimized_kernel(
         float thread_accum0 = 0.0f;
         float thread_accum1 = 0.0f;
         for (int idx = group_lane; idx < kElementsPerRow; idx += kThreadsPerGroup) {
-            const float weight = weights[idx & weight_mask];
+            const float weight = weight_cache[idx & weight_mask];
             const float mul0 = group_tile0[idx] * weight;
 #pragma unroll
             for (int repeat = 0; repeat < kRedundantAccums; ++repeat) {
@@ -104,9 +117,18 @@ __global__ void loop_unrolling_optimized_kernel(
         }
 
         if (group_lane == 0) {
-            output[row0] = thread_accum0;
+            float* row0_ptr = output + row0;
             if (has_row1) {
-                output[row1] = thread_accum1;
+                float2 store_vals{thread_accum0, thread_accum1};
+                constexpr uintptr_t vec_align = alignof(float2) - 1;
+                if ((reinterpret_cast<uintptr_t>(row0_ptr) & vec_align) == 0) {
+                    reinterpret_cast<float2*>(row0_ptr)[0] = store_vals;
+                } else {
+                    row0_ptr[0] = store_vals.x;
+                    row0_ptr[1] = store_vals.y;
+                }
+            } else {
+                row0_ptr[0] = thread_accum0;
             }
         }
         __syncwarp(warp_mask);

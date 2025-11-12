@@ -39,7 +39,7 @@ Usage:
 Harness mode (preferred):
   For registered examples, forward directly to profile_harness.py. Any
   of the harness arguments (--examples, --tags, --profile, --profile-mode,
-  --dry-run, --skip-existing, --force-build, --skip-smoke, etc.) can be passed through.
+  --dry-run, --skip-existing, --force-build, etc.) can be passed through.
 
 Direct mode:
   Executes a specific script path with Nsight Systems, Nsight Compute,
@@ -224,7 +224,7 @@ case "$1" in
         "$PYTHON_DEFAULT" "$HARNESS" --list
         exit $?
         ;;
-    --examples|--example|--tags|--tag|--profile|--profile-mode|--output-root|--dry-run|--skip-existing|--max-examples|--force-build|--skip-smoke)
+    --examples|--example|--tags|--tag|--profile|--profile-mode|--output-root|--dry-run|--skip-existing|--max-examples|--force-build)
         "$PYTHON_DEFAULT" "$HARNESS" "$@"
         exit $?
         ;;

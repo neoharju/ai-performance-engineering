@@ -31,6 +31,9 @@ class DoubleBufferingBenchmarkBase(Benchmark):
         self.input: Optional[torch.Tensor] = None
         self.output: Optional[torch.Tensor] = None
         self.host_input: Optional[torch.Tensor] = None
+        self.elements: Optional[int] = None
+        self._elements_override: Optional[int] = None
+        self._skip_validation: bool = False
 
     def setup(self) -> None:
         self.extension = load_cuda_extension(
@@ -40,7 +43,8 @@ class DoubleBufferingBenchmarkBase(Benchmark):
         )
 
         torch.manual_seed(123)
-        elements = self.block * self.tile * 8192
+        elements = self._effective_elements()
+        self.elements = elements
         device_input = torch.randn(elements, device=self.device, dtype=torch.float32).contiguous()
         self.input = device_input
         self.host_input = device_input.cpu().pin_memory()
@@ -48,8 +52,9 @@ class DoubleBufferingBenchmarkBase(Benchmark):
 
         self._invoke_kernel()
         torch.cuda.synchronize()
-        self._validate_correctness()
-        torch.cuda.synchronize()
+        if not self._skip_validation:
+            self._validate_correctness()
+            torch.cuda.synchronize()
 
     def benchmark_fn(self) -> None:
         from common.python.nvtx_helper import get_nvtx_enabled, nvtx_range
@@ -89,3 +94,23 @@ class DoubleBufferingBenchmarkBase(Benchmark):
         if self.output is None:
             return "Output not initialized"
         return None
+        return None
+
+    # ------------------------------------------------------------------ #
+    # Profiling helpers (explicitly toggled by CLI flags)
+    # ------------------------------------------------------------------ #
+    def configure_profile_overrides(
+        self,
+        *,
+        elements: Optional[int] = None,
+        skip_validation: bool = False,
+    ) -> None:
+        """Install optional overrides (used when profiling tools require smaller grids)."""
+        self._elements_override = elements
+        self._skip_validation = skip_validation
+
+    def _effective_elements(self) -> int:
+        default_elements = self.block * self.tile * 8192
+        if self._elements_override is None:
+            return default_elements
+        return max(self._elements_override, self.block * self.tile)

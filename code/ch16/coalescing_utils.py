@@ -13,7 +13,7 @@ def resolve_matrix_shape(
     """
     Return a valid (rows, cols) pair for a flattened tensor.
 
-    Some harnesses may overwrite ``rows``/``cols`` when running in smoke mode.
+    Some harnesses may overwrite ``rows``/``cols`` when running in reduced configs.
     This helper reconstructs the missing dimension so we can pass fully
     specified shapes to the CUDA extension.
     """

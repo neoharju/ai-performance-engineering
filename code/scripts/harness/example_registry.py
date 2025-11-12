@@ -24,15 +24,6 @@ class BuildStep:
 
 
 @dataclass(frozen=True)
-class SmokeTest:
-    command: Tuple[str, ...]
-    workdir: Path
-    env: Dict[str, str] = field(default_factory=dict)
-    timeout_seconds: Optional[int] = None
-    description: Optional[str] = None
-
-
-@dataclass(frozen=True)
 class Example:
     """Metadata wrapper for an example entry."""
 
@@ -52,7 +43,6 @@ class Example:
     kind: ExampleKind = ExampleKind.PYTHON
     source: Optional[Path] = None
     build_steps: Tuple[BuildStep, ...] = field(default_factory=tuple)
-    smoke_test: Optional[SmokeTest] = None
     run_command: Optional[Tuple[str, ...]] = None
     workdir: Optional[Path] = None
 
@@ -92,7 +82,6 @@ def _example(
     kind: ExampleKind = ExampleKind.PYTHON,
     source: Optional[str] = None,
     build_steps: Optional[Sequence[BuildStep]] = None,
-    smoke_test: Optional[SmokeTest] = None,
     run_command: Optional[Sequence[str]] = None,
     workdir: Optional[str] = None,
 ) -> Example:
@@ -113,7 +102,6 @@ def _example(
         kind=ExampleKind(kind.value if isinstance(kind, ExampleKind) else kind),
         source=Path(source) if source else None,
         build_steps=tuple(build_steps or ()),
-        smoke_test=smoke_test,
         run_command=tuple(run_command) if run_command else None,
         workdir=Path(workdir) if workdir else None,
     )
@@ -165,12 +153,6 @@ def _discover_cuda_examples(existing_names: Optional[Iterable[str]] = None) -> L
             description="Compile CUDA example for profiling",
         )
 
-        smoke = SmokeTest(
-            command=(str(binary_rel),),
-            workdir=code_root,
-            description="Run compiled CUDA binary",
-        )
-
         discovered.append(
             Example(
                 name=name,
@@ -189,7 +171,6 @@ def _discover_cuda_examples(existing_names: Optional[Iterable[str]] = None) -> L
                 kind=ExampleKind.CUDA,
                 source=rel_source,
                 build_steps=(build_step,),
-                smoke_test=smoke,
                 run_command=None,
                 workdir=None,
             )

@@ -54,8 +54,8 @@ def harness():
     return BenchmarkHarness(mode=BenchmarkMode.CUSTOM, config=config)
 
 
-def test_baseline_optimized_speedup_smoke(request, harness):
-    """Lightweight smoke test: verify one benchmark pair shows expected speedup.
+def test_quick_baseline_optimized_speedup(request, harness):
+    """Lightweight sanity check: verify one benchmark pair shows expected speedup.
     
     This is a minimal regression check that only tests a single benchmark pair
     to keep CI times reasonable. Additional slow tests can be run by removing
@@ -67,7 +67,7 @@ def test_baseline_optimized_speedup_smoke(request, harness):
     if not ch1_dir.exists():
         pytest.skip("ch1 directory not found")
     
-    # Only test one specific benchmark pair for smoke test
+    # Only test one specific benchmark pair for the quick check
     baseline_path = ch1_dir / "baseline_ilp_basic.py"
     optimized_path = ch1_dir / "optimized_ilp_basic.py"
     
@@ -215,4 +215,3 @@ def test_benchmark_validation_coverage(request):
         # Validation should pass (return None) for correct implementations
         assert validation_error is None, f"Validation failed for {benchmark_file}: {validation_error}"
         benchmark.teardown()
-

@@ -18,7 +18,6 @@ from example_registry import (
     BuildStep,
     Example,
     ExampleKind,
-    SmokeTest,
 )
 from metrics_config import (
     BASE_NCU_METRICS,
@@ -255,72 +254,6 @@ def prepare_example(
     return results, success
 
 
-def resolved_smoke_test(example: Example, repo_root: Path) -> SmokeTest:
-    if example.smoke_test is not None:
-        return example.smoke_test
-
-    command = tuple(example_run_command(example, repo_root))
-    workdir = example.resolved_workdir(repo_root)
-    return SmokeTest(
-        command=command,
-        workdir=workdir,
-        env={"APE_SMOKE_TEST": "1"},
-        timeout_seconds=min(example.timeout_seconds or DEFAULT_TIMEOUT, 120),
-        description="Auto smoke test",
-    )
-
-
-def run_smoke_test(
-    example: Example,
-    session_dir: Path,
-    repo_root: Path,
-    context: argparse.Namespace,
-) -> RunResult:
-    smoke = resolved_smoke_test(example, repo_root)
-    out_dir = preparation_output_dir(session_dir, example, "smoke")
-    out_dir.mkdir(parents=True, exist_ok=True)
-    stdout_path = out_dir / "stdout.log"
-    stderr_path = out_dir / "stderr.log"
-
-    env = base_env(example)
-    env.update(smoke.env)
-
-    timeout = smoke.timeout_seconds or min(example.timeout_seconds or DEFAULT_TIMEOUT, 300)
-
-    log_progress(
-        "smoke",
-        example.name,
-        "start",
-        format_command(smoke.command),
-    )
-    exit_code, duration = run_command(
-        list(smoke.command),
-        cwd=smoke.workdir,
-        env=env,
-        timeout=timeout,
-        stdout_path=stdout_path,
-        stderr_path=stderr_path,
-        dry_run=context.dry_run,
-    )
-    if context.dry_run:
-        log_progress("smoke", example.name, "dry-run")
-    else:
-        status = "ok" if exit_code == 0 else f"fail(exit={exit_code})"
-        log_progress("smoke", example.name, status, f"duration={duration:.2f}s")
-
-    return RunResult(
-        profiler="smoke",
-        example=example,
-        command=list(smoke.command),
-        output_dir=out_dir,
-        stdout_path=stdout_path,
-        stderr_path=stderr_path,
-        duration=duration,
-        exit_code=exit_code,
-        skipped=context.dry_run,
-        skip_reason="dry-run" if context.dry_run else None,
-    )
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Profiling harness for all chapter examples")
     parser.add_argument(
@@ -377,11 +310,6 @@ def parse_args() -> argparse.Namespace:
         "--force-build",
         action="store_true",
         help="Force rebuild of all examples before profiling",
-    )
-    parser.add_argument(
-        "--skip-smoke",
-        action="store_true",
-        help="Skip smoke tests before profiling",
     )
     return parser.parse_args()
 
@@ -1215,31 +1143,6 @@ def main() -> None:
             print(f"[skip] {example.name} -> build failed")
             log_progress("example", f"{index}/{total_examples}", example.name, "build-failed")
             continue
-
-        if args.skip_smoke:
-            smoke_dir = preparation_output_dir(session_dir, example, "smoke")
-            smoke_dir.mkdir(parents=True, exist_ok=True)
-            all_results.append(
-                RunResult(
-                    profiler="smoke",
-                    example=example,
-                    command=[],
-                    output_dir=smoke_dir,
-                    stdout_path=smoke_dir / "stdout.log",
-                    stderr_path=smoke_dir / "stderr.log",
-                    duration=0.0,
-                    exit_code=0,
-                    skipped=True,
-                    skip_reason="user-skip",
-                )
-            )
-        else:
-            smoke_result = run_smoke_test(example, session_dir, REPO_ROOT, args)
-            all_results.append(smoke_result)
-            if not smoke_result.skipped and smoke_result.exit_code != 0:
-                print(f"[skip] {example.name} -> smoke test failed")
-                log_progress("example", f"{index}/{total_examples}", example.name, "smoke-failed")
-                continue
 
         for profiler in profilers:
             if profiler == "pytorch":

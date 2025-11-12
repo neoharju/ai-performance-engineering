@@ -515,6 +515,7 @@ python3 [script]
 - **Optimized** (`ch8/optimized_double_buffering.py`): keeps data on device and pipelines loads in shared memory, mirroring the chapter narrative.
 - **Run**: `python tools/cli/benchmark_cli.py run --targets ch8:double_buffering`
 - **Speedup**: ≥4×.
+- **Profiling tip**: Nsight Compute on GB10 boards sometimes fails to profile the full grid. Use the standalone binary with `--profile-lite` (e.g., `ncu … ./ch8/optimized_double_buffering_pipelined_sm121 --profile-lite`) to collect counters, then switch back to the default configuration for final timings/regressions. Advanced users can instead raise the Nsight/driver watchdog timeout (e.g., via `nvidia-smi -rt` on supported systems), but that requires admin rights and affects every CUDA workload running on the box.
 
 ### Thresholding with cp.async + Warp Ballots
 - **Baseline** (`ch8/baseline_threshold.py` + `.cu`): branchy kernel that copies tensors from host per iteration and computes sin/cos everywhere.

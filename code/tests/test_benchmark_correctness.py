@@ -1,10 +1,11 @@
 """Pytest tests for benchmark correctness.
 
-Smoke tests for benchmark correctness - only tests a small whitelist of benchmarks
-to keep CI times reasonable. Full suite can be run with --full-benchmark-tests flag.
+Lightweight correctness checks run against a small whitelist of benchmarks
+to keep CI times reasonable. Run with --full-benchmark-tests to exercise the
+entire suite.
 
 Usage:
-    pytest tests/test_benchmark_correctness.py                    # Smoke test (whitelist only)
+    pytest tests/test_benchmark_correctness.py                    # Quick whitelist only
     pytest tests/test_benchmark_correctness.py --full-benchmark-tests  # Full test suite
 
 Tests that benchmarks:
@@ -38,9 +39,9 @@ pytestmark = pytest.mark.skipif(
     reason="CUDA required - NVIDIA GPU and tools must be available"
 )
 
-# Whitelist of chapters/benchmarks for smoke testing
+# Whitelist of chapters/benchmarks for quick correctness checks
 # Only test a few representative benchmarks to keep CI fast
-SMOKE_TEST_WHITELIST = [
+QUICK_TEST_WHITELIST = [
     ("ch1", "baseline_ilp_basic.py"),
     ("ch1", "optimized_ilp_basic.py"),
     ("ch18", "baseline_quantization.py"),
@@ -54,7 +55,7 @@ def pytest_addoption(parser):
         "--full-benchmark-tests",
         action="store_true",
         default=False,
-        help="Run full benchmark test suite (all chapters) instead of smoke test whitelist"
+        help="Run full benchmark test suite (all chapters) instead of the quick whitelist"
     )
 
 
@@ -65,7 +66,7 @@ def get_test_chapters(request):
         request: pytest request object to access config
         
     Returns:
-        List of (chapter_dir, benchmark_files) tuples for smoke testing,
+        List of (chapter_dir, benchmark_files) tuples for the quick whitelist,
         or all chapters if --full-benchmark-tests flag is set.
     """
     repo_root = Path(__file__).parent.parent
@@ -79,9 +80,9 @@ def get_test_chapters(request):
                 chapter_dirs.append(ch_dir)
         return sorted(chapter_dirs)
     else:
-        # Smoke test - only whitelisted benchmarks
+        # Quick check - only whitelisted benchmarks
         test_items = []
-        for chapter_name, benchmark_file in SMOKE_TEST_WHITELIST:
+        for chapter_name, benchmark_file in QUICK_TEST_WHITELIST:
             chapter_dir = repo_root / chapter_name
             if chapter_dir.exists():
                 benchmark_path = chapter_dir / benchmark_file
@@ -244,7 +245,7 @@ def test_benchmark_validation(request):
 
 
 def test_benchmark_protocol_compliance():
-    """Test that benchmarks implement the Benchmark protocol correctly (smoke test only)."""
+    """Test that benchmarks implement the Benchmark protocol correctly (quick check only)."""
     from common.python.benchmark_harness import Benchmark
     
     # Test that a sample benchmark implements the protocol
@@ -254,7 +255,7 @@ def test_benchmark_protocol_compliance():
     if not ch1_dir.exists():
         pytest.skip("ch1 directory not found")
     
-    # Use whitelisted benchmark for smoke test
+    # Use whitelisted benchmark for the quick check
     baseline_path = ch1_dir / "baseline_ilp_basic.py"
     if not baseline_path.exists():
         pytest.skip("baseline_ilp_basic.py not found")
@@ -276,4 +277,3 @@ def test_benchmark_protocol_compliance():
     assert callable(benchmark.teardown)
     assert callable(benchmark.get_config)
     assert callable(benchmark.validate_result)
-

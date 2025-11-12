@@ -126,8 +126,8 @@ class TilingBenchmarkBase(Benchmark):
     def get_config(self) -> BenchmarkConfig:
         """Use fewer iterations because each kernel is compute-heavy."""
         return BenchmarkConfig(
-            iterations=30,
-            warmup=5,
+            iterations=48,
+            warmup=8,
         )
 
     def validate_result(self) -> Optional[str]:

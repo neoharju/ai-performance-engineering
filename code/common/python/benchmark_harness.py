@@ -187,7 +187,7 @@ class BenchmarkConfig:
     iterations: int = field(default_factory=lambda: _get_default_value("iterations", 100))
     warmup: int = field(default_factory=lambda: _get_default_value("warmup", 10))
     min_run_time_ms: float = field(default_factory=lambda: _get_default_value("min_run_time_ms", 100.0))
-    percentiles: List[float] = field(default_factory=lambda: (_get_default_value("percentiles", [25, 50, 75, 99]) or [25, 50, 75, 99]).copy())
+    percentiles: List[float] = field(default_factory=lambda: (_get_default_value("percentiles", [25, 50, 75, 90, 99]) or [25, 50, 75, 90, 99]).copy())
     enable_memory_tracking: bool = field(default_factory=lambda: _get_default_value("enable_memory_tracking", False))
     deterministic: bool = field(default_factory=lambda: _get_default_value("deterministic", False))
     seed: Optional[int] = field(default_factory=lambda: _get_default_value("seed", None))

@@ -46,7 +46,7 @@ def skip_if_insufficient_gpus(min_gpus: int = 2) -> None:
     Raise a standardized SKIPPED RuntimeError when the system lacks enough GPUs.
     
     This lets the benchmark harness record hardware limitations instead of
-    counting the benchmark as a failure in smoke-test mode.
+    counting the benchmark as a failure during canonical runs.
     """
     available_gpus = torch.cuda.device_count()
     if available_gpus < min_gpus:

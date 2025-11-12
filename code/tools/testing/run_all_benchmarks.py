@@ -355,6 +355,8 @@ def collect_expectation_metrics(result_entry: Dict[str, Any]) -> Tuple[Dict[str,
     metrics: Dict[str, float] = {}
     _capture_metric(metrics, "best_speedup", result_entry.get("best_speedup"))
     _capture_metric(metrics, "baseline_time_ms", result_entry.get("baseline_time_ms"))
+    _capture_metric(metrics, "baseline_p75_ms", result_entry.get("baseline_p75_ms"))
+    _capture_metric(metrics, "baseline_p90_ms", result_entry.get("baseline_p90_ms"))
 
     baseline_throughput = result_entry.get("baseline_throughput")
     _capture_payload(metrics, "baseline_throughput", baseline_throughput)
@@ -366,6 +368,8 @@ def collect_expectation_metrics(result_entry: Dict[str, Any]) -> Tuple[Dict[str,
     if best_opt:
         _capture_metric(metrics, "best_optimized_time_ms", best_opt.get("time_ms"))
         _capture_metric(metrics, "best_optimized_speedup", best_opt.get("speedup"))
+        _capture_metric(metrics, "best_optimized_p75_ms", best_opt.get("p75_ms"))
+        _capture_metric(metrics, "best_optimized_p90_ms", best_opt.get("p90_ms"))
         _capture_payload(metrics, "best_optimized_throughput", best_opt.get("throughput"))
         _capture_custom_metrics(metrics, "best_optimized_custom", best_opt.get("custom_metrics"))
 
@@ -912,7 +916,7 @@ def benchmark_cuda_executable(executable: Path, iterations: int = 3, warmup: int
     
     # Compute percentiles (same as BenchmarkHarness)
     # Use float keys to match how they're accessed (99.0, 75.0, etc.)
-    percentiles_to_compute = [25.0, 50.0, 75.0, 99.0]
+    percentiles_to_compute = [25.0, 50.0, 75.0, 90.0, 99.0]
     percentiles_dict = {}
     for p in percentiles_to_compute:
         idx = int((p / 100.0) * (n - 1))
@@ -1710,6 +1714,12 @@ def _test_chapter_impl(
                     p75 = baseline_timing.percentiles.get(75.0, 0)
                     p50 = baseline_timing.percentiles.get(50.0, baseline_timing.median_ms if baseline_timing else 0)
                     logger.info(f"      📈 Percentiles: p99={format_time_ms(p99)}ms, p75={format_time_ms(p75)}ms, p50={format_time_ms(p50)}ms")
+                    result_entry['baseline_percentiles'] = dict(baseline_timing.percentiles)
+                    if p75 is not None:
+                        result_entry['baseline_p75_ms'] = p75
+                    p90 = baseline_timing.p90_ms or baseline_timing.percentiles.get(90.0)
+                    if p90 is not None:
+                        result_entry['baseline_p90_ms'] = p90
                 baseline_throughput = baseline_result.throughput
                 throughput_summary = format_throughput_summary(baseline_throughput)
                 if throughput_summary:
@@ -1916,10 +1926,14 @@ def _test_chapter_impl(
                     if scenario_speedup is not None:
                         logger.info(f"        📊 Scenario phase-sum speedup: {scenario_speedup:.2f}x")
                     
+                    opt_p75 = None
+                    opt_p90 = None
                     if optimized_timing and optimized_timing.percentiles:
                         p99 = optimized_timing.percentiles.get(99.0, 0)
                         p75 = optimized_timing.percentiles.get(75.0, 0)
                         p50 = optimized_timing.percentiles.get(50.0, optimized_timing.median_ms if optimized_timing else 0)
+                        opt_p75 = p75
+                        opt_p90 = optimized_timing.p90_ms or optimized_timing.percentiles.get(90.0)
                         p99_speedup = ""
                         if baseline_timing and baseline_timing.percentiles and 99.0 in baseline_timing.percentiles:
                             p99_baseline = baseline_timing.percentiles[99.0]
@@ -1957,6 +1971,10 @@ def _test_chapter_impl(
                         'time_ms': optimized_time,
                         'speedup': speedup,
                     }
+                    if opt_p75 is not None:
+                        opt_result['p75_ms'] = opt_p75
+                    if opt_p90 is not None:
+                        opt_result['p90_ms'] = opt_p90
                     if opt_gpu_metrics:
                         opt_result['gpu_metrics'] = opt_gpu_metrics
                     if optimized_custom_metrics:
@@ -2282,6 +2300,12 @@ def _test_chapter_impl(
                 p75 = baseline_result.percentiles.get(75.0, 0)
                 p50 = baseline_result.percentiles.get(50.0, baseline_result.median_ms)
                 logger.info(f"      📈 Percentiles: p99={format_time_ms(p99)}ms, p75={format_time_ms(p75)}ms, p50={format_time_ms(p50)}ms")
+                result_entry['baseline_percentiles'] = dict(baseline_result.percentiles)
+                if p75 is not None:
+                    result_entry['baseline_p75_ms'] = p75
+                p90 = baseline_result.percentiles.get(90.0)
+                if p90 is not None:
+                    result_entry['baseline_p90_ms'] = p90
 
             baseline_gpu_metrics = getattr(baseline_result, "gpu_metrics", None)
             if not baseline_gpu_metrics:
@@ -2424,10 +2448,14 @@ def _test_chapter_impl(
                     f"std={format_time_ms(optimized_result.std_ms)}ms"
                 )
 
+                opt_p75 = None
+                opt_p90 = None
                 if optimized_result.percentiles:
                     p99 = optimized_result.percentiles.get(99.0, 0)
                     p75 = optimized_result.percentiles.get(75.0, 0)
                     p50 = optimized_result.percentiles.get(50.0, optimized_result.median_ms)
+                    opt_p75 = p75
+                    opt_p90 = optimized_result.percentiles.get(90.0)
                     p99_speedup = ""
                     if baseline_result.percentiles and 99.0 in baseline_result.percentiles:
                         p99_baseline = baseline_result.percentiles[99.0]
@@ -2460,6 +2488,10 @@ def _test_chapter_impl(
                     'time_ms': optimized_time,
                     'speedup': speedup,
                 }
+                if opt_p75 is not None:
+                    opt_result['p75_ms'] = opt_p75
+                if opt_p90 is not None:
+                    opt_result['p90_ms'] = opt_p90
                 cuda_opt_gpu_metrics = getattr(optimized_result, "gpu_metrics", None)
                 if not cuda_opt_gpu_metrics:
                     cuda_opt_gpu_metrics = query_gpu_telemetry()

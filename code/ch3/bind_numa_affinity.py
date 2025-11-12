@@ -314,7 +314,7 @@ def main() -> None:
         gpu_node = get_gpu_numa_node(local_rank)
         cpus = bind_process_to_node(gpu_node)
 
-        # Quick smoke test
+        # Quick sanity test
         dataset = DemoDataset(length=32)
         loader = DataLoader(
             dataset,
@@ -343,7 +343,7 @@ def main() -> None:
             loss.backward()
             optimizer.step()
             if step == 0:
-                print(f"[OK] NUMA binding smoke test passed (loss={loss.item():.4f})")
+                print(f"[OK] NUMA binding sanity test passed (loss={loss.item():.4f})")
             if step == 2:  # Quick test
                 break
 

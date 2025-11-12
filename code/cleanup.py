@@ -9,11 +9,6 @@ from pathlib import Path
 from typing import Dict, List, Set
 
 CHAPTER_PATTERNS = [
-    "all_chapters_results",
-    "all_chapters_results_bench",
-    "all_chapters_results_full",
-    "all_chapters_results_smoke",
-    "all_chapters_results_tail",
     "benchmark_results",
     "test_results",
     "test_results_*",

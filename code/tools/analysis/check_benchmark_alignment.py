@@ -5,7 +5,7 @@ This script statically inspects each baseline/optimized pair discovered via
 shares the same optimizer, NVTX label, and key workload knobs (batch/seq/hidden).
 
 It is intentionally lightweight (no benchmark execution) so we can run it on
-any workstation before firing off expensive smoke tests.
+any workstation before firing off the full benchmark suite.
 """
 
 from __future__ import annotations

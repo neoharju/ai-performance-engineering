@@ -96,7 +96,7 @@ def _split_targets(
     # when a "target" token is really an argument value.
     multi_value_options = {"--examples", "--tags", "--profile", "--profile-mode"}
     single_value_options = {"--output-root", "--max-examples"}
-    flag_options = {"--dry-run", "--skip-existing", "--force-build", "--skip-smoke", "--list", "--help", "-h"}
+    flag_options = {"--dry-run", "--skip-existing", "--force-build", "--list", "--help", "-h"}
 
     active_option: Optional[str] = None
     single_value_budget = 0

@@ -34,6 +34,10 @@ METRIC_DIRECTIONS: Dict[str, str] = {
     "best_optimized_throughput.samples_per_s": "higher",
     "best_optimized_throughput.goodput": "higher",
     "best_optimized_throughput.latency_ms": "lower",
+    "baseline_p75_ms": "lower",
+    "baseline_p90_ms": "lower",
+    "best_optimized_p75_ms": "lower",
+    "best_optimized_p90_ms": "lower",
     "baseline_custom.scenario_total_phase_ms": "lower",
     "best_optimized_custom.scenario_total_phase_ms": "lower",
 }

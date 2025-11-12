@@ -189,7 +189,7 @@ def dump_torch_compile_info(run_check: bool):
     print_section("torch.compile Support")
     
     if not run_check:
-        print("SKIPPED: torch.compile smoke test disabled (--fast).")
+        print("SKIPPED: torch.compile quick check disabled (--fast).")
         return
     
     if not torch.cuda.is_available():

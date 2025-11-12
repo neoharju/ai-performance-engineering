@@ -481,7 +481,7 @@ def main():
     global CURRENT_DEVICE_FLAVOR
     CURRENT_DEVICE_FLAVOR = device_flavor
 
-    # Auto-scale configuration for fast smoke tests while preserving MoE structure.
+    # Auto-scale configuration for quick validation runs while preserving MoE structure.
     # We keep expert count high but shrink hidden size when memory is limited so the
     # benchmark runs quickly and doesn't exhaust developer GPUs.
     if total_memory < 160:
