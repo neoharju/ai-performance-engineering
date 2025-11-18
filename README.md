@@ -10,7 +10,7 @@ AI Systems Performance Engineering code, tooling, and resources for the O'Reilly
 
 [![O'Reilly Book](img/ai_sys_perf_engg_cover_cheetah_sm.png)](https://www.amazon.com/Systems-Performance-Engineering-Optimizing-Algorithms/dp/B0F47689K8/)
 
-> **O'Reilly Book – Fall 2025**  
+> **O'Reilly Book – November 2025**  
 > [Available on Amazon](https://www.amazon.com/Systems-Performance-Engineering-Optimizing-Algorithms/dp/B0F47689K8/)
 
 ### AI Systems Performance Engineering Book
@@ -251,6 +251,7 @@ Recent sessions:
 - [PyTorch Model Optimization](resources/PyTorch_Model_Optimization.pdf)
 
 ### Monthly Meetup Summaries
+- **November 17, 2025** - [YouTube](https://youtu.be/2EWDG_Dxjs8) & Slides: [SpeedOfLight_Inference_Modular_Nov_17_2025_Abdul_Dakkak](resources/SpeedOfLight_Inference_Modular_Nov_17_2025_Abdul_Dakkak.pdf): Speed of Light Inference with NVIDIA and AMD GPUs and Modular Platform by Abdul Dakkak
 - **October 20, 2025** - [YouTube](https://youtu.be/d3ZLodGTlAo): AI-Powered GPU Kernel Optimization + Distributed PyTorch with nbdistributed
 - **September 15, 2025** – [YouTube](https://www.youtube.com/watch?v=eLnHXL1xXfM): Dynamic Adaptive RL inference kernel tuning deep dive.
 - **August 18, 2025** – [YouTube](https://www.youtube.com/watch?v=SBPlOUww57I): Multi-GPU orchestration strategies and Nsight profiling case studies.
