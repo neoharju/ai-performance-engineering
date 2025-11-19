@@ -51,6 +51,15 @@ ERROR: **Poor candidates:**
 
 ## Examples
 
+###  Regional Compile with Triton Fusion
+
+- **Baseline** (`ch14/baseline_regional_triton.py`): `torch.compile` the entire Transformer block (no Triton fusion) across a sequence-length schedule. `--warmup 0` to expose compile-time churn when buckets change.
+- **Optimized** (`ch14/optimized_regional_triton.py`): keep the block eager but fuse the MLP (RMSNorm → GELU → Linear) in a Triton kernel and regionally compile only that hot path. Same `--warmup 0` to show smaller compile scope plus fused epilogue benefits.
+- **Why Triton here?** Regional compile removes recompile churn; Triton adds steady-state gains by fusing epilogues, controlling tiling/vectorization, and reducing DRAM traffic in the MLP.
+- **Run**: `python tools/cli/benchmark_cli.py run -t ch14:regional_triton --iterations 4 --warmup 0`
+
+---
+
 ###  Comprehensive [file] Guide
 
 **Purpose**: Demonstrate [file] usage patterns and trade-offs.
@@ -491,4 +500,3 @@ Learn about:
 ---
 
 **Chapter Status**: [OK] Complete
-

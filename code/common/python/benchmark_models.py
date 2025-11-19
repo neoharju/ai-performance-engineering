@@ -7,7 +7,7 @@ All models include schemaVersion for forward compatibility.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, ConfigDict, field_validator
 
@@ -159,6 +159,7 @@ class ProfilerArtifacts(BaseModel):
     nsys_rep: Optional[str] = Field(None, description="Path to nsys report file")
     ncu_rep: Optional[str] = Field(None, description="Path to ncu report file")
     torch_trace_json: Optional[str] = Field(None, description="Path to PyTorch profiler trace JSON")
+    proton_report: Optional[str] = Field(None, description="Path to Proton kernel summary JSON")
     
     schemaVersion: str = Field("1.0", description="Schema version for forward compatibility")
     
@@ -169,6 +170,7 @@ class ProfilerArtifacts(BaseModel):
                 "nsys_rep": "artifacts/20240101_120000/profiles/benchmark.nsys-rep",
                 "ncu_rep": "artifacts/20240101_120000/profiles/benchmark.ncu-rep",
                 "torch_trace_json": "artifacts/20240101_120000/profiles/torch_trace.json",
+                "proton_report": "artifacts/20240101_120000/profiles/benchmark.proton.json",
                 "schemaVersion": "1.0"
             }
         }
@@ -220,6 +222,39 @@ class NcuMetrics(BaseModel):
         return result
 
 
+class ProtonMetrics(BaseModel):
+    """Extracted metrics from Proton profiling."""
+    
+    kernel_count: Optional[int] = Field(None, description="Number of kernels reported by Proton")
+    occupancy_limited_kernels: List[str] = Field(default_factory=list, description="Kernels flagged as occupancy-limited")
+    summary_stats: Dict[str, float] = Field(default_factory=dict, description="Aggregate Proton metrics (e.g., max regs/shared memory)")
+    kernel_summaries: List[Dict[str, Any]] = Field(default_factory=list, description="Raw per-kernel summaries from Proton")
+    
+    schemaVersion: str = Field("1.0", description="Schema version for forward compatibility")
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary format."""
+        result: Dict[str, Any] = {}
+        if self.kernel_count is not None:
+            result["proton_kernel_count"] = self.kernel_count
+        if self.occupancy_limited_kernels:
+            result["proton_occupancy_limited_kernels"] = ",".join(self.occupancy_limited_kernels)
+            result["proton_occupancy_limited_kernels_list"] = list(self.occupancy_limited_kernels)
+        for key, value in self.summary_stats.items():
+            result[f"proton_{key}"] = value
+        if self.summary_stats:
+            result["proton_summary_stats"] = self.summary_stats
+        if self.kernel_summaries:
+            names = [
+                k.get("name") for k in self.kernel_summaries[:3]
+                if isinstance(k, dict) and k.get("name")
+            ]
+            if names:
+                result["proton_top_kernels"] = ",".join(names)
+            result["proton_kernel_summaries"] = self.kernel_summaries
+        return result
+
+
 class TorchMetrics(BaseModel):
     """Extracted metrics from PyTorch profiler."""
     
@@ -251,6 +286,7 @@ class ProfilerMetrics(BaseModel):
     
     nsys: Optional[NsysMetrics] = Field(None, description="Nsys profiling metrics")
     ncu: Optional[NcuMetrics] = Field(None, description="NCU profiling metrics")
+    proton: Optional[ProtonMetrics] = Field(None, description="Proton profiling metrics")
     torch: Optional[TorchMetrics] = Field(None, description="PyTorch profiler metrics")
     
     schemaVersion: str = Field("1.0", description="Schema version for forward compatibility")

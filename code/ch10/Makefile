@@ -15,6 +15,7 @@ BASE_TARGETS = baseline_cluster_group optimized_cluster_group \
                optimized_cluster_group_single_cta \
                baseline_cooperative_persistent optimized_cooperative_persistent \
                baseline_double_buffered_pipeline optimized_double_buffered_pipeline \
+               baseline_flash_attn_tma_micro_pipeline optimized_flash_attn_tma_micro_pipeline \
                baseline_warp_specialized_pipeline optimized_warp_specialized_pipeline \
                optimized_warp_specialized_pipeline_enhanced \
                baseline_warp_specialized_cluster_pipeline optimized_warp_specialized_cluster_pipeline \
@@ -94,6 +95,12 @@ baseline_warp_specialized_cluster_pipeline$(SUFFIX): baseline_warp_specialized_c
 
 optimized_warp_specialized_cluster_pipeline$(SUFFIX): optimized_warp_specialized_cluster_pipeline.cu $(COMMON_HEADERS)
 	$(NVCC) $(NVCC_FLAGS) $(INCLUDES) -o $@ $<
+
+baseline_flash_attn_tma_micro_pipeline$(SUFFIX): baseline_flash_attn_tma_micro_pipeline.cu
+	$(NVCC) $(NVCC_FLAGS) -std=c++20 $(INCLUDES) -o $@ $<
+
+optimized_flash_attn_tma_micro_pipeline$(SUFFIX): optimized_flash_attn_tma_micro_pipeline.cu
+	$(NVCC) $(NVCC_FLAGS) -std=c++20 $(INCLUDES) -o $@ $<
 
 tma_2d_pipeline_blackwell$(SUFFIX): tma_2d_pipeline_blackwell.cu $(COMMON_HEADERS)
 	$(NVCC) $(NVCC_FLAGS) -std=c++17 $(INCLUDES) -lcuda -o $@ $<

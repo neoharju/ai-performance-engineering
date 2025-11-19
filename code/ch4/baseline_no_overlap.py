@@ -15,7 +15,7 @@ import torch.distributed as dist
 import torch.nn as nn
 import torch.optim as optim
 
-from ch4.gpu_requirements import skip_if_insufficient_gpus
+from common.python.gpu_requirements import skip_if_insufficient_gpus
 
 try:
     from distributed_helper import setup_single_gpu_env

@@ -7,7 +7,7 @@ from typing import Optional
 import torch
 
 from common.python.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata
-from ch5.gpu_requirements import skip_if_insufficient_gpus
+from common.python.gpu_requirements import skip_if_insufficient_gpus
 
 
 class BaselineDistributedBenchmark(BaseBenchmark):

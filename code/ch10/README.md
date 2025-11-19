@@ -203,6 +203,25 @@ make
 
 ---
 
+### 3. FlashAttention TMA Micro-Pipeline (Baseline → Optimized)
+
+**Purpose**: Demonstrate overlapped K/V tile movement with attention math using `cuda::pipeline` (cp.async/TMA + mbarriers under the hood).
+
+**Files**:
+- Baseline (blocking copies): `ch10/baseline_flash_attn_tma_micro_pipeline.cu`, runner `ch10/baseline_flash_attn_tma_micro_pipeline.py`
+- Optimized (async double buffer): `ch10/optimized_flash_attn_tma_micro_pipeline.cu`, runner `ch10/optimized_flash_attn_tma_micro_pipeline.py`
+
+**How to run**:
+```bash
+make baseline_flash_attn_tma_micro_pipeline optimized_flash_attn_tma_micro_pipeline
+python ch10/baseline_flash_attn_tma_micro_pipeline.py
+python ch10/optimized_flash_attn_tma_micro_pipeline.py
+```
+
+**What to compare**: Nsight Systems shows a single NVTX range (`flash_attn_tma_micro_pipeline`) for the optimized path with TMA copies overlapping WGMMA/compute, while the baseline exhibits serial load→compute phases.
+
+---
+
 ###  Producer-Consumer Warp Specialization
 
 **Purpose**: Dedicate warps to specific roles for maximum efficiency.

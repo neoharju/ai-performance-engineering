@@ -57,16 +57,7 @@ except ImportError:
             os.environ.setdefault("MASTER_PORT", "29500")
             os.environ.setdefault("LOCAL_RANK", "0")
 
-try:
-    from gpu_requirements import require_min_gpus, warn_optimal_gpu_count
-except ImportError:
-    def require_min_gpus(min_gpus, script_name=None):
-        import torch, sys
-        if torch.cuda.device_count() < min_gpus:
-            print(f"ERROR: This script requires {min_gpus} GPUs but only {torch.cuda.device_count()} available", file=sys.stderr)
-            sys.exit(1)
-    def warn_optimal_gpu_count(optimal_gpus, script_name=None):
-        pass  # Graceful fallback if arch_config not available
+from common.python.gpu_requirements import require_min_gpus, warn_optimal_gpu_count
 
 
 import os

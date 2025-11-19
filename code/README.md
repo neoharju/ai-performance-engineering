@@ -135,7 +135,7 @@ python tools/cli/benchmark_cli.py run --targets labs/flexattention:flex_attentio
 python tools/cli/benchmark_cli.py run --targets labs/moe_cuda --profile minimal
 python tools/cli/benchmark_cli.py run --targets labs/fullstack_cluster:09_end_to_end --profile minimal
 ```
-Targets follow the usual `chapter:example` format; omit `:example` to sweep every pair in a lab.
+Targets follow the usual `chapter:example` format; omit `:example` to sweep every pair in a lab. New: `labs/train_distributed:symmem_training` compares symmetric memory training (baseline disables symmetric memory; optimized enables it).
 
 **Benchmark discovery rules (important for variants):** the harness pairs `baseline_<name>.py`
 with any `optimized_<name>.py` and also any `optimized_<name>_<suffix>.py` in the same directory.
@@ -158,6 +158,7 @@ python tools/cli/benchmark_cli.py run --targets labs/moe_cuda:router labs/moe_cu
   - DDP: `torchrun --nproc_per_node 2 labs/train_distributed/ddp.py --mode optimized --compile` (uses DeBERTa v3; errors if process group missing).
   - FSDP: `torchrun --nproc_per_node 2 labs/train_distributed/train_fsdp.py --mode optimized --float8 --sequence-length 512 --steps 2` (uses Llama-3.2-1B; fails fast if world_size < 2 or if FSDP cannot shard).
   - ZeRO optimized variants are tagged multi-GPU and will skip when world_size < 2 during harness runs: `torchrun --nproc_per_node 2 labs/train_distributed/zero2.py --mode optimized --steps 3 --hidden-size 2048 --batch-size 4`. Baseline scripts emit a warning when run single-GPU because sharding benefits won’t appear.
+  - Symmetric memory training: `torchrun --nproc_per_node 2 ch4/symmetric_memory_training_advanced.py --demo optimizer` (baseline: add `--disable-symmetric`).
 - Next steps: gather tokens/s + peak memory for baseline vs optimized variants on your GPUs and choose the default knobs for future labs; if your stack lacks required kernels for these models, rebuild or switch them (DDP uses DeBERTa v3; FSDP uses Llama-3.2-1B).
 
 ### Legacy Runner / Targeted Examples

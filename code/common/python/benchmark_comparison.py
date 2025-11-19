@@ -198,6 +198,14 @@ METRIC_CONFIG: Dict[str, Tuple[str, MetricDirection, str, float, float]] = {
     # Profiler metrics - NSYS
     "profiler_metrics.nsys.total_gpu_time_ms": ("NSYS Total GPU Time", MetricDirection.LOWER_IS_BETTER, "ms", 5.0, 5.0),
     
+    # Profiler metrics - Proton (TorchInductor/Triton)
+    "profiler_metrics.proton.kernel_count": ("Proton Kernel Count", MetricDirection.LOWER_IS_BETTER, "kernels", 5.0, 5.0),
+    "profiler_metrics.proton.max_regs_per_thread": ("Proton Max Regs/Thread", MetricDirection.LOWER_IS_BETTER, "regs", 5.0, 5.0),
+    "profiler_metrics.proton.max_shared_mem_bytes": ("Proton Max Shared Mem", MetricDirection.LOWER_IS_BETTER, "bytes", 5.0, 5.0),
+    "profiler_metrics.proton.max_blocks_per_sm": ("Proton Max Blocks/SM", MetricDirection.HIGHER_IS_BETTER, "blocks", 5.0, 5.0),
+    "profiler_metrics.proton.max_time_ms": ("Proton Max Kernel Time", MetricDirection.LOWER_IS_BETTER, "ms", 5.0, 5.0),
+    "profiler_metrics.proton.occupancy_limited_kernel_count": ("Proton Occupancy-Limited Kernels", MetricDirection.LOWER_IS_BETTER, "kernels", 5.0, 5.0),
+    
     # Profiler metrics - PyTorch
     "profiler_metrics.torch.total_time_ms": ("PyTorch Total Time", MetricDirection.LOWER_IS_BETTER, "ms", 5.0, 5.0),
     "profiler_metrics.torch.cuda_time_ms": ("PyTorch CUDA Time", MetricDirection.LOWER_IS_BETTER, "ms", 5.0, 5.0),
@@ -369,6 +377,31 @@ def extract_metrics(benchmark_result, include_raw_metrics: bool = False) -> Dict
                         metrics[f"profiler_metrics.nsys.raw.{key}"] = float(value)
                     except (TypeError, ValueError):
                         pass
+        
+        # Proton metrics
+        if getattr(prof, "proton", None):
+            proton = prof.proton
+            if proton.kernel_count is not None:
+                metrics["profiler_metrics.proton.kernel_count"] = proton.kernel_count
+            if proton.summary_stats:
+                for key, value in proton.summary_stats.items():
+                    try:
+                        metrics[f"profiler_metrics.proton.{key}"] = float(value)
+                    except (TypeError, ValueError):
+                        continue
+            if proton.occupancy_limited_kernels:
+                metrics["profiler_metrics.proton.occupancy_limited_kernel_count"] = len(proton.occupancy_limited_kernels)
+                if include_raw_metrics:
+                    metrics["profiler_metrics.proton.occupancy_limited_kernel_names"] = ",".join(proton.occupancy_limited_kernels)
+            if include_raw_metrics and proton.kernel_summaries:
+                for idx, kernel in enumerate(proton.kernel_summaries[:3]):
+                    name = kernel.get("name") or f"kernel_{idx}"
+                    for field in ("regs_per_thread", "shared_mem_bytes", "blocks_per_sm", "occupancy_pct", "time_ms"):
+                        try:
+                            value = kernel.get(field)
+                            metrics[f"profiler_metrics.proton.kernels.{name}.{field}"] = float(value)
+                        except (TypeError, ValueError, AttributeError):
+                            continue
         
         # PyTorch metrics
         if prof.torch:

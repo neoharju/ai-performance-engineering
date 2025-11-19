@@ -112,6 +112,8 @@ from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, ShardingStr
 
 def symmetric_memory_available() -> bool:
     """Check if torch.distributed.nn.SymmetricMemory is available (PyTorch 2.10+)."""
+    if os.environ.get("SYMMETRIC_MEMORY_DISABLED", "").lower() in {"1", "true", "yes"}:
+        return False
     return hasattr(dist, "nn") and hasattr(dist.nn, "SymmetricMemory")
 
 
@@ -833,7 +835,15 @@ def main() -> None:
         default="async_grad",
         help="Which advanced pattern to demonstrate",
     )
+    parser.add_argument(
+        "--disable-symmetric",
+        action="store_true",
+        help="Force disable symmetric memory and use fallback paths (baseline comparison).",
+    )
     args = parser.parse_args()
+    
+    if args.disable_symmetric:
+        os.environ["SYMMETRIC_MEMORY_DISABLED"] = "1"
     
     init_distributed()
     

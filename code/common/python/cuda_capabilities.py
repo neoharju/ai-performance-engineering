@@ -84,6 +84,10 @@ def blackwell_tma_support_status() -> Tuple[bool, str]:
         return False, "CUDA device not available"
     if cap.architecture not in {"blackwell", "blackwell_ultra", "grace_blackwell"}:
         return False, f"requires Blackwell/Grace-Blackwell, found {cap.architecture}"
+    # Grace-Blackwell (sm_121) often reports missing TMA compiler support, but tcgen05
+    # kernels still work. Allow it with a permissive override.
+    if cap.architecture == "grace_blackwell":
+        return True, f"{cap.device_name} ({cap.compute_capability}) (GB10 override)"
     if not cap.tma_ready:
         return False, (
             f"{cap.device_name} ({cap.sm_version}) hardware supports TMA but the "

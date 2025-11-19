@@ -1,0 +1,221 @@
+// baseline_flash_attn_tma_micro_pipeline.cu
+//
+// FlashAttention-shaped micro-pipeline without async copies.
+// Uses blocking global->shared loads per tile for K/V, then compute.
+// Serves as the baseline against the async TMA-enabled variant.
+
+#include <cuda_runtime.h>
+#include <cuda.h>
+
+#include <cstdio>
+#include <cstdlib>
+
+#ifndef CHECK_CUDA
+#define CHECK_CUDA(call)                                                     \
+    do {                                                                     \
+        cudaError_t _status = (call);                                        \
+        if (_status != cudaSuccess) {                                        \
+            std::fprintf(stderr, "CUDA error %s:%d: %s\n",                   \
+                         __FILE__, __LINE__, cudaGetErrorString(_status));   \
+            std::exit(EXIT_FAILURE);                                         \
+        }                                                                    \
+    } while (0)
+#endif
+
+// Toy problem sizes (kept identical to the optimized variant for A/B comparisons)
+constexpr int SEQ_LEN = 2048;
+constexpr int D_HEAD  = 64;
+constexpr int TILE_KV = 40;    // rows per tile (kept small to fit shared memory comfortably)
+constexpr int THREADS = 128;
+
+__global__ void flash_attn_baseline_kernel(
+    const float* __restrict__ q,   // [SEQ_LEN, D_HEAD]
+    const float* __restrict__ k,   // [SEQ_LEN, D_HEAD]
+    const float* __restrict__ v,   // [SEQ_LEN, D_HEAD]
+    float* __restrict__ o,         // [SEQ_LEN, D_HEAD]
+    int seq_len,
+    int d_head) {
+    const int q_idx = blockIdx.x;  // one query row per block
+    if (q_idx >= seq_len) return;
+
+    extern __shared__ float smem[];
+    float* smem_k = smem;
+    float* smem_v = smem_k + TILE_KV * d_head;
+
+    const int tid = threadIdx.x;
+
+    // Load Q row into registers.
+    float q_reg[D_HEAD];
+    for (int d = tid; d < d_head; d += blockDim.x) {
+        q_reg[d] = q[q_idx * d_head + d];
+    }
+    __syncthreads();
+
+    float o_reg[D_HEAD];
+    for (int d = 0; d < d_head; ++d) {
+        o_reg[d] = 0.0f;
+    }
+
+    const int num_tiles = (seq_len + TILE_KV - 1) / TILE_KV;
+    for (int tile_idx = 0; tile_idx < num_tiles; ++tile_idx) {
+        const int row_base = tile_idx * TILE_KV;
+        const int rows_this_tile = min(TILE_KV, seq_len - row_base);
+
+        // Blocking load of K/V tile into shared memory.
+        for (int r = tid; r < rows_this_tile; r += blockDim.x) {
+            const float* k_row = k + (row_base + r) * d_head;
+            const float* v_row = v + (row_base + r) * d_head;
+            float* k_s = smem_k + r * d_head;
+            float* v_s = smem_v + r * d_head;
+            for (int d = 0; d < d_head; ++d) {
+                k_s[d] = k_row[d];
+                v_s[d] = v_row[d];
+            }
+        }
+        __syncthreads();
+
+        for (int r = 0; r < rows_this_tile; ++r) {
+            const float* k_row = smem_k + r * d_head;
+            const float* v_row = smem_v + r * d_head;
+
+            // Dot product q · k_r
+            float score = 0.f;
+            for (int d = tid; d < d_head; d += blockDim.x) {
+                score += q_reg[d] * k_row[d];
+            }
+
+            // Naive block-wide reduction (single warp tree).
+            __shared__ float score_smem[THREADS];
+            score_smem[tid] = score;
+            __syncthreads();
+            if (tid < 64) score_smem[tid] += score_smem[tid + 64];
+            __syncthreads();
+            if (tid < 32) score_smem[tid] += score_smem[tid + 32];
+            __syncthreads();
+            float weight = score_smem[0];
+            if (tid == 0) {
+                weight = fminf(fmaxf(weight, -10.f), 10.f);
+                score_smem[0] = __expf(weight) * 1e-3f;
+            }
+            __syncthreads();
+            weight = score_smem[0];
+
+            for (int d = tid; d < d_head; d += blockDim.x) {
+                o_reg[d] += weight * v_row[d];
+            }
+            __syncthreads();
+        }
+    }
+
+    for (int d = tid; d < d_head; d += blockDim.x) {
+        o[q_idx * d_head + d] = o_reg[d];
+    }
+}
+
+bool device_available() {
+    int count = 0;
+    if (cudaGetDeviceCount(&count) != cudaSuccess) return false;
+    return count > 0;
+}
+
+bool tma_supported() {
+#if CUDART_VERSION < 12000
+    return false;
+#else
+    #ifdef cudaDevAttrTensorMapAccessSupported
+    int attr = 0;
+    if (cudaDeviceGetAttribute(&attr, cudaDevAttrTensorMapAccessSupported, 0) != cudaSuccess) {
+        return false;
+    }
+    return attr != 0;
+    #else
+    return false;
+    #endif
+#endif
+}
+
+bool tma_descriptor_supported(int d_head_bytes) {
+#if CUDART_VERSION < 13000
+    return false;  // descriptor-backed TMA needs CUDA 13.0+ toolkit
+#else
+    // Require descriptor support and leading dimension aligned to 16 bytes (TMA requirement).
+    if (!tma_supported()) return false;
+    if ((d_head_bytes % 16) != 0) return false;
+    return true;
+#endif
+}
+
+int main() {
+    if (!device_available()) {
+        std::printf("SKIP: No CUDA device found.\nelapsed_ms=0.0 ms\n");
+        return 0;
+    }
+
+#if CUDART_VERSION < 12000
+    std::printf("SKIP: TMA requires CUDA 12.0+ runtime (found %d).\nelapsed_ms=0.0 ms\n", CUDART_VERSION);
+    return 0;
+#endif
+
+    // Enforce no-fallback behavior: if TMA is unavailable, skip the run.
+    int major = 0, minor = 0;
+    cudaDeviceProp prop{};
+    if (cudaGetDeviceProperties(&prop, 0) == cudaSuccess) {
+        major = prop.major;
+        minor = prop.minor;
+    }
+    const int sm = major * 10 + minor;
+    const int d_head_bytes = D_HEAD * sizeof(float);
+    if (sm < 90 || !tma_descriptor_supported(d_head_bytes)) {
+        std::printf("SKIP: TMA descriptor path unavailable (sm_%d%d, align=%d bytes).\nelapsed_ms=0.0 ms\n",
+                    major, minor, d_head_bytes);
+        return 0;
+    }
+
+    const int seq_len = SEQ_LEN;
+    const int d_head = D_HEAD;
+    const size_t bytes = size_t(seq_len) * d_head * sizeof(float);
+
+    float *d_q = nullptr, *d_k = nullptr, *d_v = nullptr, *d_o = nullptr;
+    CHECK_CUDA(cudaMalloc(&d_q, bytes));
+    CHECK_CUDA(cudaMalloc(&d_k, bytes));
+    CHECK_CUDA(cudaMalloc(&d_v, bytes));
+    CHECK_CUDA(cudaMalloc(&d_o, bytes));
+
+    CHECK_CUDA(cudaMemset(d_q, 0, bytes));
+    CHECK_CUDA(cudaMemset(d_k, 0, bytes));
+    CHECK_CUDA(cudaMemset(d_v, 0, bytes));
+    CHECK_CUDA(cudaMemset(d_o, 0, bytes));
+
+    cudaStream_t stream;
+    CHECK_CUDA(cudaStreamCreate(&stream));
+
+    const dim3 block(THREADS);
+    const dim3 grid(seq_len);
+    const size_t shmem_bytes = 2 * TILE_KV * d_head * sizeof(float); // K + V
+
+    cudaEvent_t start, stop;
+    CHECK_CUDA(cudaEventCreate(&start));
+    CHECK_CUDA(cudaEventCreate(&stop));
+
+    CHECK_CUDA(cudaEventRecord(start, stream));
+    flash_attn_baseline_kernel<<<grid, block, shmem_bytes, stream>>>(
+        d_q, d_k, d_v, d_o, seq_len, d_head);
+    CHECK_CUDA(cudaEventRecord(stop, stream));
+
+    CHECK_CUDA(cudaGetLastError());
+    CHECK_CUDA(cudaEventSynchronize(stop));
+
+    float ms = 0.0f;
+    CHECK_CUDA(cudaEventElapsedTime(&ms, start, stop));
+    CHECK_CUDA(cudaEventDestroy(start));
+    CHECK_CUDA(cudaEventDestroy(stop));
+
+    CHECK_CUDA(cudaStreamDestroy(stream));
+    CHECK_CUDA(cudaFree(d_q));
+    CHECK_CUDA(cudaFree(d_k));
+    CHECK_CUDA(cudaFree(d_v));
+    CHECK_CUDA(cudaFree(d_o));
+
+    std::printf("elapsed_ms=%.3f ms\n", ms);
+    return 0;
+}

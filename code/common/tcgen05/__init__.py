@@ -17,21 +17,37 @@ except ImportError:  # pragma: no cover - optional bootstrap
     arch_config = None  # type: ignore[assignment]
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_CUTLASS_INCLUDE = _REPO_ROOT / "third_party" / "cutlass" / "include"
-_LEGACY_CUTLASS_INCLUDE = (
+_CUTLASS_INCLUDE = (
     _REPO_ROOT / "third_party" / "TransformerEngine" / "3rdparty" / "cutlass" / "include"
 )
+_LEGACY_CUTLASS_INCLUDE = _CUTLASS_INCLUDE
 _CLANG_HOST = _REPO_ROOT / "third_party" / "llvm" / "bin" / "clang++"
 
 
 def _tcgen05_cuda_flags() -> list[str]:
     flags = [
         "-std=c++20",
-        "-gencode=arch=compute_100,code=sm_100",
         "-lineinfo",
         f"-I{_CUTLASS_INCLUDE}",
         f"-I{_LEGACY_CUTLASS_INCLUDE}",
     ]
+    caps: list[tuple[int, int]] = [(10, 0)]
+    try:
+        major, minor = torch.cuda.get_device_capability()
+        if major >= 12:
+            caps.insert(0, (12, 0))
+        elif major >= 10 and (major, minor) not in caps:
+            caps.insert(0, (major, minor))
+    except Exception:
+        pass
+    seen = set()
+    for maj, minr in caps:
+        if (maj, minr) in seen:
+            continue
+        seen.add((maj, minr))
+        flags.append(f"-gencode=arch=compute_{maj}{minr},code=sm_{maj}{minr}")
+        # Keep a PTX fallback for forward compatibility.
+        flags.append(f"-gencode=arch=compute_{maj}{minr},code=compute_{maj}{minr}")
     if _CLANG_HOST.exists():
         flags.append(f"-ccbin={_CLANG_HOST}")
     return flags

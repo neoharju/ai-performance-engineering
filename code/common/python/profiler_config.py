@@ -6,6 +6,7 @@ Single source of truth for profiler command generation and metric sets.
 from __future__ import annotations
 
 import re
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, List, Optional, Sequence
@@ -30,16 +31,24 @@ ROOFLINE_METRICS = [
 DEEP_DIVE_METRICS = [
     # All roofline metrics
     *ROOFLINE_METRICS,
-    # Compute proxy - FP32 instructions
-    "sm__sass_thread_inst_executed_op_fp32_pred_on.sum",
-    # Memory efficiency metrics
+    # Memory throughput counters (sectors + bytes) for bandwidth + reuse analysis
     "dram__sectors_read.sum",
     "l1tex__t_sectors_pipe_lsu_mem_global_op_ld.sum",
     "l1tex__t_sectors_pipe_lsu_mem_global_op_st.sum",
-    # Memory load efficiency
-    "l1tex__data_bank_conflicts_pipe_lsu_mem_shared_op_ld.sum",
+    "l1tex__t_bytes_pipe_lsu_mem_global_op_ld.sum",
+    "l1tex__t_bytes_pipe_lsu_mem_global_op_st.sum",
+    # Instruction mix (separated adds/muls/ffma + dtype split)
+    "sm__sass_thread_inst_executed_op_ffma_pred_on.sum",
+    "sm__sass_thread_inst_executed_op_fadd_pred_on.sum",
+    "sm__sass_thread_inst_executed_op_fmul_pred_on.sum",
+    "sm__sass_thread_inst_executed_op_fp16_pred_on.sum",
+    "sm__sass_thread_inst_executed_op_fp32_pred_on.sum",
     # Tensor Core utilization (if applicable)
     "sm__inst_executed_pipe_tensor.sum",
+    # Occupancy proxy already in roofline (sm__warps_active...), keep explicit time
+    "gpu__time_duration.sum",
+    # Shared memory bank conflicts
+    "l1tex__data_bank_conflicts_pipe_lsu_mem_shared_op_ld.sum",
 ]
 
 MINIMAL_METRICS = [
@@ -200,6 +209,36 @@ class ProfilerConfig:
         
         return cmd
     
+    def get_proton_command(
+        self,
+        output_path: str,
+        python_script: str,
+        python_executable: Optional[str] = None,
+    ) -> List[str]:
+        """Generate Proton CLI invocation.
+        
+        Falls back to python -m torch._inductor.tools.proton if the standalone
+        `proton` binary is not on PATH.
+        """
+        import sys
+        
+        output_arg = output_path if Path(output_path).suffix else f"{output_path}.json"
+        if shutil.which("proton"):
+            return [
+                "proton",
+                "profile",
+                "--output", output_arg,
+                "--python-script", python_script,
+            ]
+        return [
+            python_executable or sys.executable,
+            "-m",
+            "torch._inductor.tools.proton",
+            "profile",
+            "--output", output_arg,
+            "--python-script", python_script,
+        ]
+    
     def get_torch_profiler_config(self) -> dict:
         """Get PyTorch profiler configuration.
         
@@ -338,7 +377,7 @@ def build_profiler_config_from_benchmark(
     preset = str(getattr(config, "profile_type", None) or "minimal").lower()
     metric_set = getattr(config, "ncu_metric_set", None)
     if metric_set is None or str(metric_set).lower() == "auto":
-        metric_set = preset if preset in {"minimal", "roofline", "deep_dive"} else "minimal"
+        metric_set = preset if preset in {"minimal", "roofline", "deep_dive"} else "deep_dive"
     sampling_interval = getattr(config, "ncu_sampling_interval", 75000)
     explicit_includes = getattr(config, "nsys_nvtx_include", None)
     nvtx_includes = discover_nvtx_includes(

@@ -1,6 +1,6 @@
-"""Unified profiling runner for nsys and ncu.
+"""Unified profiling runner for nsys, ncu, and Proton.
 
-Provides single interface for running nsys/ncu profiling with proper timeout handling,
+Provides single interface for running profiler backends with proper timeout handling,
 error recovery, and artifact management.
 """
 
@@ -11,6 +11,7 @@ import os
 import shutil
 import subprocess
 import sys
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Protocol, TYPE_CHECKING, cast
 
@@ -65,7 +66,7 @@ METRICS_EXTRACTOR_AVAILABLE = False
 create_benchmark_wrapper: WrapperFactory = _unavailable_wrapper
 
 try:
-    from common.python.metrics_extractor import extract_nsys_metrics, extract_ncu_metrics
+    from common.python.metrics_extractor import extract_nsys_metrics, extract_ncu_metrics, extract_proton_metrics
     from common.python import profiler_config as _profiler_config
     from common.python.profiler_wrapper import create_benchmark_wrapper as _create_wrapper
     create_benchmark_wrapper = cast(WrapperFactory, _create_wrapper)
@@ -111,6 +112,98 @@ def check_ncu_available() -> bool:
         return result.returncode == 0
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return False
+
+
+def check_proton_available() -> bool:
+    """Check if Proton profiler is available."""
+    if shutil.which("proton") is not None:
+        return True
+    try:
+        import importlib
+        importlib.import_module("torch._inductor.tools.proton")
+        return True
+    except Exception:
+        return False
+
+
+@lru_cache(maxsize=1)
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def _export_ncu_csv(ncu_rep: Path, metrics: Optional[List[str]] = None, timeout: int = 120) -> Optional[Path]:
+    """Export an ncu-rep to CSV so deep_profiling_report can consume it."""
+    if not ncu_rep.exists():
+        return None
+    csv_path = ncu_rep.with_suffix(".csv")
+    cmd = [
+        "ncu",
+        "--csv",
+        "--page",
+        "details",
+        "--import",
+        str(ncu_rep),
+    ]
+    if metrics:
+        cmd.extend(["--metrics", ",".join(metrics)])
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return None
+    if result.returncode != 0:
+        return None
+    try:
+        csv_path.write_text(result.stdout)
+    except Exception:
+        return None
+    return csv_path
+
+
+def _run_deep_profiling_report(
+    ncu_csv: Path,
+    nsys_report: Optional[Path],
+    output_base: Path,
+    *,
+    timeout: int = 90,
+) -> Optional[Dict[str, str]]:
+    """Invoke the deep profiling reporter (markdown + JSON)."""
+    script = _repo_root() / "tools" / "analysis" / "deep_profiling_report.py"
+    if not script.exists() or not ncu_csv.exists():
+        return None
+    md_path = output_base.with_suffix(".md")
+    json_path = output_base.with_suffix(".json")
+    cmd = [
+        sys.executable,
+        str(script),
+        "--ncu-csv",
+        str(ncu_csv),
+        "--output-json",
+        str(json_path),
+        "--print-markdown",
+    ]
+    if nsys_report and nsys_report.exists():
+        cmd.extend(["--nsys-report", str(nsys_report)])
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return None
+    if result.returncode != 0:
+        return None
+    try:
+        md_path.write_text(result.stdout)
+    except Exception:
+        return None
+    return {"deep_profile_md": str(md_path), "deep_profile_json": str(json_path)}
 
 
 def run_nsys_profiling(
@@ -285,6 +378,79 @@ def run_ncu_profiling(
         return None
 
 
+def run_proton_profiling(
+    benchmark: BenchmarkType,
+    benchmark_module: Any,
+    benchmark_class: str,
+    output_dir: Path,
+    config: BenchmarkConfigType,
+    profiler_config: Optional[Any] = None,
+    timeout_seconds: Optional[int] = None,
+) -> Optional[Dict[str, Any]]:
+    """Run Proton profiling on a benchmark."""
+    _init_benchmark_types()
+    if not BENCHMARK_AVAILABLE or not METRICS_EXTRACTOR_AVAILABLE:
+        return None
+    
+    if profiler_config is None and _profiler_config is not None:
+        profiler_config = _profiler_config.build_profiler_config_from_benchmark(
+            config,
+            benchmark_module=benchmark_module,
+            benchmark_class=benchmark_class,
+        )
+    if profiler_config is None:
+        return None
+    
+    wrapper_script = create_benchmark_wrapper(
+        benchmark, benchmark_module, benchmark_class, config
+    )
+    if not wrapper_script:
+        return None
+    
+    try:
+        proton_output = output_dir / f"proton_{benchmark_class}"
+        if hasattr(profiler_config, "get_proton_command"):
+            proton_command = profiler_config.get_proton_command(
+                str(proton_output),
+                str(wrapper_script),
+            )
+        else:
+            proton_command = [
+                "proton",
+                "profile",
+                "--output",
+                f"{proton_output}.json",
+                "--python-script",
+                str(wrapper_script),
+            ]
+        
+        result = subprocess.run(
+            proton_command,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+            env=os.environ.copy(),
+        )
+        if result.returncode != 0:
+            return None
+        
+        report_path = proton_output if proton_output.suffix else proton_output.with_suffix(".json")
+        if not report_path.exists():
+            # Proton may honor explicit suffixes; try both
+            alt = Path(f"{proton_output}.json")
+            report_path = alt if alt.exists() else report_path
+        if not report_path.exists():
+            return None
+        
+        metrics_obj = extract_proton_metrics(report_path)
+        return {
+            "profiling_outputs": {"proton_report": str(report_path)},
+            "metrics": metrics_obj,
+        }
+    except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
+        return None
+
+
 def run_profiling_orchestration(
     benchmark: BenchmarkType,
     config: BenchmarkConfigType,
@@ -360,6 +526,7 @@ def run_profiling_orchestration(
     profiling_outputs = {}
     nsys_metrics = {}
     ncu_metrics = {}
+    proton_metrics = {}
     
     # Run nsys profiling if enabled and available
     if config.enable_nsys and check_nsys_available():
@@ -405,9 +572,31 @@ def run_profiling_orchestration(
                 else:
                     ncu_metrics = metrics_obj.to_dict() if hasattr(metrics_obj, 'to_dict') else {}
     
+    # Run Proton profiling if enabled and available
+    if getattr(config, "enable_proton", False) and check_proton_available():
+        if benchmark_module is not None:
+            profiling_timeout = getattr(config, 'get_effective_timeout', None)
+            if profiling_timeout:
+                proton_timeout = profiling_timeout('profiling') or getattr(config, 'proton_timeout_seconds', None)
+            else:
+                proton_timeout = getattr(config, 'proton_timeout_seconds', None) or getattr(config, 'profiling_timeout_seconds', None)
+            proton_result = run_proton_profiling(
+                benchmark, benchmark_module, benchmark_class, prof_dir, config,
+                profiler_config=prof_cfg,
+                timeout_seconds=proton_timeout
+            )
+            if proton_result:
+                profiling_outputs.update(proton_result.get("profiling_outputs", {}))
+                metrics_obj = proton_result.get("metrics", {})
+                if isinstance(metrics_obj, dict):
+                    proton_metrics = metrics_obj
+                else:
+                    proton_metrics = metrics_obj.to_dict() if hasattr(metrics_obj, 'to_dict') else {}
+
     return {
         "times_ms": times_ms,
         "profiling_outputs": profiling_outputs,
         "nsys_metrics": nsys_metrics,
         "ncu_metrics": ncu_metrics,
+        "proton_metrics": proton_metrics,
     }

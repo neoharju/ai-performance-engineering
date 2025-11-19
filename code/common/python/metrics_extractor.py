@@ -1,10 +1,11 @@
-"""Metrics extraction from profiling tools (nsys, ncu, torch).
+"""Metrics extraction from profiling tools (nsys, ncu, proton, torch).
 
 Provides functions for extracting metrics from profiling reports and returning Pydantic models.
 """
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 import sys
@@ -12,13 +13,14 @@ from pathlib import Path
 from typing import Dict, Optional, Any, Type
 
 try:
-    from common.python.benchmark_models import NsysMetrics, NcuMetrics, TorchMetrics
+    from common.python.benchmark_models import NsysMetrics, NcuMetrics, TorchMetrics, ProtonMetrics
     PYDANTIC_AVAILABLE = True
 except ImportError:
     PYDANTIC_AVAILABLE = False
     NsysMetrics: Any = None  # type: ignore[no-redef]
     NcuMetrics: Any = None  # type: ignore[no-redef]
     TorchMetrics: Any = None  # type: ignore[no-redef]
+    ProtonMetrics: Any = None  # type: ignore[no-redef]
 
 
 # Mapping of metric identifiers to natural language descriptions
@@ -222,6 +224,108 @@ def extract_ncu_metrics(ncu_rep_path: Path, timeout: int = 60) -> NcuMetrics:
         occupancy_pct=occupancy_pct,
         raw_metrics=raw_metrics,
         schemaVersion="1.0"
+    )
+
+
+def extract_proton_metrics(report_path: Path) -> ProtonMetrics:
+    """Extract Proton kernel summaries from a JSON report."""
+    if not PYDANTIC_AVAILABLE or ProtonMetrics is None:
+        raise ImportError("pydantic and ProtonMetrics are required for extract_proton_metrics")
+    
+    if not report_path.exists():
+        return ProtonMetrics(
+            kernel_count=None,
+            occupancy_limited_kernels=[],
+            summary_stats={},
+            kernel_summaries=[],
+            schemaVersion="1.0",
+        )
+    
+    try:
+        data = json.loads(report_path.read_text())
+    except Exception:
+        # Return minimal object with parse failure note
+        return ProtonMetrics(
+            kernel_count=None,
+            occupancy_limited_kernels=[],
+            summary_stats={"parse_error": 1.0},
+            kernel_summaries=[],
+            schemaVersion="1.0",
+        )
+    
+    kernel_entries = []
+    if isinstance(data, dict):
+        for key in ("kernels", "kernel_reports", "results"):
+            if key in data and isinstance(data[key], list):
+                kernel_entries = data[key]
+                break
+        if not kernel_entries and "data" in data and isinstance(data["data"], list):
+            kernel_entries = data["data"]
+    elif isinstance(data, list):
+        kernel_entries = data
+    
+    summaries = []
+    occupancy_limited: list[str] = []
+    summary_stats: Dict[str, float] = {}
+    
+    def _maybe_float(value: Any) -> Optional[float]:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+    
+    for entry in kernel_entries:
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("name") or entry.get("kernel") or entry.get("kernel_name")
+        regs = entry.get("registers_per_thread") or entry.get("regs_per_thread") or entry.get("registers")
+        smem = entry.get("shared_memory_bytes") or entry.get("shared_memory") or entry.get("smem_bytes")
+        blocks_per_sm = entry.get("blocks_per_sm") or entry.get("cta_per_sm")
+        occupancy = entry.get("occupancy_pct") or entry.get("theoretical_occupancy") or entry.get("occupancy")
+        time_ms = entry.get("time_ms") or entry.get("duration_ms") or entry.get("total_time_ms")
+        tma_desc = entry.get("tma_descriptors") or entry.get("tma") or entry.get("mma_tma")
+        
+        reg_f = _maybe_float(regs)
+        smem_f = _maybe_float(smem)
+        occupancy_f = _maybe_float(occupancy)
+        blocks_f = _maybe_float(blocks_per_sm)
+        time_f = _maybe_float(time_ms)
+        
+        summaries.append(
+            {
+                "name": name,
+                "regs_per_thread": reg_f,
+                "shared_mem_bytes": smem_f,
+                "blocks_per_sm": blocks_f,
+                "occupancy_pct": occupancy_f,
+                "time_ms": time_f,
+                "tma_descriptors": tma_desc if isinstance(tma_desc, (int, float, str)) else None,
+            }
+        )
+        
+        if occupancy_f is not None and occupancy_f < 40.0:
+            occupancy_limited.append(name or "unknown_kernel")
+    
+    if summaries:
+        regs_max = max((s.get("regs_per_thread") for s in summaries if s.get("regs_per_thread") is not None), default=None)
+        smem_max = max((s.get("shared_mem_bytes") for s in summaries if s.get("shared_mem_bytes") is not None), default=None)
+        blocks_max = max((s.get("blocks_per_sm") for s in summaries if s.get("blocks_per_sm") is not None), default=None)
+        time_max = max((s.get("time_ms") for s in summaries if s.get("time_ms") is not None), default=None)
+        if regs_max is not None:
+            summary_stats["max_regs_per_thread"] = regs_max
+        if smem_max is not None:
+            summary_stats["max_shared_mem_bytes"] = smem_max
+        if blocks_max is not None:
+            summary_stats["max_blocks_per_sm"] = blocks_max
+        if time_max is not None:
+            summary_stats["max_time_ms"] = time_max
+    
+    return ProtonMetrics(
+        kernel_count=len(summaries),
+        occupancy_limited_kernels=occupancy_limited,
+        summary_stats=summary_stats,
+        kernel_summaries=summaries,
+        schemaVersion="1.0",
     )
 
 

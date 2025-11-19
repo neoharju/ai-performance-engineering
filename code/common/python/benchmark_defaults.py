@@ -35,6 +35,7 @@ class BenchmarkDefaults:
     enable_profiling: bool = True
     enable_nsys: bool = True
     enable_ncu: bool = True
+    enable_proton: bool = False
     enable_nvtx: Optional[bool] = None  # Auto-enabled if profiling enabled
     enable_cleanup: bool = False
     use_subprocess: bool = True
@@ -62,6 +63,7 @@ class BenchmarkDefaults:
     profiling_timeout_seconds: Optional[int] = None  # Defaults to max(nsys, ncu)
     nsys_timeout_seconds: int = 120
     ncu_timeout_seconds: int = 180
+    proton_timeout_seconds: int = 120
     timeout_multiplier: float = 3.0
     ncu_sampling_interval: int = 75000
     
@@ -92,6 +94,7 @@ class BenchmarkDefaults:
             "enable_profiling": self.enable_profiling,
             "enable_nsys": self.enable_nsys,
             "enable_ncu": self.enable_ncu,
+            "enable_proton": self.enable_proton,
             "enable_nvtx": self.enable_nvtx,
             "enable_cleanup": self.enable_cleanup,
             "use_subprocess": self.use_subprocess,
@@ -114,6 +117,7 @@ class BenchmarkDefaults:
             "profiling_timeout_seconds": self.profiling_timeout_seconds,
             "nsys_timeout_seconds": self.nsys_timeout_seconds,
             "ncu_timeout_seconds": self.ncu_timeout_seconds,
+            "proton_timeout_seconds": self.proton_timeout_seconds,
             "timeout_multiplier": self.timeout_multiplier,
             "timeout_seconds": self.timeout_seconds,
             "profiling_output_dir": self.profiling_output_dir,

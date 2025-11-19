@@ -17,7 +17,7 @@ if str(repo_root) not in sys.path:
 import torch
 import torch.distributed as dist
 
-from ch4.gpu_requirements import skip_if_insufficient_gpus
+from common.python.gpu_requirements import skip_if_insufficient_gpus
 try:
     from distributed_helper import setup_single_gpu_env
 except ImportError:

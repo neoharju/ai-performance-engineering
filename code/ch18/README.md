@@ -15,6 +15,10 @@ After completing this chapter, you can:
 - [OK] Profile attention kernels and identify bottlenecks
 - [OK] Choose the right attention variant for your use case
 
+### New: Persistent decode quickstart
+- Minimal cooperative decode example now ships with a full lab. Run via harness: `python tools/cli/benchmark_cli.py run --targets labs/persistent_decode --profile`.
+- The lab walks per-token launches → persistent queue → CUDA Graph capture for prefill vs. decode, with both Triton and CUDA variants.
+
 ## Prerequisites
 
 **Previous chapters**:

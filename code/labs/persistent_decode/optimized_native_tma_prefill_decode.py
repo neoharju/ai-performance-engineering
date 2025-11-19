@@ -1,0 +1,123 @@
+"""Optimized native-TMA prefill vs. decode microbench with burst shaping (no fallbacks)."""
+
+from __future__ import annotations
+
+import torch
+
+from common.python.benchmark_harness import BaseBenchmark, BenchmarkConfig
+from labs.persistent_decode.persistent_decode_common import (
+    build_inputs,
+    resolve_device,
+    resolve_shapes,
+    tokens_per_iteration,
+)
+from labs.persistent_decode.tma_extension import load_native_tma
+
+
+class NativeTmaBurstConfig:
+    """Burst shaping knobs for native TMA path."""
+
+    def __init__(self, max_in_flight: int = 2) -> None:
+        self.max_in_flight = max_in_flight
+
+
+class OptimizedNativeTmaPrefillDecodeBenchmark(BaseBenchmark):
+    """Prefill with native TMA bursts + graph-captured decode."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.device = resolve_device()
+        self.inputs = None
+        self.batch, self.seq_len, self.head_dim = resolve_shapes()
+        self.prefill_chunks = 8
+        self.prefill_chunk_elems = 128 * 128
+        self.cfg = NativeTmaBurstConfig()
+        self.prefill_streams = [torch.cuda.Stream() for _ in range(self.cfg.max_in_flight)]
+        self.decode_graph = torch.cuda.CUDAGraph()
+        self.graph_q = None
+        self.graph_k = None
+        self.graph_v = None
+        self.graph_out = None
+        self._tma_ext = None
+        self.register_workload_metadata(tokens_per_iteration=tokens_per_iteration())
+
+    def setup(self) -> None:
+        self.inputs = build_inputs(self.device)
+        self.prefill_src = torch.randn(
+            self.prefill_chunks, self.prefill_chunk_elems, device=self.device
+        )
+        self.prefill_dst = torch.zeros_like(self.prefill_src)
+        self._tma_ext = load_native_tma()  # raises if unsupported
+
+        self.graph_q = self.inputs.q.clone()
+        self.graph_k = self.inputs.k.clone()
+        self.graph_v = self.inputs.v.clone()
+        self.graph_out = torch.zeros_like(self.inputs.out)
+
+        capture_stream = torch.cuda.Stream()
+        torch.cuda.synchronize()
+        with torch.cuda.graph(self.decode_graph, stream=capture_stream):
+            self._decode_body(self.graph_q, self.graph_k, self.graph_v, self.graph_out)
+        torch.cuda.synchronize()
+
+    def _decode_body(
+        self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, out: torch.Tensor
+    ) -> None:
+        for t in range(self.seq_len):
+            q_t = q[:, t, :]
+            k_t = k[:, t, :]
+            v_t = v[:, t, :]
+            dot = (q_t * k_t).sum(dim=-1, keepdim=True)
+            out[:, t, :] = v_t * dot
+
+    def _prefill_shaped_native(self) -> None:
+        """Launch native TMA copies on multiple streams with an in-flight cap."""
+        events = []
+        for idx in range(self.prefill_chunks):
+            stream = self.prefill_streams[idx % len(self.prefill_streams)]
+            with torch.cuda.stream(stream):
+                self._tma_ext.tma_copy(self.prefill_src[idx], self.prefill_dst[idx])
+            evt = torch.cuda.Event(enable_timing=False, blocking=False)
+            evt.record(stream)
+            events.append(evt)
+            if len(events) > self.cfg.max_in_flight:
+                events.pop(0).synchronize()
+        for evt in events:
+            evt.synchronize()
+
+    def _decode_graph(self) -> None:
+        assert self.inputs is not None
+        self.graph_q.copy_(self.inputs.q)
+        self.graph_k.copy_(self.inputs.k)
+        self.graph_v.copy_(self.inputs.v)
+        self.graph_out.zero_()
+        self.decode_graph.replay()
+        self.inputs.out.copy_(self.graph_out)
+
+    def benchmark_fn(self) -> None:
+        if self.inputs is None:
+            raise RuntimeError("Inputs not initialized")
+
+        with self._nvtx_range("prefill_native_shaped"):
+            self._prefill_shaped_native()
+        with self._nvtx_range("decode_graph"):
+            self._decode_graph()
+        self._synchronize()
+
+    def teardown(self) -> None:
+        torch.cuda.empty_cache()
+        self.inputs = None
+
+    def get_config(self) -> BenchmarkConfig:
+        return BenchmarkConfig(iterations=8, warmup=2)
+
+    def validate_result(self) -> str | None:
+        if self.inputs is None:
+            return "Inputs not initialized"
+        if not torch.isfinite(self.inputs.out).all():
+            return "Non-finite output detected"
+        return None
+
+
+def get_benchmark() -> BaseBenchmark:
+    return OptimizedNativeTmaPrefillDecodeBenchmark()

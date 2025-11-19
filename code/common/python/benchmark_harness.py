@@ -48,6 +48,7 @@ if TYPE_CHECKING:
         ProfilerMetrics,
         NsysMetrics,
         NcuMetrics,
+        ProtonMetrics,
         TorchMetrics,
     )
 
@@ -62,6 +63,7 @@ from common.python.benchmark_models import (
     ProfilerMetrics,
     NsysMetrics,
     NcuMetrics,
+    ProtonMetrics,
     TorchMetrics,
     ThroughputStats,
 )
@@ -75,6 +77,8 @@ try:
         run_ncu_profiling,
         check_nsys_available,
         check_ncu_available,
+        run_proton_profiling,
+        check_proton_available,
     )
     PROFILING_RUNNER_AVAILABLE = True
 except ImportError:
@@ -107,6 +111,21 @@ except ImportError:
         return False
     
     def check_ncu_available() -> bool:
+        return False
+    
+    def run_proton_profiling(
+        benchmark: Any,
+        benchmark_module: Any,
+        benchmark_class: str,
+        output_dir: Path,
+        config: Any,
+        profiler_config: Optional[Any] = None,
+        timeout_seconds: Optional[int] = None,
+        metrics: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        raise ImportError("profiling_runner not available")
+    
+    def check_proton_available() -> bool:
         return False
 
 # Import profiler wrapper
@@ -238,6 +257,7 @@ class BenchmarkConfig:
     enable_profiling: bool = field(default_factory=lambda: _get_default_value("enable_profiling", False))
     enable_nsys: bool = field(default_factory=lambda: _get_default_value("enable_nsys", False))
     enable_ncu: bool = field(default_factory=lambda: _get_default_value("enable_ncu", False))
+    enable_proton: bool = field(default_factory=lambda: _get_default_value("enable_proton", False))
     profiling_output_dir: Optional[str] = field(default_factory=lambda: _get_default_value("profiling_output_dir", None))
     profile_type: str = field(default_factory=lambda: _get_default_value("profile_type", "minimal"))
     nsys_nvtx_include: Optional[List[str]] = field(default_factory=lambda: _get_default_value("nsys_nvtx_include", None))
@@ -274,6 +294,7 @@ class BenchmarkConfig:
     # Profiler-specific timeouts
     nsys_timeout_seconds: int = field(default_factory=lambda: _get_default_value("nsys_timeout_seconds", 120))
     ncu_timeout_seconds: int = field(default_factory=lambda: _get_default_value("ncu_timeout_seconds", 180))
+    proton_timeout_seconds: int = field(default_factory=lambda: _get_default_value("proton_timeout_seconds", 120))
     
     # Timeout multiplier
     timeout_multiplier: float = field(default_factory=lambda: _get_default_value("timeout_multiplier", 1.0))
@@ -312,6 +333,7 @@ class BenchmarkConfig:
             _apply_timeout_multiplier("profiling_timeout_seconds")
             _apply_timeout_multiplier("nsys_timeout_seconds")
             _apply_timeout_multiplier("ncu_timeout_seconds")
+            _apply_timeout_multiplier("proton_timeout_seconds")
             _apply_timeout_multiplier("timeout_seconds")  # Legacy field
         
         # Set defaults for None timeouts
@@ -320,7 +342,7 @@ class BenchmarkConfig:
             self.warmup_timeout_seconds = self.measurement_timeout_seconds
         if self.profiling_timeout_seconds is None:
             # Profiling timeout defaults to max of nsys/ncu timeouts
-            self.profiling_timeout_seconds = max(self.nsys_timeout_seconds, self.ncu_timeout_seconds)
+            self.profiling_timeout_seconds = max(self.nsys_timeout_seconds, self.ncu_timeout_seconds, self.proton_timeout_seconds)
 
         self._execution_mode_overridden = self.execution_mode is not None
         self._sync_execution_mode()
@@ -379,7 +401,7 @@ class BenchmarkConfig:
         """Get effective timeout for a given stage, accounting for multiplier.
         
         Args:
-            stage: One of 'setup', 'warmup', 'measurement', 'profiling', 'nsys', 'ncu'
+            stage: One of 'setup', 'warmup', 'measurement', 'profiling', 'nsys', 'ncu', 'proton'
             
         Returns:
             Timeout in seconds, or None if no timeout for this stage
@@ -391,6 +413,7 @@ class BenchmarkConfig:
             'profiling': self.profiling_timeout_seconds,
             'nsys': self.nsys_timeout_seconds,
             'ncu': self.ncu_timeout_seconds,
+            'proton': self.proton_timeout_seconds,
         }
         return timeouts.get(stage)
 
@@ -1160,6 +1183,7 @@ class BenchmarkHarness:
         profiling_outputs: Dict[str, str] = {}
         nsys_metrics: Dict[str, float] = {}
         ncu_metrics: Dict[str, float] = {}
+        proton_metrics: Dict[str, float] = {}
         times_ms: List[float] = []
         inference_timing_data: Optional[Dict[str, List[float]]] = None
         
@@ -1193,11 +1217,11 @@ class BenchmarkHarness:
         # Prepare config dict (serialize only simple types)
         config_dict = {}
         for key in ['iterations', 'warmup', 'min_run_time_ms', 'percentiles', 'enable_memory_tracking',
-                   'deterministic', 'seed', 'enable_profiling', 'enable_nsys', 'enable_ncu',
+                   'deterministic', 'seed', 'enable_profiling', 'enable_nsys', 'enable_ncu', 'enable_proton',
                    'profiling_output_dir', 'enable_nvtx', 'enable_cleanup', 
                    'timeout_seconds', 'measurement_timeout_seconds', 'setup_timeout_seconds',
                    'warmup_timeout_seconds', 'profiling_timeout_seconds',
-                   'nsys_timeout_seconds', 'ncu_timeout_seconds', 'timeout_multiplier',
+                   'nsys_timeout_seconds', 'ncu_timeout_seconds', 'proton_timeout_seconds', 'timeout_multiplier',
                    'execution_mode', 'launch_via', 'nproc_per_node', 'nnodes', 'rdzv_backend',
                    'rdzv_endpoint', 'env_passthrough', 'target_extra_args', 'multi_gpu_required',
                    'target_label']:
@@ -1313,6 +1337,8 @@ class BenchmarkHarness:
                                 nsys_metrics = benchmark_result.profiler_metrics.nsys.to_dict()
                             if benchmark_result.profiler_metrics.ncu:
                                 ncu_metrics = benchmark_result.profiler_metrics.ncu.to_dict()
+                            if benchmark_result.profiler_metrics.proton:
+                                proton_metrics = benchmark_result.profiler_metrics.proton.to_dict()
                     else:
                         errors.extend(result_dict.get("errors", ["Subprocess execution failed"]))
                         times_ms = cast(List[float], [])
@@ -1472,12 +1498,14 @@ class BenchmarkHarness:
                 nsys_rep=profiling_outputs.get('nsys_rep') or profiling_outputs.get('nsys'),
                 ncu_rep=profiling_outputs.get('ncu_rep') or profiling_outputs.get('ncu'),
                 torch_trace_json=profiling_outputs.get('torch') or profiling_outputs.get('pytorch_trace'),
+                proton_report=profiling_outputs.get('proton_report') or profiling_outputs.get('proton'),
                 schemaVersion="1.0",
             )
         
         # Add profiler metrics
         nsys_metrics_obj = None
         ncu_metrics_obj = None
+        proton_metrics_obj = None
         
         if nsys_metrics:
             nsys_metrics_obj = NsysMetrics(
@@ -1500,10 +1528,36 @@ class BenchmarkHarness:
                 schemaVersion="1.0",
             )
         
-        if nsys_metrics_obj or ncu_metrics_obj:
+        if proton_metrics:
+            occ_field = proton_metrics.get('proton_occupancy_limited_kernels_list', proton_metrics.get('proton_occupancy_limited_kernels', ""))
+            if isinstance(occ_field, list):
+                occupancy = [str(item) for item in occ_field if item]
+            else:
+                occupancy = [item for item in occ_field.split(",") if item] if isinstance(occ_field, str) else []
+            summary_stats: Dict[str, Any] = {}
+            summary_from_report = proton_metrics.get('proton_summary_stats')
+            if isinstance(summary_from_report, dict):
+                summary_stats.update(summary_from_report)
+            summary_stats.update({
+                k.replace('proton_', ''): v for k, v in proton_metrics.items()
+                if k.startswith('proton_') and k not in {'proton_kernel_count', 'proton_occupancy_limited_kernels', 'proton_top_kernels', 'proton_summary_stats', 'proton_kernel_summaries', 'proton_occupancy_limited_kernels_list'}
+            })
+            kernel_summaries = proton_metrics.get('proton_kernel_summaries')
+            if not isinstance(kernel_summaries, list):
+                kernel_summaries = []
+            proton_metrics_obj = ProtonMetrics(
+                kernel_count=proton_metrics.get('proton_kernel_count'),
+                occupancy_limited_kernels=occupancy,
+                summary_stats=summary_stats,
+                kernel_summaries=kernel_summaries,
+                schemaVersion="1.0",
+            )
+        
+        if nsys_metrics_obj or ncu_metrics_obj or proton_metrics_obj:
             result.profiler_metrics = ProfilerMetrics(
                 nsys=nsys_metrics_obj,
                 ncu=ncu_metrics_obj,
+                proton=proton_metrics_obj,
                 torch=None,
                 schemaVersion="1.0",
             )
@@ -1521,6 +1575,7 @@ class BenchmarkHarness:
         profiling_outputs = {}
         nsys_metrics = {}
         ncu_metrics = {}
+        proton_metrics = {}
         times_ms = cast(List[float], [])
         inference_timing_data = None
         
@@ -1684,7 +1739,7 @@ class BenchmarkHarness:
                     with self._memory_tracking(config) as mem_result:
                         # Benchmark using selected mode
                         # Note: nsys/ncu profiling wraps the entire process, so it's handled separately
-                        if config.enable_profiling and (config.enable_nsys or config.enable_ncu):
+                        if config.enable_profiling and (config.enable_nsys or config.enable_ncu or config.enable_proton):
                             if stage_watchdog['profiling']['status'] == 'pending':
                                 start_stage('profiling')
                             # Delegate to unified profiling orchestration with timeout enforcement
@@ -1770,6 +1825,7 @@ class BenchmarkHarness:
                                             profiling_outputs.update(prof_result.get("profiling_outputs", {}))
                                         nsys_metrics = prof_result.get("nsys_metrics", {})
                                         ncu_metrics = prof_result.get("ncu_metrics", {})
+                                        proton_metrics = prof_result.get("proton_metrics", {})
                                 except ImportError:
                                     # Fallback if orchestration function not available
                                     if stage_watchdog['profiling']['status'] == 'pending':
@@ -1780,6 +1836,7 @@ class BenchmarkHarness:
                                     finish_stage('profiling')
                                     nsys_metrics = {}
                                     ncu_metrics = {}
+                                    proton_metrics = {}
                             else:
                                 # Fallback to PyTorch profiler if profiling runner not available
                                 if stage_watchdog['profiling']['status'] == 'pending':
@@ -1790,6 +1847,7 @@ class BenchmarkHarness:
                                 finish_stage('profiling')
                                 nsys_metrics = {}
                                 ncu_metrics = {}
+                                proton_metrics = {}
                         elif config.enable_profiling:
                             start_stage('profiling')
                             times_ms, profiling_outputs = self._benchmark_with_profiling(
@@ -2001,12 +2059,14 @@ class BenchmarkHarness:
                 nsys_rep=profiling_outputs.get('nsys_rep') or profiling_outputs.get('nsys'),
                 ncu_rep=profiling_outputs.get('ncu_rep') or profiling_outputs.get('ncu'),
                 torch_trace_json=profiling_outputs.get('torch') or profiling_outputs.get('pytorch_trace'),
+                proton_report=profiling_outputs.get('proton_report') or profiling_outputs.get('proton'),
                 schemaVersion="1.0",
             )
         
         # Add profiler metrics
         nsys_metrics_obj = None
         ncu_metrics_obj = None
+        proton_metrics_obj = None
         
         if nsys_metrics:
             nsys_metrics_obj = NsysMetrics(
@@ -2029,10 +2089,36 @@ class BenchmarkHarness:
                 schemaVersion="1.0",
             )
         
-        if nsys_metrics_obj or ncu_metrics_obj:
+        if proton_metrics:
+            occ_field = proton_metrics.get('proton_occupancy_limited_kernels_list', proton_metrics.get('proton_occupancy_limited_kernels', ""))
+            if isinstance(occ_field, list):
+                occupancy = [str(item) for item in occ_field if item]
+            else:
+                occupancy = [item for item in occ_field.split(",") if item] if isinstance(occ_field, str) else []
+            summary_stats: Dict[str, Any] = {}
+            summary_from_report = proton_metrics.get('proton_summary_stats')
+            if isinstance(summary_from_report, dict):
+                summary_stats.update(summary_from_report)
+            summary_stats.update({
+                k.replace('proton_', ''): v for k, v in proton_metrics.items()
+                if k.startswith('proton_') and k not in {'proton_kernel_count', 'proton_occupancy_limited_kernels', 'proton_top_kernels', 'proton_summary_stats', 'proton_kernel_summaries', 'proton_occupancy_limited_kernels_list'}
+            })
+            kernel_summaries = proton_metrics.get('proton_kernel_summaries')
+            if not isinstance(kernel_summaries, list):
+                kernel_summaries = []
+            proton_metrics_obj = ProtonMetrics(
+                kernel_count=proton_metrics.get('proton_kernel_count'),
+                occupancy_limited_kernels=occupancy,
+                summary_stats=summary_stats,
+                kernel_summaries=kernel_summaries,
+                schemaVersion="1.0",
+            )
+        
+        if nsys_metrics_obj or ncu_metrics_obj or proton_metrics_obj:
             result.profiler_metrics = ProfilerMetrics(
                 nsys=nsys_metrics_obj,
                 ncu=ncu_metrics_obj,
+                proton=proton_metrics_obj,
                 torch=None,
                 schemaVersion="1.0",
             )

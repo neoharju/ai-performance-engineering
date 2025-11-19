@@ -53,6 +53,16 @@ print([file]_averages().table(sort_by="cuda_time_total", row_limit=10))
 
 ## Examples
 
+###  Regional Compile vs Full-Graph Compile
+
+- **Baseline** (`ch13/baseline_regional_compile.py`): `torch.compile` the entire Transformer block for each sequence bucket to show compile churn.
+- **Optimized** (`ch13/optimized_regional_compile.py`): keep the block eager and compile only the MLP submodule as the hot region.
+- **How to run**: `python ch13/baseline_regional_compile.py` and `python ch13/optimized_regional_compile.py`; CLI: `python tools/cli/benchmark_cli.py run -t ch13:regional_compile --iterations 4 --warmup 0`
+- **Warmup note**: `--warmup 0` is intentional to surface compile-time churn—full-graph recompiles dominate when sequence buckets change; regional compile avoids that churn. For steady-state kernel-only numbers, bump warmup >0.
+- **Expected**: ≥1.05× faster when seq lengths vary because the regional path avoids whole-block recompiles.
+
+---
+
 ###  Memory Analysis
 
 **Purpose**: Identify memory leaks and optimize memory usage.

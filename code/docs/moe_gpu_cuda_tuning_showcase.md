@@ -199,7 +199,6 @@ Each of the following 15 scenarios came straight from the Blackwell/Grace-Blackw
 - **Harness focus:**  
   - `python tools/cli/benchmark_cli.py run --targets ch18:paged_attn --targets ch18:paged_attn_vllm --profile` records both traces. Override problem sizes with environment variables such as `PAGED_ATTN_CONTEXT=32000 PAGED_ATTN_CHUNK=2048 PAGED_ATTN_BLOCK_SIZE=128` before invoking the CLI.  
   - Feed the generated artifacts into `python tools/analysis/deep_profiling_report.py artifacts/<ts>/ch18_paged_attn_* artifacts/<ts>/ch18_paged_attn_vllm_*` to auto-compare SM occupancy, DRAM/L2 throughput, and NVLink overlap.  
-  - Call `python tools/profiling/batch_deep_profiling.py --workload ch18_paged_attn_vllm --diff ch18_paged_attn` to kick off Nsight Compute/Sys pairwise captures and stash them in `artifacts/<ts>/comparisons/`.  
   - Use `python common/python/metrics_extractor.py artifacts/<ts>` to emit TTFT, TPOT, page-hit rate, and fused-RMSNorm timing deltas so CI can assert the speedups by diffing `artifacts/*baseline*/metrics.json` vs `artifacts/*optimized*/metrics.json`.
 
 ### Use Case 17 – Piece-graph regional compilation vs monolithic capture

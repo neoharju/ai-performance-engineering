@@ -25,6 +25,16 @@ After completing this chapter, you can:
 
 ## Examples
 
+### NVLink Playbook (Blackwell/GB200)
+
+- Fabric: ~1.8 TB/s per GPU (18×100 GB/s links), coherent across NVSwitch domains (up to 72 GPUs) and Grace via NVLink-C2C.
+- Mental model: treat the NVLink domain as a NUMA fabric (local HBM, peer HBM, Grace LPDDR) in one coherent address space.
+- Kernel hints: use TMA + DSMEM (thread-block clusters) to multicast tiles and keep reuse off L2/global; align descriptors to 32B.
+- Placement: keep hot tensors local; place cold optimizer/KV state in peer HBM or Grace with UM advice (`read_mostly`, `preferred_location`).
+- Algorithms: topology-aware MoE (prefer same-switch experts), optimizer centralization per switch island, pooled KV cache (local→peer→Grace).
+- NCCL: enable topology-aware rings/trees and validate the discovered NVSwitch topology before runs.
+- Hardware assumption for NVLink-specific examples in this chapter: ≥2 GPUs on the same NVLink/NVSwitch domain with peer access enabled.
+
 ### Core Multi-GPU Examples
 
 ###  Full Training Pipeline
@@ -116,6 +126,16 @@ All-to-All Bandwidth: 185 GB/s/GPU (aggregate [file] TB/s)
 ### NVSHMEM and Symmetric Memory Examples
 
 NVSHMEM provides a **Partitioned Global Address Space (PGAS)** programming model for fine-grained GPU-to-GPU communication. Use it when you need ultra-low latency (<5 μs) for small messages or custom communication patterns not well-served by NCCL.
+
+Hands-on A/B microbenches:
+- Run via harness (recommended):
+  - `python tools/cli/benchmark_cli.py run --targets ch4:symmetric_memory_perf` (runs baseline + optimized pair)
+  - or explicitly: `python tools/cli/benchmark_cli.py run --targets ch4:symmetric_memory_perf_baseline --targets ch4:symmetric_memory_perf --launch-via torchrun --nproc-per-node 8`
+- Direct torchrun (manual):
+  - `torchrun --nproc_per_node=8 baseline_symmetric_memory_perf.py --sizes-mb 0.25 1 16 64`
+  - `torchrun --nproc_per_node=8 optimized_symmetric_memory_perf.py --sizes-mb 0.25 1 16 64`
+- Locality microbench (GB200/Grace-inspired placement A/B):
+  - `python tools/cli/benchmark_cli.py run --targets ch4:grace_blackwell_locality_baseline --targets ch4:grace_blackwell_locality`
 
 #### When to Use NVSHMEM vs NCCL
 
@@ -533,4 +553,3 @@ Learn about:
 ---
 
 **Chapter Status**: [OK] Complete
-

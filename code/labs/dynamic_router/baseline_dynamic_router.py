@@ -1,0 +1,47 @@
+"""Benchmark harness wrapper for the baseline dynamic router simulation."""
+
+from __future__ import annotations
+
+from typing import Dict, Optional
+
+from common.python.benchmark_harness import BaseBenchmark, BenchmarkConfig
+from labs.dynamic_router.driver import simulate
+
+
+class BaselineDynamicRouterBenchmark(BaseBenchmark):
+    """Runs the baseline (single-pool) routing simulation under benchmark_cli."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._summary: Dict[str, float] = {}
+
+    def setup(self) -> None:
+        # No external assets to prepare
+        return
+
+    def benchmark_fn(self) -> None:
+        # Fixed seed/ticks to keep runs comparable
+        self._summary = simulate(
+            "baseline",
+            num_ticks=400,
+            seed=0,
+        )
+
+    def get_config(self) -> Optional[BenchmarkConfig]:
+        # Single iteration; simulation already encapsulates multiple ticks
+        return BenchmarkConfig(iterations=1, warmup=0)
+
+    def get_custom_metrics(self) -> Optional[Dict[str, float]]:
+        return self._summary or None
+
+
+def get_benchmark() -> BaseBenchmark:
+    """Factory for discover_benchmarks()."""
+    return BaselineDynamicRouterBenchmark()
+
+
+if __name__ == "__main__":
+    bench = get_benchmark()
+    cfg = bench.get_config()
+    bench.benchmark_fn()
+    print(bench.get_custom_metrics())

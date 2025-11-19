@@ -15,6 +15,16 @@ After completing this chapter, you can:
 - [OK] Identify and mitigate warp divergence
 - [OK] Use loop unrolling for performance gains
 
+## Occupancy trade-offs (cheat sheet)
+
+- Occupancy = fraction of hardware warp slots kept busy (achieved occupancy). Low occupancy → not enough warps to hide latency; very high occupancy does not help if another resource is the bottleneck.
+- Why raise it? More resident warps hide memory/dependency stalls and boost eligible warps per cycle—useful only when profilers show occupancy is the limiter.
+- Costs: register pressure can trigger spilling; large shared-memory tiles cap blocks/SM; very large blocks (e.g., 1024 threads) monopolize resources.
+- Diminishing returns: ~50–70% occupancy is usually enough; chasing 100% often hurts ILP or cache behavior.
+- Wrong lever: If you are bandwidth- or dependency/issue-limited, more occupancy rarely helps. Add ILP, reduce bytes, or improve locality instead.
+- ILP tension: unrolling/extra accumulators raise ILP and register use, which can lower occupancy—balance both knobs.
+- Practical loop: start near 256 threads/block; check Achieved Occupancy, Eligible Warps/Cycle, Registers/Thread, SMEM/block, stall reasons; tune block size or register/SMEM use; stop when returns fade and move to locality/ILP work.
+
 ## Prerequisites
 
 **Previous chapters**:
@@ -99,23 +109,15 @@ __global__ void highResourceKernel(float* data, int n) {
 
 **Key insight**: 100% occupancy isn't always best! More resources per thread can enable better algorithms.
 
-**How to run**:
-```bash
-make occupancy_tuning
-```
-
-**Expected output**:
-```
-Low Resource Kernel:
-  Occupancy: 100%
-  Throughput: 450 GB/s
-  
-High Resource Kernel:
-  Occupancy: 50%
-  Throughput: 720 GB/s [OK]
-
-Conclusion: Higher performance despite lower occupancy!
-```
+**How to run (harness)**:
+- `python tools/cli/benchmark_cli.py run --targets ch8:occupancy_tuning --profile minimal`
+- The harness builds `ch8/occupancy_tuning.cu` via `CudaBinaryBenchmark` and reports occupancy/throughput timing alongside other Chapter 8 targets.
+- Variant targets for quick sweeps:
+  - Block size: `ch8:occupancy_tuning_bs128`, `ch8:occupancy_tuning_bs512`
+  - Register cap: `ch8:occupancy_tuning_maxrreg32`
+  - Shared memory pressure: `ch8:occupancy_tuning_smem32k`
+  - Combined: `ch8:occupancy_tuning_bs128_maxrreg32`
+  - Run multiple in one go: `python tools/cli/benchmark_cli.py run --targets ch8:occupancy_tuning_bs128 --targets ch8:occupancy_tuning_maxrreg32 --profile deep_dive`
 
 ---
 
