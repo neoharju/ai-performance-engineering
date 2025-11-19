@@ -19,6 +19,7 @@ import torch
 
 from common.python.benchmark_harness import BaseBenchmark, BenchmarkConfig
 from common.python.cuda_capabilities import pipeline_runtime_allowed
+from common.python.tma_checks import require_tma_instructions
 
 ARCH_SUFFIX = {
     "sm_100": "_sm100",
@@ -88,6 +89,7 @@ class CudaBinaryBenchmark(BaseBenchmark):
         run_args: Sequence[str] = (),
         time_regex: Optional[str] = r"([0-9]+(?:\.[0-9]+)?)\s*ms",
         requires_pipeline_api: bool = False,
+        require_tma_instructions: bool = False,
     ) -> None:
         super().__init__()
         self.chapter_dir = chapter_dir
@@ -99,6 +101,7 @@ class CudaBinaryBenchmark(BaseBenchmark):
         self.run_args = list(run_args)
         self.time_pattern = re.compile(time_regex) if time_regex is not None else None
         self.requires_pipeline_api = requires_pipeline_api
+        self.require_tma_instructions = require_tma_instructions
         
         self.arch: Optional[str] = None
         self.exec_path: Optional[Path] = None
@@ -135,6 +138,8 @@ class CudaBinaryBenchmark(BaseBenchmark):
         if not path.exists():
             raise FileNotFoundError(f"Built binary not found at {path}")
         self.exec_path = path
+        if self.require_tma_instructions:
+            require_tma_instructions(self.exec_path)
     
     def _run_once(self) -> BinaryRunResult:
         """Execute the compiled binary and parse its runtime."""

@@ -100,7 +100,7 @@ baseline_flash_attn_tma_micro_pipeline$(SUFFIX): baseline_flash_attn_tma_micro_p
 	$(NVCC) $(NVCC_FLAGS) -std=c++20 $(INCLUDES) -o $@ $<
 
 optimized_flash_attn_tma_micro_pipeline$(SUFFIX): optimized_flash_attn_tma_micro_pipeline.cu
-	$(NVCC) $(NVCC_FLAGS) -std=c++20 $(INCLUDES) -o $@ $<
+	$(NVCC) $(NVCC_FLAGS) -std=c++20 $(INCLUDES) -lcuda -o $@ $<
 
 tma_2d_pipeline_blackwell$(SUFFIX): tma_2d_pipeline_blackwell.cu $(COMMON_HEADERS)
 	$(NVCC) $(NVCC_FLAGS) -std=c++17 $(INCLUDES) -lcuda -o $@ $<

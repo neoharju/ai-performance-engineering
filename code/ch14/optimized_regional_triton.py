@@ -98,10 +98,8 @@ if TRITON_AVAILABLE:
         b_vals = tl.load(b_ptr + offs_n, mask=mask_n, other=0.0).to(tl.float32)
         acc = acc + b_vals[None, :]
 
-        sqrt_2_over_pi = 0.7978845608028654
-        c0 = 0.044715
-        inner = sqrt_2_over_pi * (acc + c0 * acc * acc * acc)
-        gelu = 0.5 * acc * (1.0 + tl.tanh(inner))
+        sig = 1.0 / (1.0 + tl.exp(-1.702 * acc))
+        gelu = acc * sig
 
         y_ptrs = y_ptr + offs_m[:, None] * stride_ym + offs_n[None, :] * stride_yh
         tl.store(y_ptrs, gelu.to(tl.float16), mask=mask_m[:, None] & mask_n[None, :])
@@ -154,6 +152,7 @@ class TritonMLP(nn.Module):
         super().__init__()
         self.weight = nn.Parameter(torch.empty(hidden, mlp_hidden, dtype=torch.float16))
         self.bias = nn.Parameter(torch.zeros(mlp_hidden, dtype=torch.float16))
+        self.proj_out = nn.Linear(mlp_hidden, hidden)
         nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
         bound = 1 / math.sqrt(hidden)
         nn.init.uniform_(self.bias, -bound, bound)
@@ -168,7 +167,8 @@ class TritonMLP(nn.Module):
         )
 
     def _forward_impl(self, x: torch.Tensor) -> torch.Tensor:
-        return rmsnorm_gelu_linear_triton(x, self.weight, self.bias, eps=self.eps)
+        y = rmsnorm_gelu_linear_triton(x, self.weight, self.bias, eps=self.eps)
+        return self.proj_out(y)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self._compiled(x)
@@ -181,6 +181,7 @@ class TinyTransformerBlock(nn.Module):
         self.attn = nn.MultiheadAttention(embed_dim=hidden, num_heads=num_heads, batch_first=True)
         self.ln2 = nn.LayerNorm(hidden)
         self.mlp = TritonMLP(hidden, mlp_hidden)
+        self.hidden = hidden
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         residual = x
@@ -190,7 +191,11 @@ class TinyTransformerBlock(nn.Module):
 
         residual = x
         x = self.ln2(x)
-        x = residual + self.mlp(x)
+        B, T, D = x.shape
+        x_flat = x.reshape(B * T, D)
+        mlp_out = self.mlp(x_flat)
+        mlp_out = mlp_out.reshape(B, T, D)
+        x = residual + mlp_out
         return x
 
 

@@ -13,6 +13,7 @@ from typing import List, Optional
 import torch
 import torch.nn as nn
 
+from common.python.gpu_requirements import skip_if_insufficient_gpus
 from common.python.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata
 
 
@@ -34,8 +35,7 @@ class BaselineDdpNvlinkNaiveBenchmark(BaseBenchmark):
     def setup(self) -> None:
         torch.manual_seed(0)
         num = torch.cuda.device_count()
-        if num < 2:
-            raise RuntimeError("Requires >=2 GPUs for DDP NVLink baseline")
+        skip_if_insufficient_gpus(2)
         for rank in range(num):
             device = f"cuda:{rank}"
             self.models.append(nn.Linear(self.hidden, self.hidden).to(device))

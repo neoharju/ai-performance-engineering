@@ -21,39 +21,16 @@ def skip_if_insufficient_gpus(min_gpus: int = 2) -> None:
 
 def require_min_gpus(min_gpus: int, script_name: str | None = None) -> None:
     """
-    Print a descriptive error and exit if the system does not meet the GPU requirement.
+    Raise a standardized SKIPPED RuntimeError when GPU count is insufficient.
 
-    Prefer skip_if_insufficient_gpus() when running under the benchmark harness so the
-    limitation is recorded as a skip instead of a process exit.
+    Prefer this helper for standalone scripts that previously exited; the harness
+    will record the SKIPPED status instead of failing the run.
     """
     available = torch.cuda.device_count()
-    if available >= min_gpus:
-        return
-
-    script = script_name or sys.argv[0]
-    message = [
-        "╔" + "═" * 78 + "╗",
-        f"║ {'GPU REQUIREMENT NOT MET':^76} ║",
-        "╠" + "═" * 78 + "╣",
-        f"║ Script: {script:<69} ║",
-        f"║ Required GPUs: {min_gpus:<62} ║",
-        f"║ Available GPUs: {available:<61} ║",
-        "║" + " " * 78 + "║",
-        f"║ This script requires at least {min_gpus} GPU(s) to run correctly."
-        + " " * (35 - len(str(min_gpus))) + "║",
-        f"║ Current system has {available} GPU(s) available."
-        + " " * (41 - len(str(available))) + "║",
-        "║" + " " * 78 + "║",
-        "║ To run this script:" + " " * 58 + "║",
-        f"║ • Use a system with {min_gpus}+ GPUs"
-        + " " * (54 - len(str(min_gpus))) + "║",
-        "║ • Or modify the script to work with fewer GPUs"
-        + " " * 30 + "║",
-        "╚" + "═" * 78 + "╝",
-    ]
-    for line in message:
-        print(line, file=sys.stderr)
-    sys.exit(1)
+    if available < min_gpus:
+        raise RuntimeError(
+            f"SKIPPED: Requires >= {min_gpus} GPUs (found {available} GPU)"
+        )
 
 
 def warn_optimal_gpu_count(optimal_gpus: int, script_name: str | None = None) -> None:
@@ -73,4 +50,4 @@ def require_peer_access(src: int, dst: int, script_name: str | None = None) -> N
     if torch.cuda.device_count() <= max(src, dst):
         require_min_gpus(max(src, dst) + 1, script_name=script_name)
     if not torch.cuda.can_device_access_peer(src, dst):
-        raise RuntimeError(f"Peer access unavailable between GPU {src} and GPU {dst}")
+        raise RuntimeError(f"SKIPPED: Peer access unavailable between GPU {src} and GPU {dst}")

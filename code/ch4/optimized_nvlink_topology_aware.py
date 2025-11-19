@@ -11,6 +11,7 @@ from typing import Optional
 
 import torch
 
+from common.python.gpu_requirements import skip_if_insufficient_gpus, require_peer_access
 from common.python.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata
 
 
@@ -18,7 +19,7 @@ def _find_preferred_pair() -> tuple[int, int]:
     """Pick a near-neighbor GPU pair using CUDA peer-distance if available."""
     num_gpus = torch.cuda.device_count()
     if num_gpus < 2:
-        raise RuntimeError("Requires >=2 GPUs for NVLink P2P optimized benchmark")
+        raise RuntimeError("SKIPPED: Distributed benchmark requires multiple GPUs (found 0-1 GPU)")
 
     best_pair = (0, 1)
     best_score = float("inf")
@@ -56,16 +57,13 @@ class OptimizedNvlinkTopologyAwareBenchmark(BaseBenchmark):
 
     def setup(self) -> None:
         torch.manual_seed(7)
-        if torch.cuda.device_count() < 2:
-            raise RuntimeError("Requires >=2 GPUs for NVLink P2P optimized benchmark")
+        skip_if_insufficient_gpus(2)
 
         self.src_id, self.dst_id = _find_preferred_pair()
         n = self.numel
 
-        if not torch.cuda.can_device_access_peer(self.src_id, self.dst_id):
-            raise RuntimeError(f"Peer access unavailable between GPU {self.src_id} and {self.dst_id}")
-        if not torch.cuda.can_device_access_peer(self.dst_id, self.src_id):
-            raise RuntimeError(f"Peer access unavailable between GPU {self.dst_id} and {self.src_id}")
+        require_peer_access(self.src_id, self.dst_id)
+        require_peer_access(self.dst_id, self.src_id)
 
         torch.cuda.device(self.src_id).enable_peer_access(self.dst_id)
         torch.cuda.device(self.dst_id).enable_peer_access(self.src_id)

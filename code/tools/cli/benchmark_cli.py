@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import shlex
 import signal
 import sys
@@ -15,21 +14,24 @@ from typing import Dict, List, Optional
 try:
     import typer
     from typer import Option
+
     TYPER_AVAILABLE = True
-except ImportError:
+except ImportError:  # pragma: no cover - Typer is optional for docs builds
     TYPER_AVAILABLE = False
-    typer = None
-    Option = None
-    Argument = None
-    Context = None
+    typer = None  # type: ignore
+    Option = None  # type: ignore
+    Argument = None  # type: ignore
+    Context = None  # type: ignore
 
 # Suppress CUDA capability warnings
-warnings.filterwarnings("ignore", message=".*Found GPU.*which is of cuda capability.*", category=UserWarning)
+warnings.filterwarnings("ignore", message=".*Found GPU.*cuda capability.*", category=UserWarning)
 warnings.filterwarnings("ignore", message=".*Minimum and Maximum cuda capability supported.*", category=UserWarning)
 
 # Add repo root to path
 repo_root = Path(__file__).parent.parent.parent
-sys.path.insert(0, str(repo_root))
+if str(repo_root) not in sys.path:
+    sys.path.insert(0, str(repo_root))
+
 
 def _expand_multi_value_option(option_names: List[str]) -> None:
     """Allow passing `--option value1 value2` by rewriting argv."""
@@ -61,7 +63,7 @@ def _expand_multi_value_option(option_names: List[str]) -> None:
 _expand_multi_value_option(["--targets", "-t"])
 
 from common.python.env_defaults import apply_env_defaults, dump_environment_and_capabilities
-from common.python.logger import setup_logging, get_logger, log_benchmark_start, log_benchmark_complete, log_benchmark_error
+from common.python.logger import setup_logging, get_logger
 from common.python.artifact_manager import ArtifactManager
 from tools.verification.verify_all_benchmarks import resolve_target_chapters, run_verification
 from common.python import profiler_config as profiler_config_mod
@@ -70,11 +72,105 @@ from common.python.discovery import chapter_slug, discover_all_chapters
 apply_env_defaults()
 
 
+def _validate_output_format(fmt: str) -> str:
+    normalized = fmt.strip().lower()
+    valid = {"json", "markdown", "both"}
+    if normalized not in valid:
+        message = "Output format must be one of json, markdown, or both"
+        if TYPER_AVAILABLE and typer is not None:
+            raise typer.BadParameter(message)
+        raise ValueError(message)
+    return normalized
+
+
+def _validate_ncu_metric_set(metric_set: str) -> str:
+    normalized = metric_set.strip().lower()
+    valid = {"auto", "deep_dive", "roofline", "minimal"}
+    if normalized not in valid:
+        message = (
+            f"Invalid Nsight Compute metric set '{metric_set}'. "
+            "Choose from 'auto', 'deep_dive', 'roofline', or 'minimal'."
+        )
+        if TYPER_AVAILABLE and typer is not None:
+            raise typer.BadParameter(message)
+        raise ValueError(message)
+    if normalized != "auto":
+        profiler_config_mod.set_default_profiler_metric_set(normalized)
+    return normalized
+
+
+def _validate_profile_type(profile: str) -> str:
+    normalized = profile.strip().lower()
+    valid = {"none", "minimal", "deep_dive", "roofline"}
+    if normalized not in valid:
+        message = (
+            f"Invalid profile choice '{profile}'. "
+            "Choose from 'none', 'minimal', 'deep_dive', or 'roofline'."
+        )
+        if TYPER_AVAILABLE and typer is not None:
+            raise typer.BadParameter(message)
+        raise ValueError(message)
+    return normalized
+
+
+def _parse_target_extra_args(entries: Optional[List[str]]) -> Dict[str, List[str]]:
+    """Parse --target-extra-arg entries of the form target="--flag value"."""
+    parsed: Dict[str, List[str]] = {}
+    for entry in entries or []:
+        target, sep, args = entry.partition("=")
+        if not sep or not target or not args:
+            continue
+        parsed[target.strip()] = shlex.split(args)
+    return parsed
+
+
+def _apply_suite_timeout(seconds: Optional[int]) -> None:
+    """Install a SIGALRM to stop the suite after a timeout."""
+    if seconds is None or seconds <= 0:
+        return
+
+    def _on_timeout(signum, frame):
+        raise TimeoutError(f"Benchmark suite exceeded timeout of {seconds} seconds")
+
+    signal.signal(signal.SIGALRM, _on_timeout)
+    signal.alarm(seconds)
+
+
+# Import architecture optimizations early
+try:
+    import arch_config  # noqa: F401
+except ImportError:
+    pass
+
+# Import benchmark functionality
+try:
+    import torch  # noqa: F401
+    from common.python.chapter_compare_template import discover_benchmarks
+    from tools.testing.run_all_benchmarks import test_chapter, generate_markdown_report
+
+    BENCHMARK_AVAILABLE = True
+except ImportError:
+    BENCHMARK_AVAILABLE = False
+
+# Test functions come from run_all_benchmarks; if that import failed above, this is False.
+TEST_FUNCTIONS_AVAILABLE = BENCHMARK_AVAILABLE
+
+# Typer app setup
+if TYPER_AVAILABLE:
+    app = typer.Typer(
+        name="benchmark",
+        help="Unified benchmark execution and management CLI",
+        add_completion=False,
+    )
+else:
+    app = None
+
+
 def _execute_benchmarks(
     targets: Optional[List[str]] = None,
     output_format: str = "both",
     profile_type: str = "none",
-    suite_timeout: Optional[int] = None,
+    suite_timeout: Optional[int] = 14400,
     timeout_multiplier: float = 1.0,
     reproducible: bool = False,
     cold_start: bool = False,
@@ -97,11 +193,12 @@ def _execute_benchmarks(
 ) -> None:
     """Execute selected benchmarks with optional profiling."""
     parsed_extra_args = _parse_target_extra_args(target_extra_args)
-    # Apply force pipeline flag globally
+
     try:
         from common.python.cuda_capabilities import set_force_pipeline
+
         set_force_pipeline(force_pipeline)
-    except ImportError:
+    except Exception:
         pass
 
     artifact_manager = ArtifactManager(base_dir=Path(artifacts_dir) if artifacts_dir else None)
@@ -126,6 +223,8 @@ def _execute_benchmarks(
     logger.info(f"FOUND {len(chapter_dirs)} chapter(s)")
 
     enable_profiling = (profile_type or "none").lower() != "none"
+
+    _apply_suite_timeout(suite_timeout)
 
     all_results = []
     for chapter_dir in chapter_dirs:
@@ -165,94 +264,24 @@ def _execute_benchmarks(
         generate_markdown_report(all_results, output_md)
         logger.info(f"Markdown report saved to: {output_md}")
 
-    total_failed = sum(r["summary"]["failed"] for r in all_results if r.get("summary"))
+    total_failed = sum(r.get("summary", {}).get("failed", 0) for r in all_results)
     if total_failed > 0:
         sys.exit(1)
 
-def _validate_ncu_metric_set(metric_set: str) -> str:
-    normalized = metric_set.strip().lower()
-    valid = {"auto", "deep_dive", "roofline", "minimal"}
-    if normalized not in valid:
-        message = (
-            f"Invalid Nsight Compute metric set '{metric_set}'. "
-            "Choose from 'auto', 'deep_dive', 'roofline', or 'minimal'."
-        )
-        if TYPER_AVAILABLE and typer is not None:
-            raise typer.BadParameter(message)
-        raise ValueError(message)
-    if normalized != "auto":
-        profiler_config_mod.set_default_profiler_metric_set(normalized)
-    return normalized
-
-
-def _validate_profile_type(profile: str) -> str:
-    normalized = profile.strip().lower()
-    valid = {"none", "minimal", "deep_dive", "roofline"}
-    if normalized not in valid:
-        message = (
-            f"Invalid profile choice '{profile}'. "
-            "Choose from 'none', 'minimal', 'deep_dive', or 'roofline'."
-        )
-        if TYPER_AVAILABLE and typer is not None:
-            raise typer.BadParameter(message)
-        raise ValueError(message)
-    return normalized
-
-
-def _parse_target_extra_args(entries: Optional[List[str]]) -> Dict[str, List[str]]:
-    """Parse --target-extra-arg entries of the form target=\"--flag value\"."""
-    parsed: Dict[str, List[str]] = {}
-    for entry in entries or []:
-        target, sep, args = entry.partition("=")
-        if not sep or not target or not args:
-            continue
-        parsed[target.strip()] = shlex.split(args)
-    return parsed
-
-# Import architecture optimizations early
-try:
-    import arch_config  # noqa: F401
-except ImportError:
-    pass
-
-# Import benchmark functionality
-try:
-    import torch
-    from common.python.chapter_compare_template import discover_benchmarks, load_benchmark
-    from common.python.benchmark_harness import BaseBenchmark, BenchmarkHarness, BenchmarkMode, BenchmarkConfig
-    BENCHMARK_AVAILABLE = True
-except ImportError:
-    BENCHMARK_AVAILABLE = False
-
-# Import test functionality
-try:
-    from tools.testing.run_all_benchmarks import test_chapter, generate_markdown_report
-    TEST_FUNCTIONS_AVAILABLE = True
-except ImportError:
-    TEST_FUNCTIONS_AVAILABLE = False
 
 if TYPER_AVAILABLE:
-    app = typer.Typer(
-        name="benchmark",
-        help="Unified benchmark execution and management CLI",
-        add_completion=False,
-    )
-else:
-    app = None
 
-
-if TYPER_AVAILABLE:
     @app.command()
     def run(
         targets: Optional[List[str]] = Option(None, "--targets", "-t", help="Chapter(s) or chapter:example pairs to run. Repeat the flag for multiple targets. Omit or use 'all' for every chapter."),
-        output_format: str = Option("both", "--format", "-f", help="Output format: 'json', 'markdown', or 'both'"),
+        output_format: str = Option("both", "--format", "-f", help="Output format: 'json', 'markdown', or 'both'", callback=_validate_output_format),
         profile_type: str = Option("none", "--profile", "-p", help="Profiling preset: none (default), minimal, deep_dive, or roofline. Non-'none' enables nsys/ncu/PyTorch profiling.", callback=_validate_profile_type),
-        suite_timeout: Optional[int] = Option(None, "--suite-timeout", help="Suite timeout in seconds (default: 14400 = 4 hours, 0 = disabled)"),
+        suite_timeout: Optional[int] = Option(14400, "--suite-timeout", help="Suite timeout in seconds (default: 14400 = 4 hours, 0 = disabled)"),
         timeout_multiplier: float = Option(1.0, "--timeout-multiplier", help="Multiply all benchmark timeouts by this factor (e.g., 2.0 = double all timeouts)"),
         reproducible: bool = Option(False, "--reproducible", help="Enable reproducible mode: set all seeds to 42 and force deterministic algorithms (uses slower fallbacks; ops without deterministic support may error)."),
         cold_start: bool = Option(False, "--cold-start", help="Reset GPU state between benchmarks for cold start measurements"),
-        iterations: Optional[int] = Option(None, "--iterations", help="Number of benchmark iterations (default: 20)"),
-        warmup: Optional[int] = Option(None, "--warmup", help="Number of warmup iterations (default: 5)"),
+        iterations: Optional[int] = Option(None, "--iterations", help="Number of benchmark iterations (default: chapter-specific)"),
+        warmup: Optional[int] = Option(None, "--warmup", help="Number of warmup iterations (default: chapter-specific)"),
         force_pipeline: bool = Option(False, "--force-pipeline", help="Force enable CUDA Pipeline API even on compute capability 12.0+ (may cause instability on Blackwell GPUs)"),
         artifacts_dir: Optional[str] = Option(None, "--artifacts-dir", help="Directory for artifacts (default: ./artifacts)"),
         log_level: str = Option("INFO", "--log-level", help="Log level: DEBUG, INFO, WARNING, ERROR"),
@@ -341,11 +370,11 @@ def main():
     if not TYPER_AVAILABLE:
         print("ERROR: typer is required for CLI. Install with: pip install typer")
         sys.exit(1)
-    
+
     if app is None:
         print("ERROR: CLI not available")
         sys.exit(1)
-    
+
     app()
 
 

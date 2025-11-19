@@ -36,8 +36,21 @@ class OccupancyBinaryBenchmark(CudaBinaryBenchmark):
             iterations=3,
             warmup=1,
             timeout_seconds=90,
-            run_args=run_args or (),
-            time_regex=None,  # Measure wall time via harness timers; binary does not print ms.
+            # Baseline: small block, heavy shared memory to depress occupancy.
+            run_args=run_args
+            or [
+                "--block-size",
+                "32",
+                "--smem-bytes",
+                "45000",
+                "--unroll",
+                "1",
+                "--inner-iters",
+                "1",
+                "--reps",
+                "40",
+            ],
+            time_regex=r"avg_kernel_ms=([0-9]+\.?[0-9]*)",  # Parse kernel time from binary output.
         )
         self.build_env = build_env or {}
 

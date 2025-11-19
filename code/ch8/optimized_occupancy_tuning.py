@@ -1,4 +1,4 @@
-"""Register-capped variant of occupancy_tuning for harness comparisons."""
+"""Optimized occupancy tuning with higher ILP (unroll) at default block size."""
 
 from __future__ import annotations
 
@@ -13,12 +13,21 @@ from ch8.baseline_occupancy_tuning import OccupancyBinaryBenchmark
 
 
 class OptimizedOccupancyTuningBenchmark(OccupancyBinaryBenchmark):
-    """Builds with MAXRREGCOUNT=32 to force higher occupancy (at possible ILP cost)."""
+    """Use unroll to raise ILP and hide latency at block=256."""
 
     def __init__(self) -> None:
         super().__init__(
-            friendly_name="Occupancy Tuning (maxrregcount=32)",
-            build_env={"MAXRREGCOUNT": "32"},
+            friendly_name="Occupancy Tuning (block=256, unroll=8, inner=16)",
+            run_args=[
+                "--block-size",
+                "256",
+                "--unroll",
+                "8",
+                "--inner-iters",
+                "16",
+                "--reps",
+                "60",
+            ],
         )
 
 

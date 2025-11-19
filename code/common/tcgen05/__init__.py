@@ -17,9 +17,11 @@ except ImportError:  # pragma: no cover - optional bootstrap
     arch_config = None  # type: ignore[assignment]
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_CUTLASS_INCLUDE = (
-    _REPO_ROOT / "third_party" / "TransformerEngine" / "3rdparty" / "cutlass" / "include"
-)
+_CUTLASS_INCLUDE = _REPO_ROOT / "third_party" / "TransformerEngine" / "3rdparty" / "cutlass" / "include"
+if not _CUTLASS_INCLUDE.exists():
+    _CUTLASS_INCLUDE = _REPO_ROOT / "third_party" / "cutlass_patch" / "include"
+if not _CUTLASS_INCLUDE.exists():
+    _CUTLASS_INCLUDE = _REPO_ROOT / "third_party" / "cutlass_latest" / "cutlass-main" / "include"
 _LEGACY_CUTLASS_INCLUDE = _CUTLASS_INCLUDE
 _CLANG_HOST = _REPO_ROOT / "third_party" / "llvm" / "bin" / "clang++"
 

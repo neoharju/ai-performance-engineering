@@ -112,12 +112,11 @@ __global__ void highResourceKernel(float* data, int n) {
 **How to run (harness)**:
 - `python tools/cli/benchmark_cli.py run --targets ch8:occupancy_tuning --profile minimal`
 - The harness builds `ch8/occupancy_tuning.cu` via `CudaBinaryBenchmark` and reports occupancy/throughput timing alongside other Chapter 8 targets.
-- Variant targets for quick sweeps:
-  - Block size: `ch8:occupancy_tuning_bs128`, `ch8:occupancy_tuning_bs512`
-  - Register cap: `ch8:occupancy_tuning_maxrreg32`
-  - Shared memory pressure: `ch8:occupancy_tuning_smem32k`
-  - Combined: `ch8:occupancy_tuning_bs128_maxrreg32`
-  - Run multiple in one go: `python tools/cli/benchmark_cli.py run --targets ch8:occupancy_tuning_bs128 --targets ch8:occupancy_tuning_maxrreg32 --profile deep_dive`
+- Variant targets for quick sweeps (all use the same binary with different launch args):
+  - Baseline: `ch8:occupancy_tuning` (block=128, unroll=1)
+  - Block size + ILP: `ch8:occupancy_tuning_bs128` (block=128, unroll=8)
+  - ILP-only contrast: `ch8:occupancy_tuning_unroll8` (block=64, unroll=8)
+  - Run multiple in one go: `python tools/cli/benchmark_cli.py run --targets ch8:occupancy_tuning --targets ch8:occupancy_tuning_bs128 --targets ch8:occupancy_tuning_unroll8 --profile deep_dive`
 
 ---
 

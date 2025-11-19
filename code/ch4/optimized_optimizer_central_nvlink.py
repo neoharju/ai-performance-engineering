@@ -12,6 +12,7 @@ from typing import List, Optional
 import torch
 import torch.nn as nn
 
+from common.python.gpu_requirements import skip_if_insufficient_gpus, require_peer_access
 from common.python.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata
 
 
@@ -34,8 +35,7 @@ class OptimizedOptimizerCentralNvlinkBenchmark(BaseBenchmark):
 
     def _enable_peer_access(self) -> None:
         num = torch.cuda.device_count()
-        if num < 2:
-            raise RuntimeError("Requires >=2 GPUs for centralized optimizer NVLink benchmark")
+        skip_if_insufficient_gpus(2)
         for src in range(num):
             for dst in range(num):
                 if src == dst:
@@ -51,8 +51,7 @@ class OptimizedOptimizerCentralNvlinkBenchmark(BaseBenchmark):
         torch.manual_seed(123)
         self._enable_peer_access()
         num_gpus = max(1, torch.cuda.device_count())
-        if num_gpus < 2:
-            raise RuntimeError("Requires >=2 GPUs for centralized optimizer NVLink benchmark")
+        skip_if_insufficient_gpus(2)
 
         for rank in range(num_gpus):
             device = f"cuda:{rank}"

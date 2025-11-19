@@ -22,6 +22,7 @@ class OptimizedFlashAttnTmaMicroPipelineBenchmark(CudaBinaryBenchmark):
             timeout_seconds=120,
             run_args=(),
             requires_pipeline_api=True,
+            require_tma_instructions=True,
         )
 
 

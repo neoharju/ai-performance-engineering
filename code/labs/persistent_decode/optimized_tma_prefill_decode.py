@@ -122,7 +122,7 @@ class OptimizedTmaPrefillDecodeBenchmark(BaseBenchmark):
         self.inputs = None
 
     def get_config(self) -> BenchmarkConfig:
-        return BenchmarkConfig(iterations=8, warmup=2, accept_regressions=True)
+        return BenchmarkConfig(iterations=8, warmup=2)
 
     def validate_result(self) -> str | None:
         if self.inputs is None:

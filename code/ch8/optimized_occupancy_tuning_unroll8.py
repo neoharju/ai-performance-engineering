@@ -1,4 +1,4 @@
-"""Occupancy tuning with 512-thread blocks to show large-block effects."""
+"""Optimized occupancy tuning with aggressive unroll for ILP (block=256, unroll=8)."""
 
 from __future__ import annotations
 
@@ -12,17 +12,17 @@ if str(repo_root) not in sys.path:
 from ch8.baseline_occupancy_tuning import OccupancyBinaryBenchmark
 
 
-class OptimizedOccupancyTuningBS512(OccupancyBinaryBenchmark):
+class OptimizedOccupancyTuningUnroll8(OccupancyBinaryBenchmark):
     def __init__(self) -> None:
         super().__init__(
-            friendly_name="Occupancy Tuning (block=512)",
-            run_args=["--block-size", "512"],
+            friendly_name="Occupancy Tuning (block=64, unroll=8, inner=12)",
+            run_args=["--block-size", "64", "--unroll", "8", "--inner-iters", "12", "--reps", "60"],
         )
 
 
-def get_benchmark() -> OptimizedOccupancyTuningBS512:
+def get_benchmark() -> OptimizedOccupancyTuningUnroll8:
     """Factory for discover_benchmarks()."""
-    return OptimizedOccupancyTuningBS512()
+    return OptimizedOccupancyTuningUnroll8()
 
 
 if __name__ == "__main__":
@@ -32,5 +32,5 @@ if __name__ == "__main__":
     harness = BenchmarkHarness(mode=BenchmarkMode.CUSTOM, config=benchmark.get_config())
     result = harness.benchmark(benchmark)
     print(
-        f"\nOccupancy Tuning (block=512): {result.timing.mean_ms if result.timing else 0.0:.3f} ms"
+        f"\nOccupancy Tuning (block=256, unroll=8): {result.timing.mean_ms if result.timing else 0.0:.3f} ms"
     )

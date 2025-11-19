@@ -13,13 +13,13 @@ from typing import List, Optional, Tuple
 import torch
 import torch.nn as nn
 
+from common.python.gpu_requirements import skip_if_insufficient_gpus, require_peer_access
 from common.python.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata
 
 
 def _enable_peer_access() -> None:
     num = torch.cuda.device_count()
-    if num < 2:
-        raise RuntimeError("Requires >=2 GPUs for NVLink-overlap DDP benchmark")
+    skip_if_insufficient_gpus(2)
     for src in range(num):
         for dst in range(num):
             if src == dst:
@@ -57,8 +57,8 @@ class OptimizedDdpNvlinkOverlapBenchmark(BaseBenchmark):
         torch.manual_seed(0)
         _enable_peer_access()
         num = torch.cuda.device_count()
-        if num < 2:
-            raise RuntimeError("Requires >=2 GPUs for NVLink-overlap DDP benchmark")
+        skip_if_insufficient_gpus(2)
+        require_peer_access(0, 1)
         for rank in range(num):
             device = f"cuda:{rank}"
             self.models.append(nn.Linear(self.hidden, self.hidden).to(device))

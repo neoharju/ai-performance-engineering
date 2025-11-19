@@ -7,7 +7,10 @@
 #include <cuda_runtime.h>
 #include <cuda.h>
 #include <cuda/pipeline>
+#include <cuda/barrier>
 #include <cooperative_groups.h>
+
+#include "../common/headers/tma_helpers.cuh"
 
 #include <cstdio>
 #include <cstdlib>
@@ -38,11 +41,15 @@ constexpr int THREADS = 128;
 constexpr int STAGES  = 2;  // double buffer
 
 namespace cg = cooperative_groups;
+namespace cde = cuda::device::experimental;
+using namespace cuda::device::experimental;
+
+using block_barrier = cuda::barrier<cuda::thread_scope_block>;
 
 __global__ void flash_attn_tma_microkernel(
+    const __grid_constant__ CUtensorMap k_desc,
+    const __grid_constant__ CUtensorMap v_desc,
     const float* __restrict__ q,
-    const float* __restrict__ k,
-    const float* __restrict__ v,
     float* __restrict__ o,
     int seq_len,
     int d_head) {
@@ -50,6 +57,7 @@ __global__ void flash_attn_tma_microkernel(
     if (q_idx >= seq_len) return;
 
     extern __shared__ float smem[];
+    __shared__ alignas(128) unsigned char stage_barrier_storage[STAGES][sizeof(block_barrier)];
     float* smem_k[STAGES];
     float* smem_v[STAGES];
     const int tile_elems = TILE_KV * d_head;
@@ -58,9 +66,15 @@ __global__ void flash_attn_tma_microkernel(
     smem_k[1] = smem_v[0] + tile_elems;
     smem_v[1] = smem_k[1] + tile_elems;
 
-    __shared__ cuda::pipeline_shared_state<cuda::thread_scope_block, STAGES> shared_state;
-    cg::thread_block block = cg::this_thread_block();
-    auto pipe = cuda::make_pipeline(block, &shared_state);
+    const int participants = blockDim.x;
+    if (threadIdx.x == 0) {
+        for (int s = 0; s < STAGES; ++s) {
+            auto* bar_ptr = reinterpret_cast<block_barrier*>(stage_barrier_storage[s]);
+            init(bar_ptr, participants);
+        }
+        cde::fence_proxy_async_shared_cta();
+    }
+    __syncthreads();
 
     __shared__ float score_smem[THREADS];
     const int tid = threadIdx.x;
@@ -76,30 +90,50 @@ __global__ void flash_attn_tma_microkernel(
     for (int d = 0; d < d_head; ++d) o_reg[d] = 0.f;
 
     const int num_tiles = (seq_len + TILE_KV - 1) / TILE_KV;
-    auto k_tile_ptr = [&](int tile_idx) {
-        return k + tile_idx * TILE_KV * d_head;
-    };
-    auto v_tile_ptr = [&](int tile_idx) {
-        return v + tile_idx * TILE_KV * d_head;
+    block_barrier::arrival_token stage_tokens[STAGES];
+
+    auto issue_tile = [&](int tile_idx) {
+        if (tile_idx >= num_tiles) return;
+        const int stage = tile_idx & 1;
+        auto* bar_ptr = reinterpret_cast<block_barrier*>(stage_barrier_storage[stage]);
+        const int row_base = tile_idx * TILE_KV;
+        const int rows = min(TILE_KV, seq_len - row_base);
+        const std::size_t bytes = std::size_t(rows) * d_head * sizeof(float);
+
+        if (threadIdx.x == 0) {
+            cde::cp_async_bulk_tensor_2d_global_to_shared(
+                smem_k[stage],
+                &k_desc,
+                /*coord_x=*/0,
+                /*coord_y=*/row_base,
+                *bar_ptr);
+            cde::cp_async_bulk_tensor_2d_global_to_shared(
+                smem_v[stage],
+                &v_desc,
+                /*coord_x=*/0,
+                /*coord_y=*/row_base,
+                *bar_ptr);
+            stage_tokens[stage] = cuda::device::barrier_arrive_tx(*bar_ptr, 1, bytes * 2);
+        } else {
+            stage_tokens[stage] = bar_ptr->arrive();
+        }
     };
 
-    int stage = 0;
-    if (num_tiles > 0) {
-        pipe.producer_acquire();
-        const int rows = min(TILE_KV, seq_len);
-        const size_t bytes = size_t(rows) * d_head * sizeof(float);
-        cuda::memcpy_async(smem_k[stage], k_tile_ptr(0), bytes, pipe);
-        cuda::memcpy_async(smem_v[stage], v_tile_ptr(0), bytes, pipe);
-        pipe.producer_commit();
+    const int preload = min(num_tiles, STAGES);
+    for (int t = 0; t < preload; ++t) {
+        issue_tile(t);
     }
 
+    int stage = 0;
     for (int tile_idx = 0; tile_idx < num_tiles; ++tile_idx) {
-        pipe.consumer_wait();
+        stage = tile_idx & 1;
+        auto* bar_ptr = reinterpret_cast<block_barrier*>(stage_barrier_storage[stage]);
+        bar_ptr->wait(std::move(stage_tokens[stage]));
+        __syncthreads();
 
         const int row_base = tile_idx * TILE_KV;
         const int rows_this_tile = min(TILE_KV, seq_len - row_base);
 
-        // COMPUTE on current stage while next loads in background.
         for (int r = 0; r < rows_this_tile; ++r) {
             const float* k_row = smem_k[stage] + r * d_head;
             const float* v_row = smem_v[stage] + r * d_head;
@@ -130,19 +164,9 @@ __global__ void flash_attn_tma_microkernel(
             __syncthreads();
         }
 
-        pipe.consumer_release();
-
         const int next_tile = tile_idx + 1;
         if (next_tile < num_tiles) {
-            int next_stage = (stage + 1) & (STAGES - 1);
-            const int rows_next = min(TILE_KV, seq_len - next_tile * TILE_KV);
-            const size_t bytes_next = size_t(rows_next) * d_head * sizeof(float);
-
-            pipe.producer_acquire();
-            cuda::memcpy_async(smem_k[next_stage], k_tile_ptr(next_tile), bytes_next, pipe);
-            cuda::memcpy_async(smem_v[next_stage], v_tile_ptr(next_tile), bytes_next, pipe);
-            pipe.producer_commit();
-            stage = next_stage;
+            issue_tile(next_tile);
         }
     }
 
@@ -194,6 +218,24 @@ int main() {
     CHECK_CUDA(cudaMemset(d_v, 0, bytes));
     CHECK_CUDA(cudaMemset(d_o, 0, bytes));
 
+    // Build TensorMap descriptors for TMA copies.
+    CUtensorMap k_desc{};
+    CUtensorMap v_desc{};
+    auto encode = cuda_tma::load_cuTensorMapEncodeTiled();
+    if (!encode) {
+        std::printf("SKIP: cuTensorMapEncodeTiled unavailable.\nelapsed_ms=0.0 ms\n");
+        return 0;
+    }
+    const int box_h = TILE_KV;
+    const int box_w = d_head;
+    if (!cuda_tma::make_2d_tensor_map(
+            k_desc, encode, d_k, d_head, seq_len, d_head, box_w, box_h, CU_TENSOR_MAP_SWIZZLE_128B) ||
+        !cuda_tma::make_2d_tensor_map(
+            v_desc, encode, d_v, d_head, seq_len, d_head, box_w, box_h, CU_TENSOR_MAP_SWIZZLE_128B)) {
+        std::printf("SKIP: Failed to encode TMA descriptors.\nelapsed_ms=0.0 ms\n");
+        return 0;
+    }
+
     cudaStream_t stream;
     CHECK_CUDA(cudaStreamCreate(&stream));
 
@@ -207,7 +249,7 @@ int main() {
 
     CHECK_CUDA(cudaEventRecord(start, stream));
     flash_attn_tma_microkernel<<<grid, block, shmem_bytes, stream>>>(
-        d_q, d_k, d_v, d_o, seq_len, d_head);
+        k_desc, v_desc, d_q, d_o, seq_len, d_head);
     CHECK_CUDA(cudaEventRecord(stop, stream));
 
     CHECK_CUDA(cudaGetLastError());

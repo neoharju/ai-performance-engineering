@@ -11,6 +11,7 @@ from typing import Optional
 
 import torch
 
+from common.python.gpu_requirements import skip_if_insufficient_gpus, require_peer_access
 from common.python.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata
 
 
@@ -30,10 +31,8 @@ class BaselineNvlinkTopologyBlindBenchmark(BaseBenchmark):
     def setup(self) -> None:
         torch.manual_seed(7)
         n = self.numel
-        if torch.cuda.device_count() < 2:
-            raise RuntimeError("Requires >=2 GPUs for NVLink P2P baseline")
-        if not torch.cuda.can_device_access_peer(0, 1):
-            raise RuntimeError("Peer access (NVLink) unavailable between GPU 0 and 1")
+        skip_if_insufficient_gpus(2)
+        require_peer_access(0, 1)
 
         self.src = torch.randn(n, device="cuda:0", dtype=torch.float16)
         self.dst = torch.empty(n, device="cuda:1", dtype=torch.float16)

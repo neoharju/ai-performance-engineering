@@ -12,20 +12,18 @@ from typing import Optional, Tuple
 import torch
 import torch.nn as nn
 
+from common.python.gpu_requirements import skip_if_insufficient_gpus, require_peer_access
 from common.python.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata
 
 
 def _enable_peer_access() -> None:
-    if torch.cuda.device_count() < 2:
-        raise RuntimeError("Requires >=2 GPUs for NVLink KV cache pooling")
-    if torch.cuda.can_device_access_peer(0, 1):
-        try:
-            torch.cuda.device(0).enable_peer_access(1)
-            torch.cuda.device(1).enable_peer_access(0)
-        except RuntimeError:
-            pass
-    else:
-        raise RuntimeError("Peer access unavailable between GPU 0 and 1")
+    skip_if_insufficient_gpus(2)
+    require_peer_access(0, 1)
+    try:
+        torch.cuda.device(0).enable_peer_access(1)
+        torch.cuda.device(1).enable_peer_access(0)
+    except RuntimeError:
+        pass
 
 
 class OptimizedKVCacheNvlinkPoolBenchmark(BaseBenchmark):
@@ -50,8 +48,6 @@ class OptimizedKVCacheNvlinkPoolBenchmark(BaseBenchmark):
     def setup(self) -> None:
         torch.manual_seed(42)
         _enable_peer_access()
-        if torch.cuda.device_count() < 2:
-            raise RuntimeError("Requires >=2 GPUs for NVLink KV cache pooling")
         self.peer_device = torch.device("cuda:1")
         self.model = nn.MultiheadAttention(self.hidden, self.heads, batch_first=True).to(self.device).eval()
         self._synchronize()
