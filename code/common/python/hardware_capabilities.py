@@ -109,9 +109,54 @@ _probe_cache: Optional[Dict[str, Any]] = None
 
 
 def _run_probe_if_needed() -> None:
-    if not PROBE_FILE.exists():
-        ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
-        subprocess.run([sys.executable, str(PROBE_SCRIPT)], check=True)
+    if PROBE_FILE.exists():
+        return
+
+    ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        subprocess.run([sys.executable, str(PROBE_SCRIPT)], check=True, timeout=180)
+        return
+    except Exception as exc:
+        # Fall back to a minimal stub if probing fails (e.g., OOM during set_device).
+        import torch  # local import to avoid optional dependency during docs builds
+
+        devices = []
+        if torch.cuda.is_available():
+            for idx in range(torch.cuda.device_count()):
+                props = torch.cuda.get_device_properties(idx)
+                cc = f"{props.major}.{props.minor}"
+                devices.append(
+                    {
+                        "device_index": idx,
+                        "key": f"sm_{props.major}{props.minor}",
+                        "name": props.name,
+                        "architecture": "blackwell" if props.major >= 10 else "other",
+                        "compute_capability": cc,
+                        "total_memory_gb": round(props.total_memory / 1e9, 2),
+                        "num_sms": props.multi_processor_count,
+                        "warp_size": props.warp_size,
+                        "max_threads_per_block": props.max_threads_per_block,
+                        "max_shared_mem_per_block": props.shared_memory_per_block,
+                        "tma": {"supported": False, "compiler_support": False},
+                    }
+                )
+        else:
+            devices.append(
+                {
+                    "device_index": 0,
+                    "key": "sm_00",
+                    "name": "unknown",
+                    "architecture": "other",
+                    "compute_capability": "0.0",
+                    "total_memory_gb": 0,
+                    "num_sms": 0,
+                    "warp_size": 32,
+                    "max_threads_per_block": 1024,
+                    "max_shared_mem_per_block": 48 * 1024,
+                    "tma": {"supported": False, "compiler_support": False},
+                }
+            )
+        PROBE_FILE.write_text(json.dumps({"devices": devices}, indent=2))
 
 
 def _load_probe_data() -> Dict[str, Any]:
@@ -120,9 +165,13 @@ def _load_probe_data() -> Dict[str, Any]:
         _run_probe_if_needed()
         with PROBE_FILE.open("r", encoding="utf-8") as handle:
             data = json.load(handle)
-        by_index = {entry["device_index"]: entry for entry in data.get("devices", [])}
+        devices = data.get("devices", [])
+        # Backward compatibility: older stub used {"by_index": {...}}
+        if not devices and "by_index" in data:
+            devices = list(data["by_index"].values())
+        by_index = {entry["device_index"]: entry for entry in devices}
         by_key: Dict[str, Any] = {}
-        for entry in data.get("devices", []):
+        for entry in devices:
             by_key.setdefault(entry["key"], entry)
         _probe_cache = {"by_index": by_index, "by_key": by_key}
     return _probe_cache

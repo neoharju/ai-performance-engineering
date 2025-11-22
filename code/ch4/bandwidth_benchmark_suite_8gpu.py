@@ -145,7 +145,11 @@ def benchmark_p2p_bandwidth(
         return 0.0
 
 
-def measure_p2p_matrix(rank: int, world_size: int) -> Dict[Tuple[int, int], float]:
+def measure_p2p_matrix(
+    rank: int,
+    world_size: int,
+    quick: bool = False,
+) -> Dict[Tuple[int, int], float]:
     """
     Measure P2P bandwidth for all GPU pairs.
     
@@ -161,11 +165,14 @@ def measure_p2p_matrix(rank: int, world_size: int) -> Dict[Tuple[int, int], floa
     
     bandwidth_matrix = {}
     
-    # Test all pairs
+    # Test all pairs (or first pair only in quick mode)
     for src in range(world_size):
         for dst in range(src + 1, world_size):
             # Test src -> dst
-            bw = benchmark_p2p_bandwidth(src, dst, size_mb=256, iterations=50)
+            if quick:
+                bw = benchmark_p2p_bandwidth(src, dst, size_mb=64, iterations=3)
+            else:
+                bw = benchmark_p2p_bandwidth(src, dst, size_mb=256, iterations=50)
             if rank == src:
                 bandwidth_matrix[(src, dst)] = bw
             
@@ -176,6 +183,8 @@ def measure_p2p_matrix(rank: int, world_size: int) -> Dict[Tuple[int, int], floa
             
             if rank == 0:
                 print(f"  GPU {src} → GPU {dst}: {bw_tensor.item():6.2f} GB/s")
+        if quick:
+            break
     
     if rank == 0:
         # Calculate statistics
@@ -286,7 +295,7 @@ def measure_collectives(rank: int, world_size: int, quick: bool = False) -> Dict
     operations = ["allreduce", "allgather", "reducescatter"]
     
     if quick:
-        sizes = [1024, 1024*1024, 64*1024*1024]  # 4KB, 4MB, 256MB
+        sizes = [1024, 1024 * 1024]  # 4KB, 4MB
     else:
         sizes = [
             1024,           # 4 KB (latency-bound)
@@ -307,8 +316,9 @@ def measure_collectives(rank: int, world_size: int, quick: bool = False) -> Dict
         results[op] = {}
         
         for size in sizes:
+            iters = 5 if quick else 100
             latency_ms, bandwidth_gbs = benchmark_collective(
-                op, size, rank, world_size, iterations=100
+                op, size, rank, world_size, iterations=iters
             )
             
             size_mb = size * 4 / (1024 * 1024)
@@ -490,7 +500,7 @@ def main():
     
     # Benchmark 1: P2P Matrix
     if args.full or world_size <= 8:
-        bandwidth_matrix = measure_p2p_matrix(rank, world_size)
+        bandwidth_matrix = measure_p2p_matrix(rank, world_size, quick=args.quick)
         all_results["p2p_matrix"] = {f"{k[0]}-{k[1]}": v for k, v in bandwidth_matrix.items()}
         
         # Visualize topology

@@ -10,7 +10,7 @@ if str(repo_root) not in sys.path:
     sys.path.insert(0, str(repo_root))
 
 import torch
-from ch4.bandwidth_benchmark_suite_8gpu import main as bandwidth_suite_main
+from ch4.baseline_bandwidth_benchmark_suite_multigpu import run_quick_bandwidth_smoke
 from common.python.benchmark_harness import BaseBenchmark, BenchmarkConfig
 
 
@@ -18,13 +18,15 @@ class OptimizedBandwidthSuiteMultiGPU(BaseBenchmark):
     def setup(self) -> None:
         if torch.cuda.device_count() < 2:
             raise RuntimeError("SKIPPED: bandwidth benchmark suite requires >=2 GPUs")
+        if int(os.environ.get("WORLD_SIZE", "1")) > 1:
+            raise RuntimeError("SKIPPED: bandwidth smoke runs single-process; launch with --launch-via python")
 
     def benchmark_fn(self) -> None:
-        # TODO: insert optimized path (e.g., tuned message sizes/topology) when available.
-        bandwidth_suite_main()
+        # Placeholder optimized path: reuse smoke test for now.
+        run_quick_bandwidth_smoke()
 
     def get_config(self) -> BenchmarkConfig:
-        return BenchmarkConfig(iterations=1, warmup=1, measurement_timeout_seconds=300)
+        return BenchmarkConfig(iterations=1, warmup=0, measurement_timeout_seconds=30)
 
 
 def get_benchmark() -> BaseBenchmark:

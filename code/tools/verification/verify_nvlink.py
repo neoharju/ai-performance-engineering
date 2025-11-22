@@ -7,11 +7,12 @@ Tests NVLink topology, bandwidth, and NCCL configuration.
 import subprocess
 import sys
 import re
+import os
 from pathlib import Path
 
 try:
-    import torch
-    import torch.distributed as dist
+import torch
+import torch.distributed as dist
 except ImportError:
     print("ERROR: PyTorch not installed. Please install PyTorch first.")
     sys.exit(1)
@@ -22,6 +23,20 @@ def print_section(title):
     print(f"\n{'='*80}")
     print(f"  {title}")
     print('='*80)
+
+
+def ensure_nccl_defaults() -> None:
+    """Populate recommended NCCL envs if they are not already set."""
+    defaults = {
+        "NCCL_P2P_LEVEL": "NVL",
+        "NCCL_P2P_DISABLE": "0",
+        "NCCL_IB_DISABLE": "1",
+        "NCCL_SHM_DISABLE": "0",
+        "NCCL_NVLS_ENABLE": "1",
+        "NCCL_SOCKET_IFNAME": "lo",
+    }
+    for key, value in defaults.items():
+        os.environ.setdefault(key, value)
 
 
 def check_nvlink_topology():
@@ -326,7 +341,8 @@ def main():
     print("\n" + "="*80)
     print("  NVLink Verification Suite for Multi-GPU Systems")
     print("="*80)
-    
+    ensure_nccl_defaults()
+
     results = {}
     
     # Run all checks
@@ -367,4 +383,3 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
-

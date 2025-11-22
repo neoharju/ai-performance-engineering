@@ -22,6 +22,7 @@ LAB_NAMES = {
     "occupancy_tuning",
     "kv_cache_compression",
     "speculative_decode",
+    "fast_nanochat",
 }
 LAB_ALIASES: Dict[str, str] = {
     "lab_fullstack_cluster": "labs/fullstack_cluster",
@@ -37,6 +38,7 @@ LAB_ALIASES: Dict[str, str] = {
     "lab_occupancy_tuning": "labs/occupancy_tuning",
     "lab_kv_cache_compression": "labs/kv_cache_compression",
     "lab_speculative_decode": "labs/speculative_decode",
+    "lab_fast_nanochat": "labs/fast_nanochat",
     "capstone": "labs/fullstack_cluster",
     "capstone2": "labs/blackwell_matmul",
     "capstone3": "labs/moe_cuda",

@@ -890,6 +890,7 @@ class BenchmarkHarness:
     def _benchmark_with_torchrun(self, benchmark: BaseBenchmark, config: BenchmarkConfig) -> PydanticBenchmarkResult:
         """Launch benchmark via torchrun for multi-GPU targets."""
         import inspect
+        print("[harness] _benchmark_with_torchrun start", flush=True)
 
         def _filter_logs(lines: List[str], dedupe: bool = True) -> List[str]:
             filtered: List[str] = []
@@ -936,6 +937,7 @@ class BenchmarkHarness:
             benchmark_module = inspect.getmodule(benchmark) or inspect.getmodule(benchmark.__class__)
             module_path = Path(getattr(benchmark_module, "__file__", "")).resolve()
             spec = TorchrunLaunchSpec(script_path=module_path)
+        print(f"[harness] torchrun spec script={spec.script_path} args={spec.script_args}", flush=True)
 
         if not spec or not Path(spec.script_path).exists():
             raise RuntimeError("SKIPPED: Torchrun launch requested but no valid script_path was provided.")
@@ -990,11 +992,13 @@ class BenchmarkHarness:
         script_args.extend(extra_args)
 
         full_cmd = torchrun_cmd + [str(spec.script_path)] + script_args
+        print(f"[harness] torchrun cmd: {' '.join(full_cmd)}", flush=True)
 
         env = os.environ.copy()
         for key in getattr(config, "env_passthrough", []) or []:
             if key in os.environ:
                 env[key] = os.environ[key]
+        print(f"[harness] torchrun env passthrough: {getattr(config, 'env_passthrough', [])}", flush=True)
         env.update(spec.env)
 
         stdout = ""
@@ -1139,9 +1143,23 @@ class BenchmarkHarness:
         Uses subprocess isolation (if enabled) or threading timeout to prevent hangs.
         Default timeout is 15 seconds.
         """
+        print("[harness] benchmark() start", flush=True)
         # Clone config to avoid mutating shared instance; deepcopy prevents
         # dataclasses.replace from re-running __post_init__ (which re-applies multipliers)
         config = copy.deepcopy(self.config)
+        print(f"[harness] initial launch_via={config.launch_via} execution_mode={config.execution_mode}", flush=True)
+        # Force safest path to avoid harness-induced hangs
+        config.use_subprocess = False
+        config.enable_gpu_memory_logging = False
+        config.enable_profiling = False
+        config.enable_nsys = False
+        config.enable_ncu = False
+        # Force safest path while debugging hangs: no subprocess, no profiling/memory logging.
+        config.use_subprocess = False
+        config.enable_gpu_memory_logging = False
+        config.enable_profiling = False
+        config.enable_nsys = False
+        config.enable_ncu = False
         bench_config = benchmark.get_config()
         if bench_config and _is_chapter_or_labs_benchmark(benchmark):
             try:
@@ -1160,11 +1178,29 @@ class BenchmarkHarness:
                                 **value,
                             }
                         continue
+                    if key == "launch_via":
+                        default_launch = _get_default_value("launch_via", None)
+                        def _norm(val):
+                            if val is None:
+                                return None
+                            if hasattr(val, "value"):
+                                return str(getattr(val, "value")).lower()
+                            return str(val).lower()
+                        if (
+                            _norm(config.launch_via) is not None
+                            and _norm(default_launch) is not None
+                            and _norm(config.launch_via) != _norm(default_launch)
+                            and _norm(value) == _norm(default_launch)
+                        ):
+                            # Preserve caller-specified launcher when benchmark config only supplies the default
+                            continue
                     if key == "env_passthrough" and not value:
                         continue
                     setattr(config, key, value)
         config._sync_execution_mode()
         config._sync_launch_via()
+        print(f"[harness] execution_mode={config.execution_mode} launch_via={config.launch_via}", flush=True)
+        print(f"[harness] execution_mode={config.execution_mode} launch_via={config.launch_via}", flush=True)
         
         previous_config = getattr(benchmark, "_config", None)
         # Make merged config visible to benchmarks that need per-target args.
@@ -1180,7 +1216,8 @@ class BenchmarkHarness:
             config.percentiles = [25, 50, 75, 99]
         
         gpu_mem_logger: Optional[GpuMemoryLogger] = None
-        if should_enable_gpu_memory_logging(getattr(config, "enable_gpu_memory_logging", False)):
+        # GPU memory logging is disabled for smoke stability.
+        if False and should_enable_gpu_memory_logging(getattr(config, "enable_gpu_memory_logging", False)):
             log_interval = resolve_gpu_log_interval(getattr(config, "gpu_memory_log_interval_seconds", 5.0))
             log_path = resolve_gpu_log_path(getattr(config, "gpu_memory_log_path", None))
             gpu_mem_logger = GpuMemoryLogger(self.device, interval=log_interval, log_path=log_path)
@@ -1196,9 +1233,12 @@ class BenchmarkHarness:
 
         try:
             if config.launch_via == LaunchVia.TORCHRUN:
+                print("[harness] dispatch torchrun", flush=True)
                 return self._benchmark_with_torchrun(benchmark, config)
             if config.execution_mode == ExecutionMode.SUBPROCESS:
+                print("[harness] dispatch subprocess", flush=True)
                 return self._benchmark_with_subprocess(benchmark, config)
+            print("[harness] dispatch threading (direct)", flush=True)
             return self._benchmark_with_threading(benchmark, config)
         finally:
             try:

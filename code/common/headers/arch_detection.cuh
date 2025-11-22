@@ -70,15 +70,15 @@ struct CapabilityData {
 
 inline constexpr CapabilityData kCapabilityTable[] = {
     {
-        12, 1,
-        {256, 64, 32},
+        10, 0,
+        {1024, 128, 128},
         true,
         false,
         8,
         ArchitectureLimits::TensorCoreGeneration::Blackwell,
         128, 128, 64,
-        true,
-        true
+        false,
+        false
     }
 };
 

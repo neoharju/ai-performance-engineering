@@ -1534,6 +1534,7 @@ def _test_chapter_impl(
         env_passthrough: Environment variables to pass through to subprocess launches
         target_extra_args: Optional per-target arg overrides (target -> list of CLI args)
     """
+    logger.info("launch_via arg=%s nproc_per_node=%s nnodes=%s", launch_via, nproc_per_node, nnodes)
     dump_environment_and_capabilities()
 
     chapter_id = chapter_slug(chapter_dir, repo_root)
@@ -1684,6 +1685,12 @@ def _test_chapter_impl(
     if warmup is None:
         warmup = 5
     
+    try:
+        from common.python.benchmark_defaults import get_defaults as _get_defaults  # type: ignore
+        _defaults_obj = _get_defaults()
+    except Exception:
+        _defaults_obj = None
+
     base_config = BenchmarkConfig(
         iterations=iterations,
         warmup=warmup,
@@ -1705,6 +1712,7 @@ def _test_chapter_impl(
         env_passthrough=env_passthrough or None,
         target_extra_args=target_extra_args or {},
     )
+    logger.info("base_config launch_via=%s", base_config.launch_via)
     if profiling_output_dir:
         base_config.profiling_output_dir = str(profiling_output_dir)
 
@@ -1714,6 +1722,7 @@ def _test_chapter_impl(
 
     def _merged_config(benchmark_obj) -> BenchmarkConfig:
         merged = copy.deepcopy(base_config)
+        defaults_obj = _defaults_obj
         bench_config = getattr(benchmark_obj, "get_config", None)
         override = bench_config() if callable(bench_config) else None
         if override:
@@ -1721,6 +1730,26 @@ def _test_chapter_impl(
                 value = getattr(override, field.name, None)
                 if value is None:
                     continue
+                if field.name == "launch_via":
+                    base_value = getattr(merged, field.name, None)
+                    default_value = getattr(defaults_obj, field.name, None) if defaults_obj else None
+                    def _normalize_launch(val):
+                        if val is None:
+                            return None
+                        if hasattr(val, "value"):
+                            return str(getattr(val, "value")).lower()
+                        return str(val).lower()
+                    base_norm = _normalize_launch(base_value)
+                    default_norm = _normalize_launch(default_value)
+                    value_norm = _normalize_launch(value)
+                    # Preserve CLI-provided launcher when the benchmark config only supplies the default
+                    if (
+                        base_norm is not None
+                        and default_norm is not None
+                        and base_norm != default_norm
+                        and value_norm == default_norm
+                    ):
+                        continue
                 if field.name == "target_extra_args":
                     if value:
                         merged.target_extra_args = {
@@ -1745,6 +1774,7 @@ def _test_chapter_impl(
         merged = _merged_config(benchmark_obj)
         if target_label and getattr(merged, "target_label", None) is None:
             merged.target_label = target_label
+        logger.info("merged config launch_via=%s execution_mode=%s", merged.launch_via, merged.execution_mode)
         local_harness = BenchmarkHarness(mode=BenchmarkMode.CUSTOM, config=merged)
         return local_harness.benchmark_with_manifest(benchmark_obj, run_id=run_id)
     

@@ -32,13 +32,13 @@ class BenchmarkDefaults:
     
     # Feature flags
     enable_memory_tracking: bool = False
-    enable_profiling: bool = True
-    enable_nsys: bool = True
+    enable_profiling: bool = False
+    enable_nsys: bool = False
     enable_ncu: bool = True
     enable_proton: bool = False
     enable_nvtx: Optional[bool] = None  # Auto-enabled if profiling enabled
     enable_cleanup: bool = False
-    use_subprocess: bool = True
+    use_subprocess: bool = False
     execution_mode: Optional[str] = None
     launch_via: str = "python"  # python | torchrun
     nproc_per_node: Optional[int] = None

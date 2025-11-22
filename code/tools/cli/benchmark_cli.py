@@ -236,7 +236,10 @@ def _execute_benchmarks(
         logger.error("Benchmark dependencies missing (torch/benchmark_harness or test functions).")
         sys.exit(1)
 
-    dump_environment_and_capabilities()
+    try:
+        dump_environment_and_capabilities()
+    except Exception as exc:
+        logger.error(f"Skipping environment/capabilities dump due to error: {exc}")
 
     try:
         chapter_dirs, chapter_filters = resolve_target_chapters(targets)

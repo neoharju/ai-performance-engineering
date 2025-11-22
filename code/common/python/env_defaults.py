@@ -12,7 +12,9 @@ from common.python.hardware_capabilities import (
     detect_capabilities,
     format_capability_report,
 )
+import glob
 import os
+import shutil
 import sys
 from pathlib import Path
 from typing import Dict, Iterable, List, Tuple
@@ -171,6 +173,7 @@ def apply_env_defaults() -> Dict[str, str]:
     else:
         # CUDA_HOME is set by user - only prepend paths if they're missing (don't force our defaults)
         _ensure_cuda_paths(use_existing_cuda_home=True)
+    _ensure_nsight_paths()
     applied["PATH"] = os.environ.get("PATH", "")
     applied["LD_LIBRARY_PATH"] = os.environ.get("LD_LIBRARY_PATH", "")
 
@@ -213,6 +216,45 @@ def _ensure_cuda_paths(use_existing_cuda_home: bool = False) -> None:
     for prefix in lib_prefixes:
         if os.path.exists(prefix):  # Only add if path exists
             _prepend_if_missing("LD_LIBRARY_PATH", prefix)
+
+
+def _maybe_add_binary_to_path(binary_name: str, patterns: Iterable[str]) -> None:
+    """Search common install locations for a binary and prepend its directory to PATH."""
+    for pattern in patterns:
+        # Prefer newer installs by reversing sorted order
+        for candidate in sorted(glob.glob(pattern), reverse=True):
+            candidate_path = Path(candidate)
+            if candidate_path.is_dir():
+                candidate_path = candidate_path / binary_name
+            if not candidate_path.exists() or not os.access(candidate_path, os.X_OK):
+                continue
+            _prepend_if_missing("PATH", str(candidate_path.parent))
+            return
+
+
+def _ensure_nsight_paths() -> None:
+    """Ensure Nsight Systems/Compute binaries are discoverable even when not on PATH."""
+    if shutil.which("nsys") is None:
+        _maybe_add_binary_to_path(
+            "nsys",
+            (
+                "/opt/nvidia/nsight-systems/*/bin",
+                "/opt/nvidia/nsight-systems/*/target-linux*",
+                "/opt/nvidia/nsight-systems/*",
+                "/usr/local/cuda-*/bin",
+                "/usr/local/cuda/bin",
+            ),
+        )
+    if shutil.which("ncu") is None:
+        _maybe_add_binary_to_path(
+            "ncu",
+            (
+                "/opt/nvidia/nsight-compute/*/bin",
+                "/opt/nvidia/nsight-compute/*",
+                "/usr/local/cuda-*/bin",
+                "/usr/local/cuda/bin",
+            ),
+        )
 
 
 def _build_paths(root: str, suffixes: Iterable[str]) -> List[str]:

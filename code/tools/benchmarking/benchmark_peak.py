@@ -51,7 +51,12 @@ from common.python.compile_utils import enable_tf32
 # Configure TF32 using new API (PyTorch 2.10+)
 # Enable TF32 for optimal performance on Ampere+ GPUs using the shared helper
 if torch.cuda.is_available():
-    enable_tf32()
+    enable_tf32(matmul_precision="high", cudnn_precision="tf32", set_global_precision=True)
+    # Explicitly set the supported matmul precision knob to avoid legacy API warnings
+    try:
+        torch.set_float32_matmul_precision("high")
+    except Exception:
+        pass
 
 # FAIL FAST: Transformer Engine is REQUIRED
 try:

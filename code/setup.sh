@@ -186,6 +186,40 @@ pip_show() {
     pip_cmd show "$@"
 }
 
+# Ensure a tool is reachable by adding a symlink in /usr/local/bin if found elsewhere.
+ensure_tool_on_path() {
+    local tool_name="$1"
+    shift
+    local patterns=("$@")
+    local nullglob_state
+    nullglob_state="$(shopt -p nullglob || true)"
+    shopt -s nullglob
+    for pattern in "${patterns[@]}"; do
+        for candidate in $pattern; do
+            local target="$candidate"
+            if [ -d "$target" ] && [ -x "${target}/${tool_name}" ]; then
+                target="${target}/${tool_name}"
+            fi
+            if [ -x "$target" ]; then
+                ln -sf "$target" "/usr/local/bin/${tool_name}"
+                echo "Ensured ${tool_name} is on PATH via /usr/local/bin/${tool_name} -> ${target}"
+                if [ -n "$nullglob_state" ]; then
+                    eval "$nullglob_state"
+                else
+                    shopt -u nullglob
+                fi
+                return 0
+            fi
+        done
+    done
+    if [ -n "$nullglob_state" ]; then
+        eval "$nullglob_state"
+    else
+        shopt -u nullglob
+    fi
+    return 1
+}
+
 # Reusable function to reassemble split wheels
 reassemble_split_wheel() {
     local wheel_path="$1"
@@ -639,8 +673,14 @@ if [ -n "${GPU_COMPUTE_SM_NUM}" ]; then
     sm_len=${#GPU_COMPUTE_SM_NUM}
     sm_major="${GPU_COMPUTE_SM_NUM:0:$((sm_len-1))}"
     sm_minor="${GPU_COMPUTE_SM_NUM: -1}"
-    TE_TORCH_ARCH_LIST="${sm_major}.${sm_minor}"
-    TE_CUTLASS_ARCHS="${GPU_COMPUTE_SM_NUM}"
+    # Use Blackwell 'a' suffix to enable TMA instructions in ptxas
+    if [ "${GPU_COMPUTE_SM_NUM}" -eq 100 ]; then
+        TE_TORCH_ARCH_LIST="${sm_major}.${sm_minor}a"
+        TE_CUTLASS_ARCHS="100a"
+    else
+        TE_TORCH_ARCH_LIST="${sm_major}.${sm_minor}"
+        TE_CUTLASS_ARCHS="${GPU_COMPUTE_SM_NUM}"
+    fi
 else
     TE_TORCH_ARCH_LIST="10.0"
     TE_CUTLASS_ARCHS="${CUTLASS_NVCC_ARCHS_VALUE_DEFAULT}"
@@ -1072,6 +1112,16 @@ EOF
 fi
 echo "GDS requires a supported storage backend (NVMe, BeeGFS, NFS, WekaFS, etc.). Configure storage and rerun /usr/local/cuda/gds/tools/gdscheck -p to confirm."
 
+# Ensure NVMe driver is loaded for GDS
+echo "Checking NVMe kernel modules..."
+modprobe nvme-core >/dev/null 2>&1 || true
+modprobe nvme >/dev/null 2>&1 || true
+if lsblk -d -o NAME,TRAN 2>/dev/null | grep -qi nvme; then
+    echo "NVMe devices detected (required for optimal GDS)."
+else
+    echo "WARNING: No NVMe devices detected; GDS performance may be limited until NVMe storage is available."
+fi
+
 # Install kvikio Python library for GDS (required for Ch5 examples)
 echo ""
 echo "Installing kvikio Python library for GPUDirect Storage..."
@@ -1146,6 +1196,15 @@ if [[ -n "$NSYS_BIN" ]] && [[ -x "$NSYS_BIN" ]]; then
 else
     echo "Nsight Systems binary not found"
 fi
+# Fallback: ensure nsys is reachable even if alternatives fail or install path changes
+if ! ensure_tool_on_path "nsys" \
+    "/opt/nvidia/nsight-systems/${NSYS_VERSION}/bin" \
+    "/opt/nvidia/nsight-systems/${NSYS_VERSION}" \
+    "/opt/nvidia/nsight-systems/"*/bin \
+    "/usr/local/cuda-*/bin" \
+    "/usr/local/cuda/bin"; then
+    echo "Nsight Systems still not on PATH; please verify installation."
+fi
 
 # Install Nsight Compute and set binary alternative
 echo "Installing Nsight Compute (pinned 2025.3.1)..."
@@ -1158,6 +1217,15 @@ if [[ -x "$NCU_BIN" ]]; then
     echo "Nsight Compute pinned to ${NCU_VERSION} (${NCU_BIN})"
 else
     echo "Nsight Compute binary not found at ${NCU_BIN}"
+fi
+# Fallback: ensure ncu is reachable even if alternatives fail or install path changes
+if ! ensure_tool_on_path "ncu" \
+    "/opt/nvidia/nsight-compute/${NCU_VERSION}" \
+    "/opt/nvidia/nsight-compute/${NCU_VERSION}/bin" \
+    "/opt/nvidia/nsight-compute/"*/bin \
+    "/usr/local/cuda-*/bin" \
+    "/usr/local/cuda/bin"; then
+    echo "Nsight Compute still not on PATH; please verify installation."
 fi
 
 # Nsight tools are already in PATH when installed via apt
@@ -1355,7 +1423,7 @@ rm -rf /home/*/.local/lib/python3.12/site-packages/torch* /home/*/.local/lib/pyt
 echo ""
 echo "Installing pinned harness deps (pydantic/typer/typing_extensions) into system Python..."
 pip_install --no-cache-dir --upgrade --ignore-installed \
-    click==8.2.1 \
+    click==8.1.7 \
     pydantic==2.9.0 \
     pydantic-core==2.23.2 \
     typing-extensions==4.15.0 \
@@ -1437,15 +1505,28 @@ echo ""
 echo "Removing any existing PyTorch installations..."
 pip_uninstall -y torch torchvision torchdata functorch pytorch-triton >/dev/null 2>&1 || true
 
-echo "Installing torch 2.9.1 + torchvision + torchdata + torchao (cu13) from cu130 index..."
+echo "Installing torch 2.9.1 + torchvision/torchaudio + torchao (cu13) from cu130 index..."
 if ! pip_install --no-cache-dir --upgrade --ignore-installed \
     --index-url "${PYTORCH_CU130_INDEX}" \
     --extra-index-url "https://pypi.org/simple" \
     --only-binary=":all:" \
-    torch==2.9.1 torchvision torchdata torchao; then
+    torch==2.9.1+cu130 \
+    torchvision==0.24.1+cu130 \
+    torchaudio==2.9.1+cu130 \
+    torchao==0.14.1+cu130 \
+    triton==3.5.1; then
     echo "ERROR: PyTorch stack installation failed from cu130 index"
     exit 1
 fi
+
+# torchdata/torchtitan fallbacks (no cu130 wheels published)
+pip_uninstall -y torchdata torchtitan >/dev/null 2>&1 || true
+pip_install --no-cache-dir --upgrade --ignore-installed torchdata==0.10.0 || {
+    echo "Warning: torchdata install failed; continuing"
+}
+pip_install --no-cache-dir --upgrade --ignore-installed torchtitan==0.2.0 || {
+    echo "Warning: torchtitan 0.2.0 install failed; continuing without torchtitan"
+}
 
 if ! python3 - <<'PY'
 import sys
@@ -1454,6 +1535,9 @@ import torch
 cuda_ver = getattr(torch.version, "cuda", None) or ""
 if not cuda_ver.startswith("13."):
     print(f"ERROR: Expected cu13 torch wheel, got torch.version.cuda={cuda_ver!r}")
+    sys.exit(1)
+if torch.__version__ != "2.9.1+cu130":
+    print(f"ERROR: Expected torch==2.9.1+cu130, got {torch.__version__}")
     sys.exit(1)
 print(f"[setup] torch cu13 confirmed: {torch.__version__} (cuda {cuda_ver})")
 PY
@@ -1579,6 +1663,11 @@ pip_install --no-cache-dir --upgrade --ignore-installed --no-deps huggingface-hu
 pip_install --no-cache-dir --upgrade --ignore-installed --no-deps onnx==1.19.0 onnxscript==0.1.0 einops==0.8.0 || {
     echo "Warning: failed to pin onnx/onnxscript/einops runtime deps"
 }
+# Final hard pin to prevent late upgrades
+pip_uninstall -y huggingface-hub tokenizers >/dev/null 2>&1 || true
+pip_install --no-cache-dir --force-reinstall --ignore-installed --no-deps huggingface-hub==0.23.2 tokenizers==0.19.1 || {
+    echo "Warning: final HF pinning failed"
+}
 
 # Ensure triton is available (required by Transformer Engine and other PyTorch extensions)
 # Triton should be bundled with PyTorch, but install it explicitly to ensure it's available
@@ -1649,6 +1738,7 @@ fi
 if ! TORCH_CUDA_ARCH_LIST="${TE_BUILD_ARCH_LIST}" \
        CUTLASS_NVCC_ARCHS="${TE_BUILD_NVCC_ARCHS}" \
        CMAKE_CUDA_ARCH_LIST="${TE_BUILD_NVCC_ARCHS}" \
+       NVCC_GENCODE="-gencode=arch=compute_${TE_BUILD_NVCC_ARCHS},code=sm_${TE_BUILD_NVCC_ARCHS}" \
        NVTE_FRAMEWORK=pytorch \
        MAX_JOBS="${MAX_JOBS:-$(nproc)}" \
        pip_install --no-cache-dir --upgrade --ignore-installed --no-build-isolation --no-deps "${TE_SRC_DIR}"; then
@@ -1660,6 +1750,11 @@ fi
 pip_uninstall -y onnx onnxscript einops >/dev/null 2>&1 || true
 pip_install --no-cache-dir --upgrade --ignore-installed --no-deps onnx==1.19.0 einops==0.8.0 onnxscript==0.1.0 || {
     echo "Warning: failed to install TE runtime deps (onnx/onnxscript/einops)"
+}
+# TE FP8 requires ml_dtypes; install without deps to avoid torch overrides
+pip_uninstall -y ml_dtypes >/dev/null 2>&1 || true
+pip_install --no-cache-dir --upgrade --ignore-installed --no-deps ml_dtypes==0.5.1 || {
+    echo "Warning: failed to install ml_dtypes==0.5.1 required by Transformer Engine FP8 checks"
 }
 
 patch_installed_transformer_engine_metadata
@@ -2120,6 +2215,14 @@ apt autoremove -y 2>/dev/null || true
 echo ""
 echo "Verifying installation..."
 
+# Re-export NCCL tuning for verification steps
+export NCCL_P2P_LEVEL=${NCCL_P2P_LEVEL:-NVL}
+export NCCL_P2P_DISABLE=${NCCL_P2P_DISABLE:-0}
+export NCCL_IB_DISABLE=${NCCL_IB_DISABLE:-1}
+export NCCL_SHM_DISABLE=${NCCL_SHM_DISABLE:-0}
+export NCCL_NVLS_ENABLE=${NCCL_NVLS_ENABLE:-1}
+export NCCL_SOCKET_IFNAME=${NCCL_SOCKET_IFNAME:-lo}
+
 # Check PyTorch
 echo "Checking PyTorch installation..."
 python3 - "$REQUIRED_DRIVER_VERSION" <<'PY'
@@ -2326,9 +2429,11 @@ cat >> ~/.bashrc <<EOF
 # AI Performance Engineering Environment Variables
 export CUDA_LAUNCH_BLOCKING=0
 export CUDA_CACHE_DISABLE=0
-export NCCL_IB_DISABLE=0
+export NCCL_P2P_LEVEL=NVL
 export NCCL_P2P_DISABLE=0
+export NCCL_IB_DISABLE=1
 export NCCL_SHM_DISABLE=0
+export NCCL_NVLS_ENABLE=1
 export TORCH_CUDNN_V8_API_ENABLED=1
 export PYTORCH_ALLOC_CONF=max_split_size_mb:128,expandable_segments:True
 export TORCH_SHOW_CPP_STACKTRACES=1
@@ -2375,6 +2480,11 @@ if [ -n "${NCCL_LIB_PATH}" ]; then
 else
     echo "NCCL library not found for current session; continuing without LD_PRELOAD."
 fi
+export NCCL_P2P_LEVEL=NVL
+export NCCL_P2P_DISABLE=0
+export NCCL_IB_DISABLE=1
+export NCCL_SHM_DISABLE=0
+export NCCL_NVLS_ENABLE=1
 
 # Comprehensive setup verification
 echo ""
@@ -2806,12 +2916,16 @@ echo ""
 
 # Verify GPUDirect Storage (GDS)
 echo "Verifying GPUDirect Storage (GDS)..."
-if python3 tools/verification/verify_gds.py; then
-    echo "GDS verification passed"
+if lsblk -d -o NAME,TRAN 2>/dev/null | grep -qi nvme; then
+    if python3 tools/verification/verify_gds.py; then
+        echo "GDS verification passed"
+    else
+        echo "GDS verification had issues (may need to load nvidia-fs module)"
+        echo "   Load module with: sudo modprobe nvidia-fs"
+        echo "   Ensure a supported storage backend (NVMe, BeeGFS, NFS, WekaFS, etc.) is configured and rerun /usr/local/cuda/gds/tools/gdscheck -p"
+    fi
 else
-    echo "GDS verification had issues (may need to load nvidia-fs module)"
-    echo "   Load module with: sudo modprobe nvidia-fs"
-    echo "   Ensure a supported storage backend (NVMe, BeeGFS, NFS, WekaFS, etc.) is configured and rerun /usr/local/cuda/gds/tools/gdscheck -p"
+    echo "WARNING: No NVMe devices detected; skipping GDS verification (requires NVMe or supported backend)."
 fi
 
 echo ""
@@ -2833,6 +2947,19 @@ else
     echo "ERROR: Peak performance benchmark failed"
     exit 1
 fi
+
+# Final hard pins to ensure dependency consistency
+echo ""
+echo "Reinforcing final dependency pins (HF + TE runtime)..."
+pip_uninstall -y tokenizers huggingface-hub onnx onnxscript einops >/dev/null 2>&1 || true
+pip_install --no-cache-dir --force-reinstall --ignore-installed --no-deps \
+    tokenizers==0.19.1 \
+    huggingface-hub==0.23.2 \
+    onnx==1.19.0 \
+    onnxscript==0.1.0 \
+    einops==0.8.0 || {
+    echo "Warning: final dependency pinning failed"
+}
 
 # Final summary
 echo ""

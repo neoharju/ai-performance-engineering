@@ -11,9 +11,9 @@ from typing import Optional, TextIO
 import torch
 
 
-def should_enable_gpu_memory_logging(_: bool) -> bool:
-    """GPU memory logging is always enabled to aid debugging."""
-    return True
+def should_enable_gpu_memory_logging(enabled: bool) -> bool:
+    """Honor the configuration flag; default is False."""
+    return bool(enabled)
 
 
 def resolve_gpu_log_interval(default_interval: float) -> float:

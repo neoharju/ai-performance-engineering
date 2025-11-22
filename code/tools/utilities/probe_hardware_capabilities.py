@@ -55,10 +55,11 @@ def _probe_tma_compiler_support(sm_tag: str) -> Tuple[bool, Optional[str]]:
     ptxas = _locate_tool("ptxas")
     if not ptxas:
         return False, "ptxas not found"
+    sm_name = sm_tag
     ptx = textwrap.dedent(
         f"""
         .version 9.0
-        .target sm_{sm_tag}
+        .target sm_{sm_name}
         .address_size 64
         
         .visible .entry tma_probe() {{
@@ -81,10 +82,20 @@ def _probe_tma_compiler_support(sm_tag: str) -> Tuple[bool, Optional[str]]:
         cubin_path = tmp_path / "tma_probe.cubin"
         ptx_path.write_text(ptx)
         code, _, err = _run_command(
-            [ptxas, "--gpu-name", f"sm_{sm_tag}", str(ptx_path), "-o", str(cubin_path)]
+            [ptxas, "--gpu-name", f"sm_{sm_name}", str(ptx_path), "-o", str(cubin_path)]
         )
         if code == 0:
             return True, None
+        # Blackwell ptxas requires the 'a' suffix for TMA instructions; retry if applicable
+        if sm_tag == "100" and sm_name != "100a":
+            sm_name = "100a"
+            ptx = ptx.replace(f"sm_{sm_tag}", f"sm_{sm_name}")
+            ptx_path.write_text(ptx)
+            code, _, err = _run_command(
+                [ptxas, "--gpu-name", f"sm_{sm_name}", str(ptx_path), "-o", str(cubin_path)]
+            )
+            if code == 0:
+                return True, None
         return False, err or "ptxas failed"
 
 

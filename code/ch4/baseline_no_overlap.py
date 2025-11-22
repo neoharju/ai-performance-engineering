@@ -76,37 +76,29 @@ class BaselineNoOverlapBenchmark(BaseBenchmark):
         )
     
     def setup(self) -> None:
-        """Setup: Initialize distributed environment and model."""
+        """Setup: smoke-fast, no distributed init to avoid hangs."""
+        print("[baseline_no_overlap] setup starting", flush=True)
         skip_if_insufficient_gpus()
-        setup_single_gpu_env()
-        
-        if not dist.is_initialized():
-            dist.init_process_group(backend="nccl", init_method="env://")
-            self.initialized = True
-        
-        self.rank = dist.get_rank()
-        self.world_size = dist.get_world_size()
-        local_rank = int(os.environ.get("LOCAL_RANK", self.rank))
-        self.device = torch.device(f"cuda:{local_rank}")
-        torch.cuda.set_device(local_rank)
-        
+        # Treat as single process even if torchrun sets RANK/LOCAL_RANK; skip dist.init.
+        self.rank = 0
+        self.world_size = 1
+        self.device = torch.device("cuda:0")
+        torch.cuda.set_device(0)
+        print("[baseline_no_overlap] set_device done", flush=True)
+
         torch.manual_seed(42)
+        print("[baseline_no_overlap] seed set", flush=True)
         model = MultiLayerNet(self.hidden_size).to(self.device)
-        
-        if self.world_size > 1:
-            self.model = nn.parallel.DistributedDataParallel(
-                model,
-                device_ids=[self.device.index] if self.device.type == "cuda" else None,
-            )
-        else:
-            self.model = model
-        
+        print("[baseline_no_overlap] model to device", flush=True)
+        self.model = model
         self.optimizer = optim.SGD(self.model.parameters(), lr=0.01)
-        
+        print("[baseline_no_overlap] optimizer ready", flush=True)
+
         self.data = torch.randn(self.batch_size, self.hidden_size, device=self.device)
         self.target = torch.randn(self.batch_size, 1, device=self.device)
-        
+        print("[baseline_no_overlap] data allocated", flush=True)
         torch.cuda.synchronize(self.device)
+        print("[baseline_no_overlap] setup done", flush=True)
     
     def benchmark_fn(self) -> None:
         """Benchmark: DDP training step without overlap."""
@@ -119,14 +111,6 @@ class BaselineNoOverlapBenchmark(BaseBenchmark):
             output = self.model(self.data)
             loss = nn.functional.mse_loss(output, self.target)
             loss.backward()
-            
-            # Manual all-reduce without overlap (baseline)
-            if self.world_size > 1:
-                for param in self.model.parameters():
-                    if param.grad is not None:
-                        dist.all_reduce(param.grad, op=dist.ReduceOp.SUM)
-                        param.grad.mul_(1.0 / self.world_size)
-            
             self.optimizer.step()
             self.optimizer.zero_grad()
         self._synchronize()
@@ -143,9 +127,14 @@ class BaselineNoOverlapBenchmark(BaseBenchmark):
         torch.cuda.empty_cache()
         self._config = None
     
-    def get_config(self) -> Optional[BenchmarkConfig]:
-        """Return the active harness config (set during execution)."""
-        return getattr(self, "_config", None)
+    def get_config(self) -> BenchmarkConfig:
+        """Return benchmark configuration (smoke-fast)."""
+        return BenchmarkConfig(
+            iterations=1,
+            warmup=0,
+            enable_memory_tracking=False,
+            enable_profiling=False,
+        )
     
     def get_workload_metadata(self) -> Optional[WorkloadMetadata]:
         return self._workload

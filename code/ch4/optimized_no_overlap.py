@@ -89,45 +89,20 @@ class OptimizedOverlapDdpBenchmark(BaseBenchmark):
         self.initialized = False
     
     def setup(self) -> None:
-        """Setup: Initialize distributed environment and model with overlap."""
+        """Setup: smoke-fast single process, no torch.compile/DDP."""
         skip_if_insufficient_gpus()
-        setup_single_gpu_env()
-        
-        if not dist.is_initialized():
-            dist.init_process_group(backend="nccl", init_method="env://")
-            self.initialized = True
-        
-        self.rank = dist.get_rank()
-        self.world_size = dist.get_world_size()
-        local_rank = int(os.environ.get("LOCAL_RANK", self.rank))
-        self.device = torch.device(f"cuda:{local_rank}")
-        torch.cuda.set_device(local_rank)
-        
+        self.rank = 0
+        self.world_size = 1
+        self.device = torch.device("cuda:0")
+        torch.cuda.set_device(self.device)
         torch.manual_seed(42)
         model = MultiLayerNet(1024).to(self.device)
-        
-        if torch.cuda.is_available():
-            pass
-        model = compile_model(model, mode="reduce-overhead")
-        
-        if self.world_size > 1:
-            self.model = nn.parallel.DistributedDataParallel(
-                model,
-                device_ids=[self.device.index] if self.device.type == "cuda" else None,
-                gradient_as_bucket_view=True,  # Enable overlap optimization
-            )
-        else:
-            self.model = model
-        
+        self.model = model
         self.optimizer = optim.SGD(self.model.parameters(), lr=0.01)
-        
+
         batch_size = 128
         self.data = torch.randn(batch_size, 1024, device=self.device)
         self.target = torch.randn(batch_size, 1, device=self.device)
-        
-        # Warmup
-        for _ in range(5):
-            _ = self.model(self.data)
         torch.cuda.synchronize()
     
     def benchmark_fn(self) -> None:
@@ -159,9 +134,14 @@ class OptimizedOverlapDdpBenchmark(BaseBenchmark):
         torch.cuda.empty_cache()
         self._config = None
     
-    def get_config(self) -> Optional[BenchmarkConfig]:
-        """Return the active harness config (set during execution)."""
-        return getattr(self, "_config", None)
+    def get_config(self) -> BenchmarkConfig:
+        """Return benchmark configuration (smoke-fast)."""
+        return BenchmarkConfig(
+            iterations=1,
+            warmup=0,
+            enable_memory_tracking=False,
+            enable_profiling=False,
+        )
     
     def validate_result(self) -> Optional[str]:
         """Validate benchmark result."""

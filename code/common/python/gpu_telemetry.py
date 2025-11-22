@@ -12,6 +12,7 @@ import os
 import shutil
 import subprocess
 from datetime import datetime
+import time
 from typing import Dict, List, Optional
 
 import torch
@@ -24,6 +25,10 @@ except ImportError:  # pragma: no cover - optional dependency
     _NVML_AVAILABLE = False
 
 _NVML_INITIALIZED: Optional[bool] = None
+_TELEMETRY_CACHE: Dict[int, tuple[float, Dict[str, Optional[float]]]] = {}
+# Cache telemetry briefly to avoid repeatedly shelling out to nvidia-smi when NVML is unavailable.
+# Kept fixed to avoid environment-dependent behavior inside tight benchmark loops.
+_TELEMETRY_TTL_SEC = 1.0
 
 
 def _ensure_nvml_initialized() -> bool:
@@ -120,19 +125,31 @@ def query_gpu_telemetry(device_index: Optional[int] = None) -> Dict[str, Optiona
     logical_index = device_index if device_index is not None else torch.cuda.current_device()
     metrics["gpu_index"] = logical_index
 
+    cache_key = int(logical_index)
+    cached = _TELEMETRY_CACHE.get(cache_key)
+    now = time.monotonic()
+    if cached and _TELEMETRY_TTL_SEC > 0 and (now - cached[0]) < _TELEMETRY_TTL_SEC:
+        return dict(cached[1])
+
     nvml_metrics = _query_via_nvml(logical_index)
     if nvml_metrics is not None:
         metrics.update(nvml_metrics)
         # NVLink counters come solely from NVML; if missing, mark status.
         if metrics["nvlink_tx_bytes_total"] is None or metrics["nvlink_rx_bytes_total"] is None:
             metrics["nvlink_status"] = "nvlink_counters_missing"
-        return metrics
+        metrics_copy = dict(metrics)
+        if _TELEMETRY_TTL_SEC > 0:
+            _TELEMETRY_CACHE[cache_key] = (now, metrics_copy)
+        return metrics_copy
 
     smi_metrics = _query_via_nvidia_smi(logical_index)
     if smi_metrics is not None:
         metrics.update(smi_metrics)
     metrics["nvlink_status"] = "nvml_unavailable"
-    return metrics
+    metrics_copy = dict(metrics)
+    if _TELEMETRY_TTL_SEC > 0:
+        _TELEMETRY_CACHE[cache_key] = (now, metrics_copy)
+    return metrics_copy
 
 
 def _query_via_nvml(logical_index: int) -> Optional[Dict[str, Optional[float]]]:

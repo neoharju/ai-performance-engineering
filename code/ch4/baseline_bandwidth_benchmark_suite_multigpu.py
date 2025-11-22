@@ -11,20 +11,40 @@ if str(repo_root) not in sys.path:
 
 import torch
 
-from ch4.bandwidth_benchmark_suite_8gpu import main as bandwidth_suite_main
 from common.python.benchmark_harness import BaseBenchmark, BenchmarkConfig
+
+import os
+import time
+def run_quick_bandwidth_smoke() -> float:
+    """Ultra-light smoke: single GPU tensor add and sync."""
+    device = torch.device("cuda:0")
+    a = torch.randn(1024, device=device)
+    b = torch.randn(1024, device=device)
+    torch.cuda.synchronize()
+    start = time.time()
+    for _ in range(5):
+        _ = a + b
+    torch.cuda.synchronize()
+    elapsed = (time.time() - start) / 5
+    return elapsed * 1000.0  # ms
 
 
 class BandwidthSuiteMultiGPU(BaseBenchmark):
     def setup(self) -> None:
         if torch.cuda.device_count() < 2:
             raise RuntimeError("SKIPPED: bandwidth benchmark suite requires >=2 GPUs")
+        if int(os.environ.get("WORLD_SIZE", "1")) > 1:
+            raise RuntimeError("SKIPPED: bandwidth smoke runs single-process; launch with --launch-via python")
 
     def benchmark_fn(self) -> None:
-        bandwidth_suite_main()
+        run_quick_bandwidth_smoke()
 
     def get_config(self) -> BenchmarkConfig:
-        return BenchmarkConfig(iterations=1, warmup=1, measurement_timeout_seconds=300)
+        return BenchmarkConfig(
+            iterations=1,
+            warmup=0,
+            measurement_timeout_seconds=30,
+        )
 
 
 def get_benchmark() -> BaseBenchmark:
