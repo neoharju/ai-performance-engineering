@@ -552,7 +552,7 @@ for name, result in status.items():
     else:
         print(f"[setup] ERROR: {name} FP8 smoke test failed: {result['error']}")
 
-if not status["torchao"]["ok"] and not status["transformer_engine"]["ok"]:
+if not all(entry["ok"] for entry in status.values()):
     raise SystemExit(1)
 PY
 }
@@ -1569,12 +1569,15 @@ for pkg in \
     fi
 done
 echo "Re-pinning HF deps for transformers compatibility..."
-pip_uninstall -y tokenizers huggingface-hub >/dev/null 2>&1 || true
+pip_uninstall -y tokenizers huggingface-hub onnx onnxscript einops >/dev/null 2>&1 || true
 pip_install --no-cache-dir --upgrade --ignore-installed --no-deps tokenizers==0.19.1 || {
     echo "Warning: failed to pin tokenizers==0.19.1"
 }
 pip_install --no-cache-dir --upgrade --ignore-installed --no-deps huggingface-hub==0.23.2 || {
     echo "Warning: failed to pin huggingface-hub==0.23.2"
+}
+pip_install --no-cache-dir --upgrade --ignore-installed --no-deps onnx==1.19.0 onnxscript==0.1.0 einops==0.8.0 || {
+    echo "Warning: failed to pin onnx/onnxscript/einops runtime deps"
 }
 
 # Ensure triton is available (required by Transformer Engine and other PyTorch extensions)
@@ -1652,6 +1655,12 @@ if ! TORCH_CUDA_ARCH_LIST="${TE_BUILD_ARCH_LIST}" \
     echo "ERROR: Transformer Engine source installation failed (arch list ${TE_BUILD_ARCH_LIST}, NVCC archs ${TE_BUILD_NVCC_ARCHS})."
     exit 1
 fi
+
+# Ensure TE runtime dependencies for FP8 tooling
+pip_uninstall -y onnx onnxscript einops >/dev/null 2>&1 || true
+pip_install --no-cache-dir --upgrade --ignore-installed --no-deps onnx==1.19.0 einops==0.8.0 onnxscript==0.1.0 || {
+    echo "Warning: failed to install TE runtime deps (onnx/onnxscript/einops)"
+}
 
 patch_installed_transformer_engine_metadata
 patch_transformer_engine_loader
@@ -1938,12 +1947,23 @@ PY
 }
 
 install_flash_attention() {
-    echo "Installing FlashAttention (binary wheel only)..."
-    if ! pip_install --no-cache-dir --upgrade --ignore-installed --prefer-binary --only-binary=:all: \
+    echo "Installing FlashAttention (binary wheel preferred, source fallback)..."
+    if pip_install --no-cache-dir --upgrade --ignore-installed --prefer-binary --only-binary=:all: \
         flash-attn=="${FLASH_ATTN_EXPECTED_VERSION}"; then
-        echo "ERROR: Failed to install FlashAttention wheel. Provide a wheel at ${FLASH_ATTN_CACHE_PATH} or ${FLASH_ATTN_SPLIT_PREFIX}*."
-        return 1
+        return 0
     fi
+    echo "Binary FlashAttention wheel unavailable; building from source..."
+    local fa_arch_list
+    fa_arch_list="${TE_TORCH_ARCH_LIST:-12.1}"
+    local fa_sm="${GPU_COMPUTE_SM_NUM:-121}"
+    if TORCH_CUDA_ARCH_LIST="${fa_arch_list}" \
+       FLASH_ATTENTION_FORCE_CUDA_SM="${fa_sm}" \
+       pip_install --no-cache-dir --upgrade --ignore-installed --no-build-isolation --no-deps \
+       "flash-attn @ git+https://github.com/Dao-AILab/flash-attention.git@${FLASH_ATTN_TAG}"; then
+        return 0
+    fi
+    echo "ERROR: Failed to install FlashAttention wheel. Provide a wheel at ${FLASH_ATTN_CACHE_PATH} or ${FLASH_ATTN_SPLIT_PREFIX}*."
+    return 1
 }
 
 install_flash_attention_from_parts() {
