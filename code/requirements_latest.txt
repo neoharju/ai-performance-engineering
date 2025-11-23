@@ -41,7 +41,7 @@ cuda-python==13.0.3
 kvikio-cu13==25.10.0
 
 # CUTLASS backend for torch.compile (includes Python API and C++ headers)
-nvidia-cutlass-dsl==4.2.1
+nvidia-cutlass-dsl==4.3.0
 
 # Development workflow
 jupyter==1.1.1

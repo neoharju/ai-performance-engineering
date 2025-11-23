@@ -111,7 +111,7 @@ TE_REPO_URL="${TE_REPO_URL:-https://github.com/NVIDIA/TransformerEngine.git}"
 TE_GIT_COMMIT="${TE_GIT_COMMIT:-f8cb598c9f3af2bc512a051abec75590b25f54c4}"
 TE_SRC_DIR="${TE_SRC_DIR:-${THIRD_PARTY_DIR}/TransformerEngine}"
 CUTLASS_REPO_URL="${CUTLASS_REPO_URL:-https://github.com/NVIDIA/cutlass.git}"
-CUTLASS_REF="${CUTLASS_REF:-v4.2.1}"
+CUTLASS_REF="${CUTLASS_REF:-v4.3.0}"
 CUTLASS_TARGET_VERSION="${CUTLASS_REF#v}"
 CUTLASS_SRC_DIR="${CUTLASS_SRC_DIR:-${THIRD_PARTY_DIR}/cutlass}"
 PIP_ROOT_USER_ACTION="ignore"
@@ -2643,9 +2643,9 @@ if [ $compile_status -ne 0 ]; then
     exit 1
 fi
 
-# Step 11: Install CUTLASS 4.2+ Backend for torch.compile
+# Step 11: Install CUTLASS 4.3+ Backend for torch.compile
 echo ""
-echo "Step 11: Installing CUTLASS 4.2+ Backend (nvidia-cutlass-dsl)..."
+echo "Step 11: Installing CUTLASS 4.3+ Backend (nvidia-cutlass-dsl)..."
 echo "================================================================="
 
 # Install CUTLASS DSL 4.2+ and CUDA Python bindings system-wide
@@ -2654,11 +2654,11 @@ echo "================================================================="
 #   - C++ headers for direct CUDA C++ kernel development
 #   - All CUTLASS library headers (1000+ header files)
 echo "Installing nvidia-cutlass-dsl and cuda-python (pinned versions)..."
-pip_install --no-cache-dir --upgrade --ignore-installed "nvidia-cutlass-dsl==4.2.1" "cuda-python==13.0.3"
+pip_install --no-cache-dir --upgrade --ignore-installed "nvidia-cutlass-dsl==4.3.0" "cuda-python==13.0.3"
 
 if [ $? -eq 0 ]; then
     echo "CUTLASS backend packages installed (pinned versions)"
-    echo "   - nvidia-cutlass-dsl==4.2.1: CUTLASS kernels for torch.compile"
+    echo "   - nvidia-cutlass-dsl==4.3.0: CUTLASS kernels for torch.compile"
     
     # Verify PyTorch CUDA after CUTLASS installation
     echo ""
