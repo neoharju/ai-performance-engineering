@@ -10,6 +10,11 @@ from typing import Optional, Dict, List
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+try:
+    from torch.nn.attention import SDPBackend, sdpa_kernel
+except ImportError:  # pragma: no cover - older PyTorch fallback
+    SDPBackend = None  # type: ignore[assignment]
+    sdpa_kernel = None  # type: ignore[assignment]
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
@@ -18,6 +23,16 @@ if str(REPO_ROOT) not in sys.path:
 from common.python.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata
 from common.python.compile_utils import compile_model, enable_tf32
 from common.python.nvtx_helper import get_nvtx_enabled, nvtx_range
+
+
+def _math_sdp_context():
+    """Prefer the new sdpa_kernel API; fall back to no-op if unavailable."""
+    if sdpa_kernel is None or SDPBackend is None:
+        return nullcontext()
+    backend = getattr(SDPBackend, "MATH", None)
+    if backend is None:
+        return nullcontext()
+    return sdpa_kernel([backend])
 
 # Prefer non-Flash SDPA backends on SM12x to avoid mismatched prebuilt kernels
 try:
@@ -86,9 +101,7 @@ class OptimizedDecodeAttentionBenchmark(BaseBenchmark):
             # Avoid Flash/CUTLASS kernels that are not built for SM121; route to math backend.
             class _MathDecode(nn.Module):
                 def forward(self, q, k, v):  # pragma: no cover - benchmark path
-                    with torch.backends.cuda.sdp_kernel(
-                        enable_flash=False, enable_mem_efficient=False, enable_math=True
-                    ):
+                    with _math_sdp_context():
                         return F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=0.0, is_causal=True)
 
             module = _MathDecode().to(self.device)

@@ -9,6 +9,7 @@ from pathlib import Path
 import torch
 import torch.distributed as dist
 import torch.nn as nn
+from common.python.compile_utils import enable_tf32
 from torch.distributed.fsdp import (
     BackwardPrefetch,
     CPUOffload,
@@ -64,7 +65,7 @@ def main():
     torch.cuda.set_device(device)
     set_seed(2024 + rank)
 
-    torch.backends.cuda.matmul.allow_tf32 = True
+    enable_tf32()
     torch.backends.cudnn.benchmark = True
 
     base_model = _build_model(args.hidden_size)

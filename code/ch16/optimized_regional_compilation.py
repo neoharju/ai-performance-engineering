@@ -22,7 +22,7 @@ if str(repo_root) not in sys.path:
     sys.path.insert(0, str(repo_root))
 
 from common.python import compile_utils as _compile_utils_patch  # noqa: F401
-from common.python.compile_utils import maybe_nested_compile_region
+from common.python.compile_utils import enable_tf32, maybe_nested_compile_region
 from common.python.benchmark_harness import (
     BaseBenchmark,
     BenchmarkConfig,
@@ -142,11 +142,7 @@ class OptimizedRegionalCompilationBenchmark(BaseBenchmark):
 
     def _configure_runtime(self) -> None:
         """Enable TF32 tensor cores + high matmul precision for BF16 execution."""
-        try:
-            torch.backends.cuda.matmul.allow_tf32 = True  # type: ignore[attr-defined]
-            torch.backends.cudnn.allow_tf32 = True  # type: ignore[attr-defined]
-        except Exception:
-            pass
+        enable_tf32()
         try:
             torch.set_float32_matmul_precision("high")
         except Exception:

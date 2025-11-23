@@ -106,18 +106,16 @@ def detect_8xb200():
     if num_gpus != 8:
         return False
     
-    # Check if B200 (Blackwell, SM 10.0)
     props = torch.cuda.get_device_properties(0)
-    compute_capability = f"{props.major}.{props.minor}"
+    major, minor = props.major, props.minor
     
     # B200 has 180 GB memory
     memory_gb = props.total_memory / (1024**3)
     
-    is_sm100 = (compute_capability == "10.0" and 
-               170 < memory_gb < 190 and  # Allow some variance
-               num_gpus == 8)
+    is_blackwell = (major >= 10)
+    is_sm100_like = is_blackwell and (170 < memory_gb < 190) and num_gpus == 8
     
-    return is_sm100
+    return is_sm100_like
 
 def detect_gb200_gb300():
     """Detect if running on GB200/GB300 Grace-Blackwell Superchip."""
@@ -127,14 +125,13 @@ def detect_gb200_gb300():
     is_arm = platform.machine() in ['aarch64', 'arm64']
     
     # Check for Blackwell GPUs
-    has_sm100 = False
+    has_blackwell_gpu = False
     if torch.cuda.is_available():
         props = torch.cuda.get_device_properties(0)
-        compute_capability = f"{props.major}.{props.minor}"
-        has_sm100 = compute_capability == "10.0"
+        has_blackwell_gpu = props.major >= 10  # covers SM100/103 and SM12x Grace-Blackwell
     
     # GB200/GB300 = Grace CPU + Blackwell GPU
-    return is_arm and has_sm100
+    return is_arm and has_blackwell_gpu
 
 def setup_distributed():
     """Initialize distributed training."""

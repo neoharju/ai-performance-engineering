@@ -12,6 +12,7 @@ import math
 import sys
 from pathlib import Path
 from collections import defaultdict
+from contextlib import nullcontext
 
 repo_root = Path(__file__).parent.parent
 if str(repo_root) not in sys.path:
@@ -20,6 +21,11 @@ if str(repo_root) not in sys.path:
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+try:
+    from torch.nn.attention import SDPBackend, sdpa_kernel
+except ImportError:  # pragma: no cover - older PyTorch fallback
+    SDPBackend = None  # type: ignore[assignment]
+    sdpa_kernel = None  # type: ignore[assignment]
 
 from typing import Optional
 
@@ -30,6 +36,13 @@ from common.python.benchmark_harness import (
     BenchmarkHarness,
     BenchmarkMode,
 )
+
+def _flash_sdp_context():
+    """Prefer the new sdpa_kernel API; fall back to no-op if unavailable."""
+    if sdpa_kernel is None or SDPBackend is None or not hasattr(SDPBackend, "FLASH_ATTENTION"):
+        return nullcontext()
+    return sdpa_kernel([SDPBackend.FLASH_ATTENTION])
+
 
 def resolve_device() -> torch.device:
     """Return CUDA device if available."""
@@ -176,7 +189,7 @@ class AttentionLayer(nn.Module):
             cached_v = cached_v.permute(1, 0, 2).unsqueeze(0).expand(batch_size, -1, -1, -1)
             k = torch.cat([cached_k, k], dim=2)
             v = torch.cat([cached_v, v], dim=2)
-        with torch.backends.cuda.sdp_kernel(enable_flash=True, enable_math=False, enable_mem_efficient=False):
+        with _flash_sdp_context():
             attn_out = F.scaled_dot_product_attention(q, k, v, dropout_p=0.0, is_causal=False)
         attn_out = attn_out.transpose(1, 2).contiguous().view(batch_size, seq_len, hidden_dim)
         return self.proj(attn_out)

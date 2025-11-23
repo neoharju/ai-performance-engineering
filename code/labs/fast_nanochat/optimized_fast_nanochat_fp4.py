@@ -14,13 +14,21 @@ import os
 
 
 def get_benchmark() -> NanoChatBenchmark:
-    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True,max_split_size_mb:256")
+    os.environ.setdefault(
+        "PYTORCH_CUDA_ALLOC_CONF", "backend:cudaMallocAsync,expandable_segments:True,max_split_size_mb:512"
+    )
+    mem_cap = os.getenv("NANOCHAT_FP4_MEM_CAP", "0")
+    if mem_cap == "2":
+        batch_size, prompt_tokens, decode_tokens, hidden_size = 8, 1024, 256, 2048
+    elif mem_cap == "1":
+        batch_size, prompt_tokens, decode_tokens, hidden_size = 16, 2048, 512, 4096
+    else:
+        batch_size, prompt_tokens, decode_tokens, hidden_size = 32, 4096, 1024, 6144
     cfg = NanoChatConfig(
-        # Temporarily reduced shape to unblock runs; restore larger config once stable.
-        batch_size=8,
-        prompt_tokens=1024,
-        decode_tokens=256,
-        hidden_size=2048,
+        batch_size=batch_size,
+        prompt_tokens=prompt_tokens,
+        decode_tokens=decode_tokens,
+        hidden_size=hidden_size,
         use_fp4=True,
         use_pinned_host=True,
         use_copy_stream=True,

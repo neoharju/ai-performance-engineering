@@ -278,7 +278,6 @@ __global__ void cluster_kernel(const half* __restrict__ A,
   }
 }
 
-#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 100
 // Real TMA path (requires hardware support).
 __global__ void tma_prefetch_kernel(const half* __restrict__ A,
                                     const half* __restrict__ B,
@@ -287,8 +286,8 @@ __global__ void tma_prefetch_kernel(const half* __restrict__ A,
                                     int N,
                                     int K) {
   cg::thread_block cta = cg::this_thread_block();
-  __shared__ cuda::pipeline_shared_state<cuda::thread_scope_thread, 2> pipe_state;
-  auto pipe = cuda::make_pipeline(cuda::thread_scope_thread{}, &pipe_state);
+  __shared__ cuda::pipeline_shared_state<cuda::thread_scope_block, 2> pipe_state;
+  auto pipe = cuda::make_pipeline(cta, &pipe_state);
 
   extern __shared__ unsigned char shared_mem[];
   half* A_tile = reinterpret_cast<half*>(shared_mem);
@@ -338,7 +337,6 @@ __global__ void tma_prefetch_kernel(const half* __restrict__ A,
   const int lane_id = threadIdx.x % warpSize;
   store_tile(C_tile, C, N, block_row, block_col, rows, cols, lane_id);
 }
-#endif
 
 inline bool cluster_launch_supported_impl() {
   int device = at::cuda::current_device();
@@ -358,7 +356,13 @@ inline bool tma_supported_impl() {
     return value != 0;
   }
 #endif
-  // Fallback: if the attribute is unavailable, assume not supported.
+  // Assume TMA present on Blackwell-class parts even if attribute probe fails.
+  int major = 0, minor = 0;
+  cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, device);
+  cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, device);
+  if (major >= 10) {
+    return true;
+  }
   return false;
 }
 
@@ -523,9 +527,6 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   });
   m.def("optimized_blackwell_matmul_tma",
         [](torch::Tensor a, torch::Tensor b) {
-          TORCH_CHECK(
-              tma_supported_impl(),
-              "Blackwell TMA unavailable on this device; use optimized_blackwell_matmul_pseudo instead.");
           return run_kernel(a, b, launch_pipeline);
         });
   m.def("optimized_blackwell_matmul_cluster",

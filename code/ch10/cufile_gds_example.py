@@ -515,7 +515,7 @@ def main():
     
     if not TORCH_AVAILABLE:
         print("✗ PyTorch with CUDA not available")
-        print("  Install: pip install torch --index-url https://download.pytorch.org/whl/cu121")
+        print("  Install: pip install torch --index-url https://download.pytorch.org/whl/cu130")
     
     # Run demonstration
     if CUFILE_AVAILABLE and TORCH_AVAILABLE:
@@ -559,4 +559,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

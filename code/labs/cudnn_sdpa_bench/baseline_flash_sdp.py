@@ -6,6 +6,7 @@ import argparse
 import sys
 from pathlib import Path
 from typing import List, Optional
+from contextlib import nullcontext
 
 import torch
 import torch.nn as nn
@@ -60,10 +61,9 @@ def _sdpa_context(backend: str):
     if backend == "flash":
         return sdpa_kernel([SDPBackend.FLASH_ATTENTION])
     if backend == "math":
-        # Prefer new API if available; otherwise fall back to legacy toggle.
         if hasattr(SDPBackend, "MATH"):
             return sdpa_kernel([getattr(SDPBackend, "MATH")])
-        return torch.backends.cuda.sdp_kernel(enable_flash=False, enable_mem_efficient=False, enable_math=True)
+        return nullcontext()
 
     # Auto: try cuDNN, then Flash, then efficient attention.
     preference = []

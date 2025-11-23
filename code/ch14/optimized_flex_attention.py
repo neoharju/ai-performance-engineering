@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from contextlib import nullcontext
 
 repo_root = Path(__file__).parent.parent
 if str(repo_root) not in sys.path:
@@ -12,6 +13,11 @@ if str(repo_root) not in sys.path:
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+try:
+    from torch.nn.attention import SDPBackend, sdpa_kernel
+except ImportError:  # pragma: no cover - older PyTorch fallback
+    SDPBackend = None  # type: ignore[assignment]
+    sdpa_kernel = None  # type: ignore[assignment]
 
 from typing import Optional
 
@@ -22,6 +28,12 @@ from common.python.benchmark_harness import (  # noqa: E402
     BenchmarkMode,
     WorkloadMetadata,
 )
+
+def _flash_sdp_context():
+    """Prefer the new sdpa_kernel API; fall back to no-op if unavailable."""
+    if sdpa_kernel is None or SDPBackend is None or not hasattr(SDPBackend, "FLASH_ATTENTION"):
+        return nullcontext()
+    return sdpa_kernel([SDPBackend.FLASH_ATTENTION])
 
 
 class FlexAttentionBlock(nn.Module):
@@ -43,7 +55,7 @@ class FlexAttentionBlock(nn.Module):
         q = q.view(batch, seq, self.num_heads, self.head_dim).transpose(1, 2)
         k = k.view(batch, seq, self.num_heads, self.head_dim).transpose(1, 2)
         v = v.view(batch, seq, self.num_heads, self.head_dim).transpose(1, 2)
-        with torch.backends.cuda.sdp_kernel(enable_flash=True, enable_mem_efficient=False, enable_math=False):
+        with _flash_sdp_context():
             context = F.scaled_dot_product_attention(q, k, v, dropout_p=0.0, is_causal=False)
         context = context.transpose(1, 2).contiguous().view(batch, seq, self.embed_dim)
         return self.out_proj(context)

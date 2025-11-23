@@ -79,7 +79,7 @@ class OptimizedFlashSDPBenchmark(BaseBenchmark):
         self.inputs = torch.randn(self.batch, self.seq_len, self.hidden, device=self.device, dtype=torch.float16)
         compiled = torch.compile(self.model, fullgraph=True, dynamic=False)  # type: ignore[arg-type]
         # Warm compile
-        with torch.backends.cuda.sdp_kernel(enable_flash=True, enable_math=False, enable_mem_efficient=False):
+        with sdpa_kernel([SDPBackend.FLASH_ATTENTION]):
             _ = compiled(self.inputs)
         torch.cuda.synchronize(self.device)
         self.compiled = compiled

@@ -5,6 +5,7 @@ Shared helpers and configs for the fast_nanochat lab variants.
 
 from __future__ import annotations
 
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -116,6 +117,7 @@ class NanoChatBenchmark(BaseBenchmark):
             self.compute_stream = torch.cuda.Stream()
         self._init_model()
         self._init_buffers()
+        self._cache_te_weight_workspaces()
         # Default to eager helpers; swap in compiled variants below when enabled.
         self.prefill_fn = self._prefill
         self.decode_fn = self._decode_step
@@ -161,6 +163,29 @@ class NanoChatBenchmark(BaseBenchmark):
         self.lm_head = _linear(hs, vs, bias=False)
         if self.cfg.use_fp8 and TE_AVAILABLE and not self._fp4_enabled:
             self._fp8_enabled = True
+
+    def _cache_te_weight_workspaces(self) -> None:
+        """Pre-quantize TE weights once to warm TE caches and reduce workspace churn."""
+        if (
+            not TE_AVAILABLE
+            or not (self._fp8_enabled or self._fp4_enabled)
+            or os.getenv("NANOCHAT_SKIP_TE_CACHE") == "1"
+        ):
+            return
+        modules = []
+        for mod in (self.prefill_mlp, self.decode_mlp):
+            for layer in mod:
+                if hasattr(layer, "get_weight_workspace"):
+                    modules.append(layer)
+        if hasattr(self, "lm_head") and hasattr(self.lm_head, "get_weight_workspace"):
+            modules.append(self.lm_head)
+
+        for mod in modules:
+            try:
+                with torch.no_grad(), te.fp8_autocast(enabled=True, fp8_recipe=self.fp8_recipe):
+                    _ = mod.get_weight_workspace(mod.weight)  # type: ignore[attr-defined]
+            except Exception:
+                pass
 
     def _init_buffers(self) -> None:
         bsz, prompt = self.cfg.batch_size, self.cfg.prompt_tokens

@@ -3,12 +3,25 @@
 from __future__ import annotations
 
 from typing import Optional
+from contextlib import nullcontext
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+try:
+    from torch.nn.attention import SDPBackend, sdpa_kernel
+except ImportError:  # pragma: no cover - older PyTorch fallback
+    SDPBackend = None  # type: ignore[assignment]
+    sdpa_kernel = None  # type: ignore[assignment]
 
 from common.python.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata
+
+
+def _flash_sdp_context():
+    """Prefer the new sdpa_kernel API; fall back to no-op if unavailable."""
+    if sdpa_kernel is None or SDPBackend is None or not hasattr(SDPBackend, "FLASH_ATTENTION"):
+        return nullcontext()
+    return sdpa_kernel([SDPBackend.FLASH_ATTENTION])
 
 
 class OptimizedKVCacheManagementBenchmark(BaseBenchmark):
@@ -60,7 +73,7 @@ class OptimizedKVCacheManagementBenchmark(BaseBenchmark):
             q = torch.randn(self.batch_size, 1, self.num_heads, self.head_dim, device=self.device, dtype=torch.bfloat16)
             k = torch.randn_like(q)
             v = torch.randn_like(q)
-            with torch.backends.cuda.sdp_kernel(enable_flash=True, enable_mem_efficient=False, enable_math=False):
+            with _flash_sdp_context():
                 _ = F.scaled_dot_product_attention(q, k, v, is_causal=True)
         except Exception as exc:
             raise RuntimeError(f"SKIPPED: flash-attn kernels unavailable on this arch/install: {exc}") from exc

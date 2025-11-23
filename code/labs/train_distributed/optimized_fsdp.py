@@ -143,8 +143,12 @@ def main():
     if enable_tf32 is not None:
         enable_tf32(set_global_precision=True)
     else:
-        torch.backends.cuda.matmul.allow_tf32 = True
-        torch.backends.cudnn.allow_tf32 = True  # type: ignore[attr-defined]
+        try:
+            torch.backends.cuda.matmul.fp32_precision = "high"  # type: ignore[attr-defined]
+            torch.backends.cudnn.conv.allow_tf32 = True  # type: ignore[attr-defined]
+            torch.set_float32_matmul_precision("high")
+        except Exception:
+            pass
     torch.backends.cudnn.benchmark = True
 
     dataloader, sampler = _build_dataloader(args.sequence_length, args.micro_batch_size, rank, world_size)

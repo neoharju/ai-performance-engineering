@@ -3,12 +3,28 @@
 from __future__ import annotations
 
 from typing import Optional
+from contextlib import nullcontext
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+try:
+    from torch.nn.attention import SDPBackend, sdpa_kernel
+except ImportError:  # pragma: no cover - older PyTorch fallback
+    SDPBackend = None  # type: ignore[assignment]
+    sdpa_kernel = None  # type: ignore[assignment]
 
 from common.python.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata
+
+
+def _math_sdp_context():
+    """Prefer the new sdpa_kernel API; fall back to no-op if unavailable."""
+    if sdpa_kernel is None or SDPBackend is None:
+        return nullcontext()
+    backend = getattr(SDPBackend, "MATH", None)
+    if backend is None:
+        return nullcontext()
+    return sdpa_kernel([backend])
 
 
 class OptimizedKVCacheManagementMathBenchmark(BaseBenchmark):
@@ -72,7 +88,7 @@ class OptimizedKVCacheManagementMathBenchmark(BaseBenchmark):
                 k = k.view(self.batch_size, -1, self.num_heads, self.head_dim).transpose(1, 2)
                 v = v.view(self.batch_size, -1, self.num_heads, self.head_dim).transpose(1, 2)
                 
-                with torch.backends.cuda.sdp_kernel(enable_flash=False, enable_math=True, enable_mem_efficient=False):
+                with _math_sdp_context():
                     attn = F.scaled_dot_product_attention(q, k, v, is_causal=True)
                 attn = attn.transpose(1, 2).contiguous().view(self.batch_size, -1, self.hidden_dim)
                 output = self.out_proj(attn)

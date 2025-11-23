@@ -8,12 +8,18 @@ fallback from the Flash version—so success/failure is explicit in the harness.
 from __future__ import annotations
 
 import sys
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Dict, List, Optional
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+try:
+    from torch.nn.attention import SDPBackend, sdpa_kernel
+except ImportError:  # pragma: no cover - older PyTorch fallback
+    SDPBackend = None  # type: ignore[assignment]
+    sdpa_kernel = None  # type: ignore[assignment]
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
@@ -24,11 +30,21 @@ from common.python.compile_utils import enable_tf32
 from common.python.nvtx_helper import get_nvtx_enabled, nvtx_range
 
 
+def _math_sdp_context():
+    """Prefer the new sdpa_kernel API; fall back to no-op if unavailable."""
+    if sdpa_kernel is None or SDPBackend is None:
+        return nullcontext()
+    backend = getattr(SDPBackend, "MATH", None)
+    if backend is None:
+        return nullcontext()
+    return sdpa_kernel([backend])
+
+
 class MathSDPDecodeAttention(nn.Module):
     """Decode attention that always routes to the math SDP backend."""
 
     def forward(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:  # pragma: no cover
-        with torch.backends.cuda.sdp_kernel(enable_flash=False, enable_mem_efficient=False, enable_math=True):
+        with _math_sdp_context():
             return F.scaled_dot_product_attention(
                 q,
                 k,

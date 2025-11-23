@@ -1,0 +1,25 @@
+{
+  "examples": {
+    "persistent_decode_cuda": {
+      "example": "persistent_decode_cuda",
+      "metadata": {
+        "best_optimization": "optimized_persistent_decode_cuda",
+        "best_optimization_file": "optimized_persistent_decode_cuda.py",
+        "best_optimization_speedup": 14.680752454174046,
+        "best_optimization_time_ms": 0.1064703993499279,
+        "git_commit": "ee6aa0ee8bafca4a7f430b3801d43a078087b0cb",
+        "updated_at": "2025-11-23T00:38:54.860752"
+      },
+      "metrics": {
+        "baseline_p75_ms": 1.544160008430481,
+        "baseline_time_ms": 1.5630655765533448,
+        "best_optimized_p75_ms": 0.08233600109815598,
+        "best_optimized_speedup": 14.680752454174046,
+        "best_optimized_time_ms": 0.1064703993499279,
+        "best_speedup": 14.680752454174046
+      },
+      "type": "python"
+    }
+  },
+  "hardware_key": "b200"
+}

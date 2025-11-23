@@ -4,10 +4,10 @@
 # ========================================
 #
 # This script installs EVERYTHING you need:
-#   1. NVIDIA Driver 580+ (auto-upgrades if needed)
+#   1. NVIDIA Driver 580.105.08 (auto-upgrades if needed; open kernel modules for B200)
 #   2. Python 3.12 (PyTorch 2.10-dev compatible)
-#   3. CUDA 13.0.2 (Update 2) repository and toolchain
-#   4. Environment for PyTorch 2.10-dev source build with CUDA 13.0.2
+#   3. CUDA 13.0.1 toolkit + cuBLAS 13.0.2.14 (Update 2) repository
+#   4. Environment for PyTorch 2.10-dev source build with CUDA 13.0.1
 #   5. NVIDIA Nsight Systems 2025.3.2 (for timeline profiling)
 #   6. NVIDIA Nsight Compute 2025.3.1 (for kernel metrics)
 #   7. All Python dependencies from requirements_latest.txt
@@ -59,9 +59,9 @@ set -e  # Exit on any error
 echo "AI Performance Engineering Setup Script"
 echo "=========================================="
 echo "This script will install:"
-echo "  • NVIDIA Driver 580+ (auto-upgrade if needed)"
+echo "  • NVIDIA Driver 580.105.08 (auto-upgrade if needed)"
 echo "  • Python 3.12 (PyTorch 2.10-dev compatible)"
-echo "  • CUDA 13.0.2 (Update 2) repository and toolchain"
+echo "  • CUDA 13.0.1 toolkit + cuBLAS 13.0.2.14 (Update 2) repository"
 echo "  • Environment configured for PyTorch 2.10-dev source build"
 echo "  • NVIDIA Nsight Systems 2025.3.2 (latest)"
 echo "  • NVIDIA Nsight Compute 2025.3.1 (latest)"
@@ -72,7 +72,7 @@ echo "Note: If driver upgrade is needed, you'll be prompted to reboot."
 echo ""
 
 PROJECT_ROOT="$(dirname "$(realpath "$0")")"
-REQUIRED_DRIVER_VERSION="580.95.05"
+REQUIRED_DRIVER_VERSION="580.105.08"
 PYTHON_TARGET_VERSION="3.12"
 PYTHON_TARGET_MAJOR="${PYTHON_TARGET_VERSION%%.*}"
 PYTHON_TARGET_MINOR="${PYTHON_TARGET_VERSION##*.}"
@@ -80,8 +80,8 @@ PYTHON_TARGET_BIN="python${PYTHON_TARGET_VERSION}"
 PYTHON_ABI_TAG="cp${PYTHON_TARGET_MAJOR}${PYTHON_TARGET_MINOR}"
 PYTHON_DIST_PACKAGES="/usr/local/lib/python${PYTHON_TARGET_VERSION}/dist-packages"
 CUDA_SHORT_VERSION="13.0"
-CUDA_FULL_VERSION="13.0.2.006"
-# cuDNN version (install latest available in CUDA 13 repo)
+CUDA_FULL_VERSION="13.0.1.000"
+# cuBLAS is pinned to 13.0.2.14 (Update 2) via cuda-libraries; cuDNN latest in repo
 CUDNN_VERSION="9.16.0.29"
 NCCL_SHORT_VERSION="2.28.7"
 CUDA_HOME_DIR="/usr/local/cuda-${CUDA_SHORT_VERSION}"

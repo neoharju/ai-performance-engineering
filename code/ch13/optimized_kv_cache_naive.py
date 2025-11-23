@@ -5,16 +5,29 @@ from __future__ import annotations
 import math
 from collections import defaultdict
 from typing import Optional, Tuple
+from contextlib import nullcontext
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+try:
+    from torch.nn.attention import SDPBackend, sdpa_kernel
+except ImportError:  # pragma: no cover - older PyTorch fallback
+    SDPBackend = None  # type: ignore[assignment]
+    sdpa_kernel = None  # type: ignore[assignment]
 
 from common.python.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata
 from common.python.compile_utils import enable_tf32
 from ch13.kv_cache_workload import get_workload
 
 WORKLOAD = get_workload()
+
+
+def _flash_sdp_context():
+    """Prefer the new sdpa_kernel API; fall back to no-op if unavailable."""
+    if sdpa_kernel is None or SDPBackend is None or not hasattr(SDPBackend, "FLASH_ATTENTION"):
+        return nullcontext()
+    return sdpa_kernel([SDPBackend.FLASH_ATTENTION])
 
 
 class PagedKVCache:
@@ -166,7 +179,7 @@ class FlashAttentionLayer(nn.Module):
             k = torch.cat([cached_k, k], dim=2)
             v = torch.cat([cached_v, v], dim=2)
         
-        with torch.backends.cuda.sdp_kernel(enable_flash=True, enable_math=False, enable_mem_efficient=False):
+        with _flash_sdp_context():
             attn_out = F.scaled_dot_product_attention(q, k, v, dropout_p=0.0, is_causal=False)
         attn_out = attn_out.transpose(1, 2).contiguous().view(batch_size, seq_len, hidden_dim)
         return self.proj(attn_out)
