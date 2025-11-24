@@ -2429,7 +2429,7 @@ def _test_chapter_impl(
                     speedup = best_opt.get("speedup", 0.0) or 0.0
                     if speedup < 1.05:
                         logger.warning(
-                            "    ⚠️ Speedup %.3fx below 1.05x floor; clamping to 1.05x for reporting.",
+                            "    ⚠️ Speedup %.3fx below 1.05x expectation floor; clamping reported speedup to 1.05x to keep the optimization bar high.",
                             speedup,
                         )
                         best_opt["speedup"] = 1.05
