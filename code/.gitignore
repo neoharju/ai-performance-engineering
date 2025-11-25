@@ -127,6 +127,8 @@ llm_patches/
 **/llm_analysis/
 llm_patches_test/
 **/llm_patches_test/
+llm_explanations/
+**/llm_explanations/
 
 # Power and performance metrics
 power_results/
