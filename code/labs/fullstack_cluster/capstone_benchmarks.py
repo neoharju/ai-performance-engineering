@@ -92,3 +92,15 @@ class CapstoneMatmulBenchmark(BaseBenchmark):
         if max_diff > 200.0:
             return f"Max abs diff {max_diff:.2f} exceeds tolerance 200"
         return None
+
+    def get_custom_metrics(self) -> Optional[dict]:
+        """Return GEMM performance metrics for roofline analysis."""
+        M = N = K = self._size
+        flops = float(2 * M * N * K)  # MAD operations
+        bytes_transferred = float((M * K + K * N + M * N) * 2)  # fp16
+        return {
+            f"{self._label}.size": float(self._size),
+            f"{self._label}.flops": flops,
+            f"{self._label}.bytes_transferred": bytes_transferred,
+            f"{self._label}.arithmetic_intensity": flops / bytes_transferred if bytes_transferred > 0 else 0.0,
+        }

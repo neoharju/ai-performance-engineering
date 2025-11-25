@@ -112,3 +112,14 @@ class NvlinkOffloadBenchmark(BaseBenchmark):
             measurement_timeout_seconds=180,
             use_subprocess=False,
         )
+
+    def get_custom_metrics(self) -> Optional[dict]:
+        """Return NVLink offload performance metrics."""
+        return {
+            f"{self.label}.bytes_per_iteration": self._bytes_per_iteration,
+            f"{self.label}.batch_size": float(self.cfg.batch_size),
+            f"{self.label}.num_layers": float(self.cfg.num_layers),
+            f"{self.label}.chunk_tokens": float(self.cfg.chunk_tokens),
+            f"{self.label}.use_pinned": float(self.cfg.use_pinned),
+            f"{self.label}.non_blocking": float(self.cfg.non_blocking),
+        }

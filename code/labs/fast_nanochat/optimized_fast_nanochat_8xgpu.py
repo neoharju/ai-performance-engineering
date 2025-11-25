@@ -39,6 +39,14 @@ class MultiGPUNanoChatBenchmark(BaseBenchmark):
             measurement_timeout_seconds=600,
         )
 
+    def get_custom_metrics(self) -> Optional[dict]:
+        """Return inference metrics."""
+        return {
+            "fast_nanochat_8xgpu.batch_size": float(getattr(self, 'batch_size', 0)),
+            "fast_nanochat_8xgpu.seq_len": float(getattr(self, 'seq_len', 0)),
+            "fast_nanochat_8xgpu.hidden_dim": float(getattr(self, 'hidden_dim', 0)),
+        }
+
     def get_torchrun_spec(self, config: BenchmarkConfig | None = None) -> TorchrunLaunchSpec:
         script_path = Path(__file__).resolve()
         return TorchrunLaunchSpec(

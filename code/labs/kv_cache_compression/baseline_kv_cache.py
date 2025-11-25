@@ -152,5 +152,13 @@ class BaselineKVCacheBenchmark(BaseBenchmark):
         return BenchmarkConfig(iterations=10, warmup=3, deterministic=False)
 
 
+    def get_custom_metrics(self) -> Optional[dict]:
+        """Return inference metrics."""
+        return {
+            "kv_cache.batch_size": float(getattr(self, 'batch_size', 0)),
+            "kv_cache.seq_len": float(getattr(self, 'seq_len', 0)),
+            "kv_cache.hidden_dim": float(getattr(self, 'hidden_dim', 0)),
+        }
+
 def get_benchmark() -> BaseBenchmark:
     return BaselineKVCacheBenchmark()

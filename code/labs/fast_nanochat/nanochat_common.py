@@ -132,10 +132,7 @@ class NanoChatBenchmark(BaseBenchmark):
         if enable_tf32 is not None:
             enable_tf32(set_global_precision=True)
         else:
-            try:
                 torch.set_float32_matmul_precision("high")
-            except Exception:
-                pass
         if self.cfg.use_copy_stream:
             self.copy_stream = torch.cuda.Stream()
         if self.cfg.use_compute_stream:
@@ -206,11 +203,8 @@ class NanoChatBenchmark(BaseBenchmark):
             modules.append(self.lm_head)
 
         for mod in modules:
-            try:
                 with torch.no_grad(), te.fp8_autocast(enabled=True, fp8_recipe=self.fp8_recipe):
                     _ = mod.get_weight_workspace(mod.weight)  # type: ignore[attr-defined]
-            except Exception:
-                pass
 
     def _init_buffers(self) -> None:
         bsz, prompt = self.cfg.batch_size, self.cfg.prompt_tokens

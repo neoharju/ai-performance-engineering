@@ -136,6 +136,13 @@ class OptimizedMoEReadinessBenchmark(BaseBenchmark):
             measurement_timeout_seconds=1200,
         )
 
+    def get_custom_metrics(self) -> Optional[dict]:
+        """Return domain-specific metrics for performance analysis."""
+        # Basic metrics - override in subclass for domain-specific values
+        return {
+            "moe_readiness.workload_size": float(getattr(self, 'batch_size', 0)),
+        }
+
     def get_torchrun_spec(self, config: BenchmarkConfig | None = None) -> TorchrunLaunchSpec:
         script_path = Path(__file__).resolve()
         return TorchrunLaunchSpec(

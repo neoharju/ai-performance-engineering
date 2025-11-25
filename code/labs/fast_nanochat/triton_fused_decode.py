@@ -23,7 +23,6 @@ from common.python.triton_compat import ensure_triton_compat
 def _install_triton_allocator() -> None:
     if _triton_alloc is None:
         return
-    try:
         class _TorchBuffer:
             def __init__(self, size: int):
                 self.tensor = torch.empty(size, dtype=torch.uint8, device="cuda")
@@ -35,8 +34,6 @@ def _install_triton_allocator() -> None:
             return _TorchBuffer(size)
 
         _triton_alloc.set_allocator(_allocator)  # type: ignore[attr-defined]
-    except Exception:
-        pass
 
 # Set allocator once at import time, but also re-install on demand.
 _install_triton_allocator()

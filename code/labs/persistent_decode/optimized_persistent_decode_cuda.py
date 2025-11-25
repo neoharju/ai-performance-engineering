@@ -82,6 +82,14 @@ class OptimizedPersistentDecodeCUDABenchmark(BaseBenchmark):
             measurement_timeout_seconds=600,
         )
 
+    def get_custom_metrics(self) -> Optional[dict]:
+        """Return inference metrics."""
+        return {
+            "persistent_decode_cu.batch_size": float(getattr(self, 'batch_size', 0)),
+            "persistent_decode_cu.seq_len": float(getattr(self, 'seq_len', 0)),
+            "persistent_decode_cu.hidden_dim": float(getattr(self, 'hidden_dim', 0)),
+        }
+
     def validate_result(self) -> str | None:
         if self.inputs is None:
             return "Inputs not initialized"

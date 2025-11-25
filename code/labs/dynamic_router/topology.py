@@ -88,10 +88,7 @@ def _nvml_gpu_bus_and_numa(max_gpus: Optional[int] = None) -> Dict[int, Dict[str
         except Exception:
             continue
 
-    try:
         pynvml.nvmlShutdown()
-    except Exception:
-        pass
     return mapping
 
 

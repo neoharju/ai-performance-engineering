@@ -134,3 +134,16 @@ class AsyncInputPipelineBenchmark(BaseBenchmark):
             measurement_timeout_seconds=120,
             use_subprocess=False,
         )
+
+    def get_custom_metrics(self) -> Optional[dict]:
+        """Return async input pipeline configuration metrics."""
+        bytes_per_sample = 4 * self.cfg.feature_shape[0] * self.cfg.feature_shape[1] * self.cfg.feature_shape[2]
+        bytes_per_batch = bytes_per_sample * self.cfg.batch_size
+        return {
+            f"{self.label}.batch_size": float(self.cfg.batch_size),
+            f"{self.label}.num_workers": float(self.cfg.num_workers),
+            f"{self.label}.pin_memory": float(self.cfg.pin_memory),
+            f"{self.label}.non_blocking": float(self.cfg.non_blocking),
+            f"{self.label}.use_copy_stream": float(self.cfg.use_copy_stream),
+            f"{self.label}.bytes_per_batch": float(bytes_per_batch),
+        }

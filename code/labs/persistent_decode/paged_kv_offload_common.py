@@ -36,12 +36,6 @@ except Exception:  # pragma: no cover - defensive import
     prefer_sdpa_backends = None  # type: ignore
 
 
-def _torch_version_at_least(major: int, minor: int) -> bool:
-    try:
-        parts = torch.__version__.split(".")
-        return int(parts[0]) > major or (int(parts[0]) == major and int(parts[1]) >= minor)
-    except Exception:
-        return False
 
 
 def _supports_fp8_kv() -> bool:
@@ -56,15 +50,12 @@ def _supports_fused_fp8_attention() -> bool:
     cc_major, _ = torch.cuda.get_device_capability()
     if cc_major < 10:
         return False
-    try:
         from torch.nn.attention import sdpa_kernel as _sdpa_kernel, SDPBackend as _SDPBackend
 
         available = getattr(_sdpa_kernel, "available_backends", lambda: [])()
         te_backend = getattr(_SDPBackend, "TRANSFORMER_ENGINE", None)
         if available and te_backend is not None:
             return te_backend in available
-    except Exception:
-        pass
     return False
 
 
@@ -144,9 +135,6 @@ class PagedKVOffloadBenchmark(BaseBenchmark):
     # -------------------- Setup helpers --------------------
 
     def _select_runtime_dtype(self) -> torch.dtype:
-        if self.cfg.prefer_fp8 and not _torch_version_at_least(2, 10):
-            self._fp8_reason = "Falling back: PyTorch 2.10+ required for preferred FP8 KV path."
-            return self.cfg.fallback_dtype
         if self.cfg.prefer_fp8 and _supports_fp8_kv():
             if not _supports_fused_fp8_attention():
                 raise RuntimeError("FP8 requested but fused attention backend is unavailable.")
@@ -342,3 +330,18 @@ class PagedKVOffloadBenchmark(BaseBenchmark):
             # Report the path we took for visibility; not a failure.
             print(f"[{self.label}] {self._fp8_reason}")
         return None
+
+    def get_custom_metrics(self) -> Optional[dict]:
+        """Return paged KV offload performance metrics."""
+        return {
+            f"{self.label}.bytes_per_iteration": self._bytes_per_iteration,
+            f"{self.label}.batch_size": float(self.cfg.batch_size),
+            f"{self.label}.num_heads": float(self.cfg.num_heads),
+            f"{self.label}.head_dim": float(self.cfg.head_dim),
+            f"{self.label}.page_tokens": float(self.cfg.page_tokens),
+            f"{self.label}.decode_tokens": float(self.cfg.decode_tokens),
+            f"{self.label}.max_seq_len": float(self.cfg.max_seq_len),
+            f"{self.label}.use_fp8": float(self.runtime_dtype == getattr(torch, "float8_e4m3fn", torch.float16)),
+            f"{self.label}.use_pinned": float(self.cfg.use_pinned_stage),
+            f"{self.label}.use_async": float(self.cfg.use_async_stream),
+        }

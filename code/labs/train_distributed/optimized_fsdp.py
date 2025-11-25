@@ -143,7 +143,6 @@ def main():
     if enable_tf32 is not None:
         enable_tf32(set_global_precision=True)
     else:
-        try:
             torch.set_float32_matmul_precision("high")
             matmul_backend = getattr(torch.backends.cuda, "matmul", None)
             if matmul_backend is not None and hasattr(matmul_backend, "fp32_precision"):
@@ -151,8 +150,6 @@ def main():
             cudnn_conv = getattr(torch.backends.cudnn, "conv", None)
             if cudnn_conv is not None and hasattr(cudnn_conv, "fp32_precision"):
                 cudnn_conv.fp32_precision = "tf32"  # type: ignore[attr-defined]
-        except Exception:
-            pass
     torch.backends.cudnn.benchmark = True
 
     dataloader, sampler = _build_dataloader(args.sequence_length, args.micro_batch_size, rank, world_size)

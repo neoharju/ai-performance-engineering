@@ -9,8 +9,20 @@ control variant against the optimized router.
 from __future__ import annotations
 
 import itertools
+import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Dict, Iterable, List, Optional
+
+repo_root = Path(__file__).parent.parent.parent
+if str(repo_root) not in sys.path:
+    sys.path.insert(0, str(repo_root))
+
+from common.python.benchmark_harness import (
+    BaseBenchmark,
+    BenchmarkConfig,
+    WorkloadMetadata,
+)
 
 
 @dataclass
@@ -58,3 +70,76 @@ class BaselineRouter:
     def inflight(self) -> Dict[str, str]:
         """Expose current placements for debugging/metrics."""
         return dict(self._inflight)
+
+
+#============================================================================
+# Benchmark Harness Integration
+#============================================================================
+
+class BaselineRouterBenchmark(BaseBenchmark):
+    """Benchmark harness wrapper for baseline round-robin router."""
+
+    def __init__(self):
+        super().__init__()
+        self.router = None
+        self.num_gpus = 8
+        self.num_requests = 1000
+        self._last = 0.0
+        
+        self._workload = WorkloadMetadata(
+            requests_per_iteration=float(self.num_requests),
+            tokens_per_iteration=float(self.num_requests * 100),  # ~100 tokens/request
+        )
+
+    def setup(self) -> None:
+        """Setup: Initialize baseline round-robin router."""
+        gpu_ids = [f"gpu_{i}" for i in range(self.num_gpus)]
+        self.router = BaselineRouter(gpu_ids)
+
+    def benchmark_fn(self) -> None:
+        """Benchmark: Route requests via round-robin."""
+        if self.router is None:
+            return
+            
+        routed = 0
+        for i in range(self.num_requests):
+            req = Request(
+                req_id=f"req_{i}",
+                prompt_tokens=100,
+                expected_new_tokens=50,
+                priority=i % 3,
+            )
+            gpu = self.router.route(req)
+            if gpu:
+                routed += 1
+            # Mark some as complete
+            if i > 0 and i % 10 == 0:
+                self.router.complete(f"req_{i-10}")
+        
+        self._last = float(routed)
+
+    def teardown(self) -> None:
+        """Teardown: Clean up resources."""
+        self.router = None
+
+    def get_config(self) -> BenchmarkConfig:
+        return BenchmarkConfig(iterations=50, warmup=10)
+    
+    def get_workload_metadata(self) -> Optional[WorkloadMetadata]:
+        return self._workload
+
+    def get_custom_metrics(self) -> Optional[dict]:
+        return {
+            "baseline_router.strategy": "round_robin",
+            "baseline_router.feedback": False,
+        }
+
+    def validate_result(self) -> Optional[str]:
+        if self.router is None:
+            return "Router not initialized"
+        return None
+
+
+def get_benchmark() -> BaseBenchmark:
+    """Factory function for benchmark discovery."""
+    return BaselineRouterBenchmark()

@@ -67,6 +67,13 @@ class BaselineFlashAttentionGluonBenchmark(BaseBenchmark):
     def get_workload_metadata(self) -> Optional[WorkloadMetadata]:
         return self._workload
 
+    def get_custom_metrics(self) -> Optional[dict]:
+        """Return domain-specific metrics for performance analysis."""
+        # Basic metrics - override in subclass for domain-specific values
+        return {
+            "flashattention_gluon.workload_size": float(getattr(self, 'batch_size', 0)),
+        }
+
     def validate_result(self) -> Optional[str]:
         if self.inputs is None:
             return "FlashAttention inputs are not initialized"

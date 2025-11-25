@@ -196,6 +196,14 @@ class OptimizedPersistentDecodeGraphsBenchmark(BaseBenchmark):
             measurement_timeout_seconds=90,
         )
 
+    def get_custom_metrics(self) -> Optional[dict]:
+        """Return inference metrics."""
+        return {
+            "persistent_decode_gr.batch_size": float(getattr(self, 'batch_size', 0)),
+            "persistent_decode_gr.seq_len": float(getattr(self, 'seq_len', 0)),
+            "persistent_decode_gr.hidden_dim": float(getattr(self, 'hidden_dim', 0)),
+        }
+
     def validate_result(self) -> str | None:
         if self.inputs is None:
             return "Inputs not initialized"

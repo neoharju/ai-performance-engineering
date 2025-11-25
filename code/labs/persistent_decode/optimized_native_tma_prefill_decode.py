@@ -132,6 +132,14 @@ class OptimizedNativeTmaPrefillDecodeBenchmark(BaseBenchmark):
             measurement_timeout_seconds=120,
         )
 
+    def get_custom_metrics(self) -> Optional[dict]:
+        """Return inference metrics."""
+        return {
+            "native_tma_prefill_d.batch_size": float(getattr(self, 'batch_size', 0)),
+            "native_tma_prefill_d.seq_len": float(getattr(self, 'seq_len', 0)),
+            "native_tma_prefill_d.hidden_dim": float(getattr(self, 'hidden_dim', 0)),
+        }
+
     def validate_result(self) -> str | None:
         if self.inputs is None:
             return "Inputs not initialized"

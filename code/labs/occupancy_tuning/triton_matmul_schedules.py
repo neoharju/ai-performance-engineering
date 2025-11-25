@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Callable, Optional
 
@@ -188,6 +189,22 @@ class TritonMatmulProtonBenchmark(BaseBenchmark):
 
     def get_config(self) -> BenchmarkConfig:
         return self._config
+
+    def get_custom_metrics(self) -> Optional[dict]:
+        """Return Triton matmul schedule and roofline metrics."""
+        M, N, K = self._size_m, self._size_n, self._size_k
+        flops = 2.0 * M * N * K  # MAD operations
+        bytes_transferred = (M * K + K * N + M * N) * 2.0  # fp16
+        arithmetic_intensity = flops / bytes_transferred if bytes_transferred > 0 else 0.0
+        return {
+            f"triton.{self.schedule.name}.block_m": float(self.schedule.block_m),
+            f"triton.{self.schedule.name}.block_n": float(self.schedule.block_n),
+            f"triton.{self.schedule.name}.block_k": float(self.schedule.block_k),
+            f"triton.{self.schedule.name}.num_warps": float(self.schedule.num_warps),
+            f"triton.{self.schedule.name}.matrix_size": float(M),
+            f"triton.{self.schedule.name}.flops": flops,
+            f"triton.{self.schedule.name}.arithmetic_intensity": arithmetic_intensity,
+        }
 
 
 __all__ = [

@@ -87,6 +87,14 @@ class BaselineTmaPrefillDecodeBenchmark(BaseBenchmark):
             measurement_timeout_seconds=120,
         )
 
+    def get_custom_metrics(self) -> Optional[dict]:
+        """Return inference metrics."""
+        return {
+            "tma_prefill_decode.batch_size": float(getattr(self, 'batch_size', 0)),
+            "tma_prefill_decode.seq_len": float(getattr(self, 'seq_len', 0)),
+            "tma_prefill_decode.hidden_dim": float(getattr(self, 'hidden_dim', 0)),
+        }
+
     def validate_result(self) -> str | None:
         if self.inputs is None:
             return "Inputs not initialized"

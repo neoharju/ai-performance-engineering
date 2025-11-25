@@ -94,6 +94,16 @@ class PlanBenchmark(BaseBenchmark):
             tokens_per_iteration=throughput,
         )
 
+    def get_custom_metrics(self) -> Optional[dict]:
+        """Return MoE parallelism plan metrics."""
+        if self.report is None:
+            return None
+        return {
+            "moe.estimated_step_ms": self.report.estimated_step_ms,
+            "moe.throughput_tokens_per_s": self.report.throughput_tokens_per_s,
+            "moe.memory_per_device_gb": getattr(self.report, "memory_per_device_gb", 0.0),
+        }
+
     def print_summary(self) -> None:
         if self._summary:
             print(self._summary)
