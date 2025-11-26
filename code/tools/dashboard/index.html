@@ -80,8 +80,10 @@
             z-index: 1000;
             padding: 1rem 2rem;
             display: flex;
+            flex-wrap: wrap;
             justify-content: space-between;
             align-items: center;
+            gap: 0.75rem;
             background: rgba(6, 6, 10, 0.85);
             backdrop-filter: blur(20px);
             border-bottom: 1px solid var(--border-glass);
@@ -132,6 +134,7 @@
 
         .nav-tabs {
             display: flex;
+            flex-wrap: wrap;
             gap: 0.5rem;
         }
 
@@ -220,7 +223,7 @@
 
         /* Main container */
         .main {
-            padding: 6rem 2rem 2rem;
+            padding: 10rem 2rem 2rem;
             max-width: 1900px;
             margin: 0 auto;
         }
@@ -754,6 +757,7 @@
         @media (max-width: 1400px) {
             .hero-stats { grid-template-columns: repeat(3, 1fr); }
             .grid-3 { grid-template-columns: repeat(2, 1fr); }
+            .main { padding-top: 12rem; }
         }
 
         @media (max-width: 900px) {
@@ -761,6 +765,7 @@
             .grid-2, .grid-2-1, .grid-1-2 { grid-template-columns: 1fr; }
             .comparison-grid { grid-template-columns: 1fr; }
             .comparison-arrow { transform: rotate(90deg); padding: 1rem 0; }
+            .main { padding-top: 16rem; }
         }
 
         /* Animations */
@@ -897,7 +902,7 @@
             <div class="nav-logo" style="display: none;">⚡</div>
             <div>
                 <div class="nav-title">AI Systems Performance</div>
-                <div class="nav-subtitle">GPU Optimization Dashboard</div>
+                <div class="nav-subtitle">Optimization Dashboard</div>
             </div>
         </div>
         <div class="nav-tabs">
@@ -1824,8 +1829,16 @@
             <div class="grid-2 mb-3">
                 <!-- Cost Analysis -->
                 <div class="card animate delay-6">
-                    <div class="card-header">
+                    <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
                         <h3 class="card-title">💰 Cost Analysis ($/operation)</h3>
+                        <select id="gpuSelector" onchange="updateCostAnalysis()" style="padding: 0.25rem 0.5rem; background: var(--bg-tertiary); border: 1px solid var(--border-glass); border-radius: 4px; color: var(--text-primary); font-size: 0.85rem;">
+                            <option value="B200">B200 ($5.00/hr)</option>
+                            <option value="H100">H100 ($3.50/hr)</option>
+                            <option value="A100">A100 ($2.00/hr)</option>
+                            <option value="L40S">L40S ($1.50/hr)</option>
+                            <option value="A10G">A10G ($1.00/hr)</option>
+                            <option value="T4">T4 ($0.50/hr)</option>
+                        </select>
                     </div>
                     <div class="card-body" style="max-height: 400px; overflow-y: auto;">
                         <div id="costAnalysis" style="display: flex; flex-direction: column; gap: 0.5rem;">
@@ -4033,6 +4046,15 @@
             html += '<div style="margin-bottom:0.5rem;"><strong>Scaling Tips:</strong></div>';
             html += recs.map(function(r) { return '<div style="padding:0.75rem;background:var(--bg-glass);border-radius:6px;"><div style="font-weight:600;color:var(--accent-primary);">' + r.factor + '</div><div style="font-size:0.85rem;color:var(--text-secondary);margin:0.25rem 0;">' + r.insight + '</div><div style="font-size:0.85rem;color:var(--accent-success);">→ ' + r.recommendation + '</div></div>'; }).join('');
             el.innerHTML = html;
+        }
+        
+        async function updateCostAnalysis() {
+            const gpu = document.getElementById('gpuSelector').value;
+            try {
+                const res = await fetch('/api/analysis/cost?gpu=' + gpu);
+                const data = await res.json();
+                renderCostAnalysis(data);
+            } catch (e) { console.error('Failed to update cost analysis:', e); }
         }
 
         // Initialize

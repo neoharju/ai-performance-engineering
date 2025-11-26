@@ -122,8 +122,15 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             self.send_json_response(self.get_power_efficiency())
         elif self.path == '/api/analysis/scaling':
             self.send_json_response(self.get_scaling_analysis())
-        elif self.path == '/api/analysis/cost':
-            self.send_json_response(self.get_cost_analysis())
+        elif self.path.startswith('/api/analysis/cost'):
+            # Parse query params: ?gpu=H100&rate=4.00
+            from urllib.parse import urlparse, parse_qs
+            parsed = urlparse(self.path)
+            params = parse_qs(parsed.query)
+            gpu = params.get('gpu', [None])[0]
+            rate = params.get('rate', [None])[0]
+            custom_rate = float(rate) if rate else None
+            self.send_json_response(self.get_cost_analysis(gpu=gpu, custom_rate=custom_rate))
         elif self.path.startswith('/api/'):
             self.send_json_response({"error": "Unknown API endpoint"})
         else:
@@ -2220,20 +2227,34 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             'key_insight': 'Optimization impact increases with workload size - small benchmarks may underestimate real-world gains',
         }
     
-    def get_cost_analysis(self) -> dict:
-        """Calculate cost impact ($/token, $/hour savings)."""
+    def get_cost_analysis(self, gpu: str = None, custom_rate: float = None) -> dict:
+        """Calculate cost impact ($/token, $/hour savings).
+        
+        Args:
+            gpu: GPU type ('B200', 'H100', 'A100', 'L40S', 'A10G', 'T4')
+            custom_rate: Custom hourly rate in $/hr
+        """
         data = self.load_benchmark_data()
         benchmarks = data.get('benchmarks', [])
         
-        # GPU pricing (approximate cloud rates)
+        # GPU pricing (approximate cloud rates - update these based on your provider)
         gpu_pricing = {
-            'B200': {'hourly': 5.00, 'name': 'NVIDIA B200'},
-            'H100': {'hourly': 3.50, 'name': 'NVIDIA H100'},
-            'A100': {'hourly': 2.00, 'name': 'NVIDIA A100'},
+            'B200': {'hourly': 5.00, 'name': 'NVIDIA B200', 'tflops': 2250},
+            'H100': {'hourly': 3.50, 'name': 'NVIDIA H100', 'tflops': 1979},
+            'A100': {'hourly': 2.00, 'name': 'NVIDIA A100', 'tflops': 312},
+            'L40S': {'hourly': 1.50, 'name': 'NVIDIA L40S', 'tflops': 362},
+            'A10G': {'hourly': 1.00, 'name': 'NVIDIA A10G', 'tflops': 125},
+            'T4': {'hourly': 0.50, 'name': 'NVIDIA T4', 'tflops': 65},
         }
         
-        # Assume B200 pricing for calculations
-        hourly_rate = gpu_pricing['B200']['hourly']
+        # Determine rate
+        selected_gpu = gpu or 'B200'
+        if custom_rate is not None:
+            hourly_rate = custom_rate
+        elif selected_gpu in gpu_pricing:
+            hourly_rate = gpu_pricing[selected_gpu]['hourly']
+        else:
+            hourly_rate = gpu_pricing['B200']['hourly']
         
         cost_analysis = []
         for b in benchmarks:
@@ -2269,8 +2290,9 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
         
         return {
             'gpu_pricing': gpu_pricing,
-            'assumed_gpu': 'B200',
+            'assumed_gpu': selected_gpu,
             'hourly_rate': hourly_rate,
+            'available_gpus': list(gpu_pricing.keys()),
             'cost_rankings': cost_analysis[:15],
             'highest_savings': cost_analysis[0] if cost_analysis else None,
             'total_potential_savings': f"Up to {cost_analysis[0]['savings_pct']:.0f}% cost reduction" if cost_analysis else "N/A",

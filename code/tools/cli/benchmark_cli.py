@@ -785,6 +785,8 @@ if TYPER_AVAILABLE:
     @app.command("cost")
     def cost(
         top_n: int = Option(10, "--top", "-n", help="Number of entries to show"),
+        gpu: str = Option("B200", "--gpu", "-g", help="GPU type (B200, H100, A100, L40S, A10G, T4)"),
+        rate: Optional[float] = Option(None, "--rate", "-r", help="Custom hourly rate in $/hr"),
         json_output: bool = Option(False, "--json", help="Output as JSON"),
     ):
         """Calculate cost savings ($/token) for optimizations."""
@@ -795,7 +797,7 @@ if TYPER_AVAILABLE:
                 self.data_file = None
         
         handler = MockHandler()
-        results = handler.get_cost_analysis()
+        results = handler.get_cost_analysis(gpu=gpu, custom_rate=rate)
         
         if json_output:
             typer.echo(json.dumps(results, indent=2))
@@ -860,14 +862,25 @@ if TYPER_AVAILABLE:
             typer.echo(f"    → {r['recommendation']}")
     
     @app.command("tui")
-    def tui():
+    def tui(
+        simple: bool = Option(False, "--simple", "-s", help="Use simple menu instead of curses TUI"),
+    ):
         """Interactive Terminal UI for benchmark analysis."""
+        if simple:
+            _run_basic_menu()
+            return
+        
         try:
-            _run_interactive_tui()
+            from tools.cli.tui import run_tui
+            run_tui()
         except KeyboardInterrupt:
             typer.echo("\nExiting...")
         except ImportError as e:
-            typer.echo(f"TUI requires additional dependencies: {e}")
+            typer.echo(f"TUI requires curses (standard on Unix): {e}")
+            typer.echo("Falling back to basic menu...")
+            _run_basic_menu()
+        except Exception as e:
+            typer.echo(f"TUI error: {e}")
             typer.echo("Falling back to basic menu...")
             _run_basic_menu()
     

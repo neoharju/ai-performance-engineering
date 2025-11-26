@@ -121,6 +121,10 @@ class OptimizedMyTechnique(BaseBenchmark):
             bytes_transferred=self.N * 4,
             elapsed_ms=getattr(self, '_last_elapsed_ms', 1.0),
         )
+    
+    def get_optimization_goal(self):
+        # Return "speed" (default), "memory", "throughput", or "latency"
+        return "speed"
 
 def get_benchmark():
     return OptimizedMyTechnique()
@@ -130,7 +134,82 @@ if __name__ == "__main__":
     BenchmarkHarness().run(get_benchmark())
 ```
 
+### Multi-Metric Benchmarks
+
+Benchmarks can optimize for different goals:
+
+| Goal | Primary Metric | Example |
+|------|----------------|---------|
+| `speed` | Speedup (x) | Flash Attention, CUDA Graphs |
+| `memory` | Memory savings (%) | Gradient checkpointing, quantization |
+| `throughput` | Tokens/sec | Batched inference |
+| `latency` | Time to first token | Streaming generation |
+
+```python
+def get_optimization_goal(self):
+    return "memory"  # This benchmark optimizes for memory reduction
+```
+
 See `CONTRIBUTING.md` for full coding standards.
+
+---
+
+## Analysis & Visualization
+
+### Dashboard UI
+```bash
+python tools/dashboard/server.py --port 8100
+# Open http://localhost:8100
+```
+
+### Interactive TUI
+```bash
+python -m tools.cli.benchmark_cli tui          # Rich curses interface
+python -m tools.cli.benchmark_cli tui --simple # Basic menu
+```
+
+### Analysis Commands
+
+| Command | Description |
+|---------|-------------|
+| `analyze` | Multi-metric analysis with leaderboards and Pareto frontier |
+| `whatif` | Find optimizations matching your constraints |
+| `stacking` | Which optimizations combine well together |
+| `power` | Power efficiency rankings (ops/watt) |
+| `cost` | Cost savings analysis with configurable GPU pricing |
+| `scaling` | How optimizations scale with workload size |
+
+```bash
+# What-If: "What optimizations fit my 24GB VRAM and 100ms latency budget?"
+python -m tools.cli.benchmark_cli whatif --vram 24 --latency 100
+
+# Stacking: "Which optimizations can I combine?"
+python -m tools.cli.benchmark_cli stacking
+
+# Cost: "What's the $/operation impact on different GPUs?"
+python -m tools.cli.benchmark_cli cost --gpu H100
+python -m tools.cli.benchmark_cli cost --gpu A100 --top 10
+
+# Power: "What's most energy efficient?"
+python -m tools.cli.benchmark_cli power
+
+# Scaling: "How do these scale with workload size?"
+python -m tools.cli.benchmark_cli scaling
+
+# Full analysis with Pareto frontier
+python -m tools.cli.benchmark_cli analyze
+```
+
+### GPU Pricing
+
+| GPU | Rate | Use Case |
+|-----|------|----------|
+| B200 | $5.00/hr | Latest Blackwell |
+| H100 | $3.50/hr | Production inference |
+| A100 | $2.00/hr | Training/inference |
+| L40S | $1.50/hr | Inference |
+| A10G | $1.00/hr | Cost-optimized |
+| T4 | $0.50/hr | Budget inference |
 
 ---
 
