@@ -3065,6 +3065,9 @@ def _test_chapter_impl(
                                         patch['patched_file'],
                                         iterations=iterations or 3,
                                         warmup=warmup or 1,
+                                        enable_profiling=enable_profiling,
+                                        profile_type=profile_type,
+                                        profile_output_dir=profiling_output_dir / "llm_patches" if profiling_output_dir else None,
                                     )
                                     patch['rebenchmark_result'] = rebench_result
                                     
@@ -3118,6 +3121,9 @@ def _test_chapter_impl(
                                                             str(refined_path),
                                                             iterations=iterations or 3,
                                                             warmup=warmup or 1,
+                                                            enable_profiling=enable_profiling,
+                                                            profile_type=profile_type,
+                                                            profile_output_dir=profiling_output_dir / "llm_patches" if profiling_output_dir else None,
                                                         )
                                                         
                                                         if refined_result.get('success'):
@@ -3493,6 +3499,9 @@ def _rebenchmark_patched_variant(
     patched_file: str,
     iterations: int = 3,
     warmup: int = 1,
+    enable_profiling: bool = False,
+    profile_type: str = "none",
+    profile_output_dir: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """Re-benchmark a patched variant file.
     
@@ -3502,6 +3511,7 @@ def _rebenchmark_patched_variant(
             - time_ms, median_ms, min_ms, iterations (if success)
             - error: str (if failure)
             - error_type: str (if failure, e.g., 'import_error', 'runtime_error', 'cuda_error')
+            - profile_path: str (if profiling enabled)
     """
     import importlib.util
     import traceback
@@ -3552,7 +3562,7 @@ def _rebenchmark_patched_variant(
         # Extract timing from result
         timing = getattr(result, 'timing', None)
         
-        return {
+        response = {
             'success': True,
             'time_ms': timing.median_ms if timing else None,
             'median_ms': timing.median_ms if timing else None,
@@ -3560,6 +3570,41 @@ def _rebenchmark_patched_variant(
             'iterations': timing.iterations if timing else iterations,
             'patched_file': patched_file,
         }
+        
+        # Profile the patched variant if requested
+        if enable_profiling and profile_type != "none":
+            profile_path = None
+            patch_name = Path(patched_file).stem
+            
+            if profile_output_dir:
+                profile_output_dir.mkdir(parents=True, exist_ok=True)
+            
+            if profile_type in ("nsys", "nsys+ncu"):
+                try:
+                    import subprocess
+                    nsys_output = profile_output_dir / f"{patch_name}_nsys.nsys-rep" if profile_output_dir else Path(f"{patch_name}_nsys.nsys-rep")
+                    cmd = ["nsys", "profile", "-o", str(nsys_output.with_suffix('')), "--force-overwrite", "true", 
+                           "python", patched_file]
+                    subprocess.run(cmd, capture_output=True, timeout=120)
+                    if nsys_output.exists():
+                        profile_path = str(nsys_output)
+                        response['nsys_profile'] = profile_path
+                except Exception as e:
+                    logger.warning(f"Failed to profile patch with nsys: {e}")
+            
+            if profile_type in ("ncu", "nsys+ncu"):
+                try:
+                    import subprocess
+                    ncu_output = profile_output_dir / f"{patch_name}_ncu.ncu-rep" if profile_output_dir else Path(f"{patch_name}_ncu.ncu-rep")
+                    cmd = ["ncu", "-o", str(ncu_output.with_suffix('')), "--set", "full", 
+                           "python", patched_file]
+                    subprocess.run(cmd, capture_output=True, timeout=300)
+                    if ncu_output.exists():
+                        response['ncu_profile'] = str(ncu_output)
+                except Exception as e:
+                    logger.warning(f"Failed to profile patch with ncu: {e}")
+        
+        return response
     except Exception as e:
         error_str = str(e)
         error_type = 'runtime_error'

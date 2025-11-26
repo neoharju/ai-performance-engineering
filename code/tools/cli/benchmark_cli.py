@@ -650,6 +650,329 @@ if TYPER_AVAILABLE:
         # Legend
         typer.echo(f"\n  Legend: ★ = Pareto optimal  · = Regular  ○ = Multiple points")
 
+    @app.command("whatif")
+    def whatif(
+        vram: Optional[float] = Option(None, "--vram", "-v", help="Max VRAM in GB (e.g., 24)"),
+        latency: Optional[float] = Option(None, "--latency", "-l", help="Max latency in ms (e.g., 50)"),
+        memory: Optional[float] = Option(None, "--memory", "-m", help="Max memory budget in GB"),
+        json_output: bool = Option(False, "--json", help="Output as JSON"),
+    ):
+        """What-If Solver: Find optimizations that fit your constraints."""
+        from tools.dashboard.server import DashboardHandler
+        
+        class MockHandler(DashboardHandler):
+            def __init__(self):
+                self.data_file = None
+        
+        handler = MockHandler()
+        params = {}
+        if vram:
+            params['vram'] = [str(vram)]
+        if latency:
+            params['latency'] = [str(latency)]
+        if memory:
+            params['memory_budget'] = [str(memory)]
+        
+        results = handler.get_whatif_recommendations(params)
+        
+        if json_output:
+            typer.echo(json.dumps(results, indent=2))
+            return
+        
+        typer.echo("\n" + "=" * 60)
+        typer.echo("🔍 WHAT-IF CONSTRAINT SOLVER")
+        typer.echo("=" * 60)
+        
+        constraints = results.get('constraints', {})
+        active_constraints = [f"{k}={v}" for k, v in constraints.items() if v]
+        if active_constraints:
+            typer.echo(f"\nConstraints: {', '.join(active_constraints)}")
+        else:
+            typer.echo("\nNo constraints specified - showing all optimizations")
+        
+        typer.echo(f"Matching: {results.get('matching_count', 0)} / {results.get('total_benchmarks', 0)} benchmarks")
+        
+        if results.get('best_for_speed'):
+            typer.echo(f"\n🚀 Best for Speed: {results['best_for_speed']['name']} ({results['best_for_speed']['speedup']:.2f}x)")
+        if results.get('best_for_memory'):
+            mem = results['best_for_memory']
+            if mem['memory_savings_pct']:
+                typer.echo(f"💾 Best for Memory: {mem['name']} (-{mem['memory_savings_pct']:.0f}%)")
+        
+        typer.echo(f"\n📋 Top Recommendations:")
+        typer.echo("-" * 60)
+        for i, r in enumerate(results.get('recommendations', [])[:8], 1):
+            mem_str = f"-{r['memory_savings_pct']:.0f}% mem" if r['memory_savings_pct'] else ""
+            typer.echo(f"  {i}. {r['name']}: {r['speedup']:.2f}x {mem_str}")
+    
+    @app.command("stacking")
+    def stacking(
+        json_output: bool = Option(False, "--json", help="Output as JSON"),
+    ):
+        """Show which optimizations combine well together."""
+        from tools.dashboard.server import DashboardHandler
+        
+        class MockHandler(DashboardHandler):
+            def __init__(self):
+                self.data_file = None
+        
+        handler = MockHandler()
+        results = handler.get_optimization_stacking()
+        
+        if json_output:
+            typer.echo(json.dumps(results, indent=2))
+            return
+        
+        typer.echo("\n" + "=" * 60)
+        typer.echo("🔗 OPTIMIZATION STACKING GUIDE")
+        typer.echo("=" * 60)
+        
+        typer.echo("\n✅ COMPATIBLE COMBINATIONS:")
+        typer.echo("-" * 60)
+        for c in results.get('compatible_combinations', []):
+            typer.echo(f"  {c['opt1']} + {c['opt2']}")
+            typer.echo(f"    Synergy: {c['synergy']} | {c['benefit']}")
+        
+        typer.echo("\n❌ INCOMPATIBLE COMBINATIONS:")
+        typer.echo("-" * 60)
+        for c in results.get('incompatible_combinations', []):
+            typer.echo(f"  {c['opt1']} + {c['opt2']}")
+            typer.echo(f"    Reason: {c['reason']}")
+        
+        typer.echo("\n🎯 RECOMMENDED STACKS:")
+        typer.echo("-" * 60)
+        for s in results.get('recommended_stacks', []):
+            typer.echo(f"  {s['name']}:")
+            typer.echo(f"    Stack: {' → '.join(s['stack'])}")
+            typer.echo(f"    Expected: {s['expected_benefit']}")
+    
+    @app.command("power")
+    def power(
+        top_n: int = Option(10, "--top", "-n", help="Number of entries to show"),
+        json_output: bool = Option(False, "--json", help="Output as JSON"),
+    ):
+        """Analyze power efficiency (ops/watt) of benchmarks."""
+        from tools.dashboard.server import DashboardHandler
+        
+        class MockHandler(DashboardHandler):
+            def __init__(self):
+                self.data_file = None
+        
+        handler = MockHandler()
+        results = handler.get_power_efficiency()
+        
+        if json_output:
+            typer.echo(json.dumps(results, indent=2))
+            return
+        
+        typer.echo("\n" + "=" * 60)
+        typer.echo("⚡ POWER EFFICIENCY ANALYSIS")
+        typer.echo("=" * 60)
+        
+        typer.echo(f"\nBenchmarks with power data: {results.get('total_benchmarks_with_power', 0)}")
+        typer.echo(f"Average power: {results.get('avg_power_w', 0):.1f}W")
+        
+        if results.get('most_efficient'):
+            e = results['most_efficient']
+            typer.echo(f"\n🏆 Most Efficient: {e['name']}")
+            typer.echo(f"   {e['ops_per_watt']:.4f} ops/watt | {e['power_w']:.0f}W | {e['speedup']:.2f}x")
+        
+        typer.echo(f"\n📊 Efficiency Rankings (ops/watt):")
+        typer.echo("-" * 60)
+        for i, e in enumerate(results.get('efficiency_rankings', [])[:top_n], 1):
+            typer.echo(f"  {i:2}. {e['name'][:40]:<40} {e['ops_per_watt']:.4f}")
+    
+    @app.command("cost")
+    def cost(
+        top_n: int = Option(10, "--top", "-n", help="Number of entries to show"),
+        json_output: bool = Option(False, "--json", help="Output as JSON"),
+    ):
+        """Calculate cost savings ($/token) for optimizations."""
+        from tools.dashboard.server import DashboardHandler
+        
+        class MockHandler(DashboardHandler):
+            def __init__(self):
+                self.data_file = None
+        
+        handler = MockHandler()
+        results = handler.get_cost_analysis()
+        
+        if json_output:
+            typer.echo(json.dumps(results, indent=2))
+            return
+        
+        typer.echo("\n" + "=" * 60)
+        typer.echo("💰 COST ANALYSIS")
+        typer.echo("=" * 60)
+        
+        typer.echo(f"\nAssuming: {results.get('assumed_gpu', 'B200')} @ ${results.get('hourly_rate', 0):.2f}/hr")
+        
+        if results.get('highest_savings'):
+            h = results['highest_savings']
+            typer.echo(f"\n🏆 Highest Savings: {h['name']}")
+            typer.echo(f"   ${h['baseline_cost_per_m']:.4f} → ${h['optimized_cost_per_m']:.4f} per 1M ops")
+            typer.echo(f"   Savings: ${h['savings_per_m']:.4f}/1M ops ({h['savings_pct']:.0f}%)")
+        
+        typer.echo(f"\n📊 Cost Savings Rankings:")
+        typer.echo("-" * 60)
+        typer.echo(f"  {'Benchmark':<40} {'Savings':>10}")
+        typer.echo("-" * 60)
+        for c in results.get('cost_rankings', [])[:top_n]:
+            typer.echo(f"  {c['name'][:40]:<40} {c['savings_pct']:>8.0f}%")
+    
+    @app.command("scaling")
+    def scaling(
+        json_output: bool = Option(False, "--json", help="Output as JSON"),
+    ):
+        """Analyze how optimizations scale with workload size."""
+        from tools.dashboard.server import DashboardHandler
+        
+        class MockHandler(DashboardHandler):
+            def __init__(self):
+                self.data_file = None
+        
+        handler = MockHandler()
+        results = handler.get_scaling_analysis()
+        
+        if json_output:
+            typer.echo(json.dumps(results, indent=2))
+            return
+        
+        typer.echo("\n" + "=" * 60)
+        typer.echo("📈 SCALING ANALYSIS")
+        typer.echo("=" * 60)
+        
+        typer.echo(f"\n💡 Key Insight: {results.get('key_insight', '')}")
+        
+        typer.echo("\n📊 Top Optimizations by Category:")
+        typer.echo("-" * 60)
+        for cat, benchmarks in results.get('categories', {}).items():
+            if benchmarks:
+                typer.echo(f"\n  {cat.upper()}:")
+                for b in benchmarks[:3]:
+                    typer.echo(f"    • {b['name']}: {b['speedup']:.2f}x")
+        
+        typer.echo("\n🎯 Scaling Recommendations:")
+        typer.echo("-" * 60)
+        for r in results.get('scaling_recommendations', []):
+            typer.echo(f"\n  {r['factor']}:")
+            typer.echo(f"    {r['insight']}")
+            typer.echo(f"    → {r['recommendation']}")
+    
+    @app.command("tui")
+    def tui():
+        """Interactive Terminal UI for benchmark analysis."""
+        try:
+            _run_interactive_tui()
+        except KeyboardInterrupt:
+            typer.echo("\nExiting...")
+        except ImportError as e:
+            typer.echo(f"TUI requires additional dependencies: {e}")
+            typer.echo("Falling back to basic menu...")
+            _run_basic_menu()
+    
+    def _run_basic_menu():
+        """Simple menu-based interface when rich TUI isn't available."""
+        from tools.dashboard.server import DashboardHandler
+        
+        class MockHandler(DashboardHandler):
+            def __init__(self):
+                self.data_file = None
+        
+        handler = MockHandler()
+        
+        while True:
+            typer.echo("\n" + "=" * 50)
+            typer.echo("📊 BENCHMARK ANALYSIS MENU")
+            typer.echo("=" * 50)
+            typer.echo("  1. Leaderboards (speed vs memory)")
+            typer.echo("  2. Pareto Frontier")
+            typer.echo("  3. What-If Solver")
+            typer.echo("  4. Optimization Stacking")
+            typer.echo("  5. Power Efficiency")
+            typer.echo("  6. Cost Analysis")
+            typer.echo("  7. Scaling Analysis")
+            typer.echo("  8. Trade-off Chart (ASCII)")
+            typer.echo("  q. Quit")
+            typer.echo("-" * 50)
+            
+            choice = input("Select option: ").strip().lower()
+            
+            if choice == 'q':
+                break
+            elif choice == '1':
+                data = handler.get_categorized_leaderboards()
+                _print_leaderboards(data)
+            elif choice == '2':
+                data = handler.get_pareto_frontier()
+                _print_pareto(data)
+            elif choice == '3':
+                vram = input("Max VRAM (GB, or Enter to skip): ").strip()
+                latency = input("Max latency (ms, or Enter to skip): ").strip()
+                params = {}
+                if vram:
+                    params['vram'] = [vram]
+                if latency:
+                    params['latency'] = [latency]
+                data = handler.get_whatif_recommendations(params)
+                _print_whatif(data)
+            elif choice == '4':
+                data = handler.get_optimization_stacking()
+                _print_stacking(data)
+            elif choice == '5':
+                data = handler.get_power_efficiency()
+                _print_power(data)
+            elif choice == '6':
+                data = handler.get_cost_analysis()
+                _print_cost(data)
+            elif choice == '7':
+                data = handler.get_scaling_analysis()
+                _print_scaling(data)
+            elif choice == '8':
+                data = handler.get_pareto_frontier()
+                render_ascii_scatter_chart(data)
+    
+    def _run_interactive_tui():
+        """Rich interactive TUI using curses or similar."""
+        # For now, fall back to basic menu
+        _run_basic_menu()
+    
+    def _print_leaderboards(data):
+        boards = data.get('leaderboards', {})
+        for name, board in boards.items():
+            typer.echo(f"\n{board.get('title', name)}:")
+            for e in board.get('entries', [])[:5]:
+                typer.echo(f"  #{e['rank']} {e['name']}: {e['primary_metric']}")
+    
+    def _print_pareto(data):
+        typer.echo(f"\n⭐ Pareto Optimal: {data.get('pareto_count', 0)} / {data.get('total_count', 0)}")
+        for p in data.get('pareto_frontier', [])[:5]:
+            typer.echo(f"  ⭐ {p['name']}: {p['speedup']:.2f}x, {p['memory_savings']:.0f}% mem")
+    
+    def _print_whatif(data):
+        typer.echo(f"\nMatching: {data.get('matching_count', 0)} benchmarks")
+        for r in data.get('recommendations', [])[:5]:
+            typer.echo(f"  • {r['name']}: {r['speedup']:.2f}x")
+    
+    def _print_stacking(data):
+        typer.echo("\n✅ Compatible:")
+        for c in data.get('compatible_combinations', [])[:3]:
+            typer.echo(f"  {c['opt1']} + {c['opt2']}: {c['benefit']}")
+    
+    def _print_power(data):
+        typer.echo(f"\nBenchmarks with power data: {data.get('total_benchmarks_with_power', 0)}")
+        for e in data.get('efficiency_rankings', [])[:5]:
+            typer.echo(f"  {e['name']}: {e['ops_per_watt']:.4f} ops/W")
+    
+    def _print_cost(data):
+        typer.echo(f"\nAssuming ${data.get('hourly_rate', 0):.2f}/hr")
+        for c in data.get('cost_rankings', [])[:5]:
+            typer.echo(f"  {c['name']}: {c['savings_pct']:.0f}% savings")
+    
+    def _print_scaling(data):
+        for r in data.get('scaling_recommendations', [])[:3]:
+            typer.echo(f"\n{r['factor']}: {r['recommendation']}")
+
     @app.command("utils")
     def utils(
         tool: str = Option(

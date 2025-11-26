@@ -110,6 +110,20 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             self.send_json_response(self.get_constraint_recommendations())
         elif self.path == '/api/analysis/leaderboards':
             self.send_json_response(self.get_categorized_leaderboards())
+        elif self.path.startswith('/api/analysis/whatif'):
+            # Parse query params: ?vram=24&latency=50&throughput=1000
+            from urllib.parse import urlparse, parse_qs
+            parsed = urlparse(self.path)
+            params = parse_qs(parsed.query)
+            self.send_json_response(self.get_whatif_recommendations(params))
+        elif self.path == '/api/analysis/stacking':
+            self.send_json_response(self.get_optimization_stacking())
+        elif self.path == '/api/analysis/power':
+            self.send_json_response(self.get_power_efficiency())
+        elif self.path == '/api/analysis/scaling':
+            self.send_json_response(self.get_scaling_analysis())
+        elif self.path == '/api/analysis/cost':
+            self.send_json_response(self.get_cost_analysis())
         elif self.path.startswith('/api/'):
             self.send_json_response({"error": "Unknown API endpoint"})
         else:
@@ -1984,6 +1998,282 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                 'memory_count': len(memory_benchmarks),
                 'throughput_count': len(throughput_benchmarks),
             }
+        }
+    
+    def get_whatif_recommendations(self, params: dict) -> dict:
+        """What-If Constraint Solver: Find optimizations matching user constraints.
+        
+        Query params:
+            vram: Max VRAM in GB (e.g., 24)
+            latency: Max latency in ms (e.g., 50)
+            throughput: Min throughput tokens/sec (e.g., 1000)
+            memory_budget: Max memory usage in GB
+        """
+        data = self.load_benchmark_data()
+        benchmarks = data.get('benchmarks', [])
+        
+        # Parse constraints
+        max_vram_gb = float(params.get('vram', [999999])[0])
+        max_latency_ms = float(params.get('latency', [999999])[0])
+        min_throughput = float(params.get('throughput', [0])[0])
+        max_memory_gb = float(params.get('memory_budget', [999999])[0])
+        
+        # Filter benchmarks that meet constraints
+        matching = []
+        for b in benchmarks:
+            # Check memory constraint
+            opt_mem_gb = (b.get('optimized_memory_mb') or b.get('baseline_memory_mb') or 0) / 1024
+            if opt_mem_gb > max_memory_gb or opt_mem_gb > max_vram_gb:
+                continue
+            
+            # Check latency constraint
+            latency = b.get('optimized_time_ms') or b.get('baseline_time_ms') or 0
+            if latency > max_latency_ms:
+                continue
+            
+            matching.append({
+                'name': f"{b.get('chapter')}:{b.get('name')}",
+                'speedup': b.get('speedup', 1),
+                'memory_gb': opt_mem_gb,
+                'latency_ms': latency,
+                'memory_savings_pct': b.get('memory_savings_pct', 0),
+                'goal': b.get('optimization_goal', 'speed'),
+            })
+        
+        # Sort by composite score (speedup + memory savings)
+        matching.sort(key=lambda x: x['speedup'] + (x['memory_savings_pct'] or 0) / 10, reverse=True)
+        
+        return {
+            'constraints': {
+                'max_vram_gb': max_vram_gb if max_vram_gb < 999999 else None,
+                'max_latency_ms': max_latency_ms if max_latency_ms < 999999 else None,
+                'min_throughput': min_throughput if min_throughput > 0 else None,
+                'max_memory_gb': max_memory_gb if max_memory_gb < 999999 else None,
+            },
+            'matching_count': len(matching),
+            'total_benchmarks': len(benchmarks),
+            'recommendations': matching[:10],
+            'best_for_speed': max(matching, key=lambda x: x['speedup']) if matching else None,
+            'best_for_memory': max(matching, key=lambda x: x['memory_savings_pct'] or 0) if matching else None,
+        }
+    
+    def get_optimization_stacking(self) -> dict:
+        """Analyze which optimizations can be combined (stacked)."""
+        # Define optimization categories and compatibility
+        optimization_categories = {
+            'memory_format': ['quantization', 'fp8', 'fp4', 'int8', 'bf16'],
+            'attention': ['flash_attention', 'flex_attention', 'sdpa', 'paged_attention'],
+            'parallelism': ['tensor_parallel', 'pipeline_parallel', 'data_parallel', 'fsdp'],
+            'caching': ['kv_cache', 'cuda_graphs', 'compile'],
+            'memory_saving': ['checkpointing', 'activation_checkpoint', 'gradient_checkpoint'],
+            'communication': ['nccl', 'nvlink', 'nvshmem'],
+        }
+        
+        # Define compatibility matrix
+        compatible_pairs = [
+            ('flash_attention', 'quantization', 'High', '5-10x speed + 2-4x memory reduction'),
+            ('cuda_graphs', 'tensor_cores', 'High', 'Reduced launch overhead + fast math'),
+            ('kv_cache', 'quantization', 'High', 'Compressed cache for longer sequences'),
+            ('flash_attention', 'tensor_parallel', 'High', 'Scale attention across GPUs'),
+            ('compile', 'cuda_graphs', 'Medium', 'Compiled graphs for best performance'),
+            ('fsdp', 'bf16', 'High', 'Sharded training with mixed precision'),
+            ('checkpointing', 'flash_attention', 'Medium', 'Memory savings stack'),
+        ]
+        
+        incompatible_pairs = [
+            ('cuda_graphs', 'dynamic_shapes', 'Graphs require static shapes'),
+            ('checkpointing', 'cuda_graphs', 'Checkpointing needs dynamic execution'),
+            ('eager_mode', 'compile', 'Mutually exclusive execution modes'),
+        ]
+        
+        return {
+            'categories': optimization_categories,
+            'compatible_combinations': [
+                {
+                    'opt1': p[0],
+                    'opt2': p[1],
+                    'synergy': p[2],
+                    'benefit': p[3],
+                }
+                for p in compatible_pairs
+            ],
+            'incompatible_combinations': [
+                {
+                    'opt1': p[0],
+                    'opt2': p[1],
+                    'reason': p[2],
+                }
+                for p in incompatible_pairs
+            ],
+            'recommended_stacks': [
+                {
+                    'name': 'Maximum Speed (Inference)',
+                    'stack': ['flash_attention', 'cuda_graphs', 'fp8_quantization', 'tensor_cores'],
+                    'expected_benefit': '10-50x speedup',
+                },
+                {
+                    'name': 'Memory Efficient Training',
+                    'stack': ['gradient_checkpointing', 'fsdp', 'bf16', 'flash_attention'],
+                    'expected_benefit': '2-4x larger models',
+                },
+                {
+                    'name': 'Balanced (Speed + Memory)',
+                    'stack': ['flash_attention', 'kv_cache_quantization', 'compile'],
+                    'expected_benefit': '3-5x speed, 30-50% memory reduction',
+                },
+            ],
+        }
+    
+    def get_power_efficiency(self) -> dict:
+        """Analyze power efficiency (ops/watt) of benchmarks."""
+        data = self.load_benchmark_data()
+        benchmarks = data.get('benchmarks', [])
+        
+        efficiency_data = []
+        for b in benchmarks:
+            power_w = b.get('gpu_power') or 0
+            speedup = b.get('speedup', 1)
+            time_ms = b.get('optimized_time_ms') or b.get('baseline_time_ms') or 1
+            
+            # Estimate ops (using speedup as proxy for work done)
+            if power_w > 0 and time_ms > 0:
+                # ops/watt = speedup / (power * time)
+                # Higher is better
+                ops_per_watt = speedup / (power_w * time_ms / 1000)
+                efficiency_data.append({
+                    'name': f"{b.get('chapter')}:{b.get('name')}",
+                    'speedup': speedup,
+                    'power_w': power_w,
+                    'time_ms': time_ms,
+                    'ops_per_watt': round(ops_per_watt, 4),
+                    'energy_j': round(power_w * time_ms / 1000, 2),
+                })
+        
+        # Sort by efficiency
+        efficiency_data.sort(key=lambda x: x['ops_per_watt'], reverse=True)
+        
+        return {
+            'efficiency_rankings': efficiency_data[:15],
+            'most_efficient': efficiency_data[0] if efficiency_data else None,
+            'least_efficient': efficiency_data[-1] if efficiency_data else None,
+            'avg_power_w': sum(e['power_w'] for e in efficiency_data) / len(efficiency_data) if efficiency_data else 0,
+            'total_benchmarks_with_power': len(efficiency_data),
+        }
+    
+    def get_scaling_analysis(self) -> dict:
+        """Analyze how optimizations scale with workload size."""
+        data = self.load_benchmark_data()
+        benchmarks = data.get('benchmarks', [])
+        
+        # Group benchmarks by technique and look for scaling patterns
+        # This is a simplified analysis - real scaling would need multiple data points
+        
+        scaling_insights = []
+        
+        # Analyze based on benchmark names/categories
+        categories = {
+            'attention': [],
+            'matmul': [],
+            'memory': [],
+            'training': [],
+        }
+        
+        for b in benchmarks:
+            name = b.get('name', '').lower()
+            speedup = b.get('speedup', 1)
+            
+            if 'attention' in name or 'flash' in name or 'sdpa' in name:
+                categories['attention'].append({'name': f"{b.get('chapter')}:{b.get('name')}", 'speedup': speedup})
+            if 'matmul' in name or 'gemm' in name:
+                categories['matmul'].append({'name': f"{b.get('chapter')}:{b.get('name')}", 'speedup': speedup})
+            if 'memory' in name or 'kv' in name or 'cache' in name:
+                categories['memory'].append({'name': f"{b.get('chapter')}:{b.get('name')}", 'speedup': speedup})
+            if 'training' in name or 'grad' in name:
+                categories['training'].append({'name': f"{b.get('chapter')}:{b.get('name')}", 'speedup': speedup})
+        
+        scaling_recommendations = [
+            {
+                'factor': 'Sequence Length',
+                'insight': 'Flash Attention scales O(n) vs O(n²) - critical for long sequences',
+                'recommendation': 'Use Flash Attention for seq_len > 512',
+            },
+            {
+                'factor': 'Batch Size',
+                'insight': 'CUDA Graphs amortize launch overhead - better at larger batches',
+                'recommendation': 'Use CUDA Graphs for batch_size > 8',
+            },
+            {
+                'factor': 'Model Size',
+                'insight': 'Tensor Parallelism scales linearly with GPU count',
+                'recommendation': 'Use TP for models > single GPU memory',
+            },
+            {
+                'factor': 'Hidden Dimension',
+                'insight': 'Tensor Cores are most efficient at multiples of 8/16',
+                'recommendation': 'Pad dimensions to multiples of 16 for Tensor Core utilization',
+            },
+        ]
+        
+        return {
+            'categories': {k: sorted(v, key=lambda x: x['speedup'], reverse=True)[:5] for k, v in categories.items()},
+            'scaling_recommendations': scaling_recommendations,
+            'key_insight': 'Optimization impact increases with workload size - small benchmarks may underestimate real-world gains',
+        }
+    
+    def get_cost_analysis(self) -> dict:
+        """Calculate cost impact ($/token, $/hour savings)."""
+        data = self.load_benchmark_data()
+        benchmarks = data.get('benchmarks', [])
+        
+        # GPU pricing (approximate cloud rates)
+        gpu_pricing = {
+            'B200': {'hourly': 5.00, 'name': 'NVIDIA B200'},
+            'H100': {'hourly': 3.50, 'name': 'NVIDIA H100'},
+            'A100': {'hourly': 2.00, 'name': 'NVIDIA A100'},
+        }
+        
+        # Assume B200 pricing for calculations
+        hourly_rate = gpu_pricing['B200']['hourly']
+        
+        cost_analysis = []
+        for b in benchmarks:
+            speedup = b.get('speedup', 1)
+            if speedup <= 1:
+                continue
+                
+            baseline_time_ms = b.get('baseline_time_ms') or 100
+            optimized_time_ms = b.get('optimized_time_ms') or baseline_time_ms
+            
+            # Calculate cost savings
+            # Baseline: X iterations per hour
+            # Optimized: X * speedup iterations per hour
+            baseline_ops_per_hour = 3600 * 1000 / baseline_time_ms
+            optimized_ops_per_hour = 3600 * 1000 / optimized_time_ms
+            
+            # Cost per 1M operations
+            baseline_cost_per_m = (hourly_rate / baseline_ops_per_hour) * 1_000_000
+            optimized_cost_per_m = (hourly_rate / optimized_ops_per_hour) * 1_000_000
+            savings_per_m = baseline_cost_per_m - optimized_cost_per_m
+            savings_pct = (savings_per_m / baseline_cost_per_m) * 100 if baseline_cost_per_m > 0 else 0
+            
+            cost_analysis.append({
+                'name': f"{b.get('chapter')}:{b.get('name')}",
+                'speedup': speedup,
+                'baseline_cost_per_m': round(baseline_cost_per_m, 4),
+                'optimized_cost_per_m': round(optimized_cost_per_m, 4),
+                'savings_per_m': round(savings_per_m, 4),
+                'savings_pct': round(savings_pct, 1),
+            })
+        
+        cost_analysis.sort(key=lambda x: x['savings_pct'], reverse=True)
+        
+        return {
+            'gpu_pricing': gpu_pricing,
+            'assumed_gpu': 'B200',
+            'hourly_rate': hourly_rate,
+            'cost_rankings': cost_analysis[:15],
+            'highest_savings': cost_analysis[0] if cost_analysis else None,
+            'total_potential_savings': f"Up to {cost_analysis[0]['savings_pct']:.0f}% cost reduction" if cost_analysis else "N/A",
         }
     
     def log_message(self, format, *args):
