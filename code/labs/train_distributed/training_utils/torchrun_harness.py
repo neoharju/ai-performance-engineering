@@ -57,3 +57,14 @@ class TorchrunScriptBenchmark(BaseBenchmark):
     def benchmark_fn(self) -> None:
         """Required abstract method; execution happens in torchrun subprocess."""
         raise RuntimeError("TorchrunScriptBenchmark should be executed via torchrun launcher.")
+    
+    def get_input_signature(self) -> Optional[dict]:
+        """Return input signature for verification.
+        
+        Torchrun benchmarks have parameters passed via script args.
+        """
+        return {
+            "script": self._script_path.name,
+            "target_label": self._target_label or self.name,
+            "multi_gpu_required": self._multi_gpu_required,
+        }

@@ -9,6 +9,7 @@ Provides automated profiling workflows with:
 """
 
 import argparse
+import os
 import subprocess
 import json
 from pathlib import Path
@@ -74,6 +75,8 @@ class NsightAutomation:
         """
         self.output_dir = output_dir
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.last_error: Optional[str] = None
+        self.last_run: Dict[str, Any] = {}
         
         # Check availability
         self.nsys_available = self._check_command("nsys")
@@ -89,6 +92,14 @@ class NsightAutomation:
             return True
         except (subprocess.CalledProcessError, FileNotFoundError):
             return False
+
+    def _build_env(self) -> Dict[str, str]:
+        """Build environment with repo root on PYTHONPATH for child commands."""
+        env = os.environ.copy()
+        repo_root = Path(__file__).resolve().parents[2]
+        existing = env.get("PYTHONPATH", "")
+        env["PYTHONPATH"] = f"{repo_root}:{existing}" if existing else str(repo_root)
+        return env
     
     def profile_nsys(
         self,
@@ -100,6 +111,7 @@ class NsightAutomation:
         full_timeline: bool = False,
         trace_forks: bool = True,
         preset: str = "light",
+        timeout_seconds: Optional[float] = None,
     ) -> Optional[Path]:
         """Run Nsight Systems profiling.
         
@@ -122,6 +134,7 @@ class NsightAutomation:
         if not self.nsys_available:
             logger.error("Nsight Systems not available")
             return None
+        self.last_error = None
         
         output_path = self.output_dir / f"{output_name}.nsys-rep"
         
@@ -175,19 +188,48 @@ class NsightAutomation:
         nsys_cmd.extend(command)
         
         logger.info(f"Running: {' '.join(nsys_cmd)}")
+        self.last_run = {
+            "tool": "nsys",
+            "cmd": nsys_cmd,
+            "timeout_seconds": timeout_seconds,
+            "preset": preset_normalized,
+        }
         
         try:
             result = subprocess.run(
                 nsys_cmd,
                 capture_output=True,
                 text=True,
-                check=True
+                check=True,
+                timeout=timeout_seconds if timeout_seconds and timeout_seconds > 0 else None,
+                env=self._build_env(),
             )
             logger.info(f"Nsight Systems trace saved to {output_path}")
+            self.last_run.update(
+                {
+                    "stdout": result.stdout,
+                    "stderr": result.stderr,
+                    "returncode": result.returncode,
+                    "timeout_hit": False,
+                    "output": str(output_path),
+                }
+            )
             return output_path
+        except subprocess.TimeoutExpired as e:
+            self.last_error = f"Nsight Systems timed out after {timeout_seconds}s"
+            self.last_run.update(
+                {
+                    "timeout_hit": True,
+                    "stdout": e.stdout or "",
+                    "stderr": e.stderr or "",
+                }
+            )
+            logger.error(self.last_error)
+            return None
         except subprocess.CalledProcessError as e:
             # Automatic fallback: drop full_timeline categories and retry once
-            logger.error(f"Nsight Systems failed: {e.stderr}")
+            self.last_error = e.stderr or e.stdout or str(e)
+            logger.error(f"Nsight Systems failed: {self.last_error}")
             if full_timeline or preset_normalized == "full":
                 logger.warning("Retrying NSYS capture with preset=light (reduced trace categories)")
                 return self.profile_nsys(
@@ -208,6 +250,7 @@ class NsightAutomation:
         output_name: str,
         workload_type: str = 'memory_bound',
         kernel_filter: Optional[str] = None,
+        timeout_seconds: Optional[float] = None,
     ) -> Optional[Path]:
         """Run Nsight Compute profiling.
         
@@ -223,6 +266,7 @@ class NsightAutomation:
         if not self.ncu_available:
             logger.error("Nsight Compute not available")
             return None
+        self.last_error = None
         
         output_path = self.output_dir / f"{output_name}.ncu-rep"
         
@@ -238,9 +282,9 @@ class NsightAutomation:
             '--force-overwrite',
         ]
         
-        # Add custom metrics
-        for metric in metrics:
-            ncu_cmd.extend(['--metrics', metric])
+        # Add custom metrics (single --metrics invocation; ncu rejects repeated flag)
+        if metrics:
+            ncu_cmd.extend(['--metrics', ",".join(metrics)])
         
         # Add kernel filter if specified
         if kernel_filter:
@@ -249,18 +293,47 @@ class NsightAutomation:
         ncu_cmd.extend(command)
         
         logger.info(f"Running: {' '.join(ncu_cmd[:6])} ...")
+        self.last_run = {
+            "tool": "ncu",
+            "cmd": ncu_cmd,
+            "timeout_seconds": timeout_seconds,
+            "workload_type": workload_type,
+        }
         
         try:
             result = subprocess.run(
                 ncu_cmd,
                 capture_output=True,
                 text=True,
-                check=True
+                check=True,
+                timeout=timeout_seconds if timeout_seconds and timeout_seconds > 0 else None,
+                env=self._build_env(),
             )
             logger.info(f"Nsight Compute report saved to {output_path}")
+            self.last_run.update(
+                {
+                    "stdout": result.stdout,
+                    "stderr": result.stderr,
+                    "returncode": result.returncode,
+                    "timeout_hit": False,
+                    "output": str(output_path),
+                }
+            )
             return output_path
+        except subprocess.TimeoutExpired as e:
+            self.last_error = f"Nsight Compute timed out after {timeout_seconds}s"
+            self.last_run.update(
+                {
+                    "timeout_hit": True,
+                    "stdout": e.stdout or "",
+                    "stderr": e.stderr or "",
+                }
+            )
+            logger.error(self.last_error)
+            return None
         except subprocess.CalledProcessError as e:
-            logger.error(f"Nsight Compute failed: {e.stderr}")
+            self.last_error = e.stderr or e.stdout or str(e)
+            logger.error(f"Nsight Compute failed: {self.last_error}")
             return None
     
     def batch_profile(
@@ -344,6 +417,7 @@ Examples:
                         help='NSYS preset: light (default) or full (adds cuda-hw/cublas/cusolver/cusparse/cudnn and fork tracing)')
     parser.add_argument('--batch-config', type=Path,
                        help='JSON config for batch profiling')
+    parser.add_argument('--timeout-seconds', type=float, default=None, help='Max runtime before aborting capture (seconds)')
     parser.add_argument('command', nargs='*',
                        help='Command to profile (after --)')
     
@@ -385,13 +459,15 @@ Examples:
             full_timeline=args.full_timeline,
             trace_forks=args.trace_forks,
             preset=args.preset,
+            timeout_seconds=args.timeout_seconds,
         )
     elif args.tool == 'ncu':
         output = automation.profile_ncu(
             args.command,
             args.output,
             workload_type=args.workload_type,
-            kernel_filter=args.kernel_filter
+            kernel_filter=args.kernel_filter,
+            timeout_seconds=args.timeout_seconds,
         )
     else:
         parser.error("--tool required")

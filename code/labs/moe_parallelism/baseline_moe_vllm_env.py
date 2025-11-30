@@ -19,7 +19,7 @@ from labs.moe_parallelism.moe_env_presets import (  # noqa: E402
     estimate_collective,
     render_summary,
 )
-from core.common.moe_parallelism_plan import (  # noqa: E402
+from labs.moe_parallelism.plan import (  # noqa: E402
     ClusterSpec,
     ModelSpec,
     ParallelismPlan,
@@ -336,7 +336,10 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def get_benchmark() -> PlanBenchmark:
+def get_benchmark() -> "PlanBenchmark":
+    from labs.moe_parallelism.benchmarking import is_plan_available, get_skip_benchmark
+    if not is_plan_available():
+        return get_skip_benchmark()
     return BaselineMoeVllmEnvBenchmark()
 
 

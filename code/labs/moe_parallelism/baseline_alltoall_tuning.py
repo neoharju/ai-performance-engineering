@@ -14,7 +14,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from core.common.moe_parallelism_plan import (  # noqa: E402
+from labs.moe_parallelism.plan import (  # noqa: E402
     ClusterSpec,
     ModelSpec,
     ParallelismPlan,
@@ -228,7 +228,10 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def get_benchmark() -> PlanBenchmark:
+def get_benchmark() -> "PlanBenchmark":
+    from labs.moe_parallelism.benchmarking import is_plan_available, get_skip_benchmark
+    if not is_plan_available():
+        return get_skip_benchmark()
     fabric = os.environ.get("MPE_FABRIC", "nvlink").lower()
     if fabric not in VALID_FABRICS:
         fabric = "nvlink"

@@ -450,7 +450,7 @@ Implementation Steps:
 ## Integration
 
 This tool integrates with:
-- `core/common/moe_parallelism_plan.py` - Compatible data structures
+- `labs/moe_parallelism/plan.py` - Compatible data structures
 - `core/harness/hardware_capabilities.py` - Hardware detection
 - `dashboard/api/server.py` - Web UI and API
 - `ch4/training_8xb200_pipeline.py` - Training examples

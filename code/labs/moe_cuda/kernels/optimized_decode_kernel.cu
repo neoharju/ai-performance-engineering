@@ -1,20 +1,32 @@
-#include <ATen/cuda/CUDAContext.h>
-#include <torch/extension.h>
-
+// Standard C++ and CUDA headers first
 #include <cstddef>
 #include <cstdint>
 #include <cuda.h>
 #include <cuda/barrier>
 #include <cuda_runtime.h>
+#include <cudaTypedefs.h>
 
-#include "../../core/common/headers/tma_helpers.cuh"
-#ifdef prefetch
-#undef prefetch
-#endif
+// TMA helpers (must come before CUTLASS to define TMA types)
+#include "tma_helpers.cuh"
+
+// Disable CUTLASS features that have name conflicts with PyTorch headers.
+// These disables have ZERO performance impact - this kernel doesn't use:
+// - prefetch (L2 prefetching)
+// - print_latex (LaTeX debugging output)  
+// - cooperative_gemm (this is a decode kernel, not GEMM)
+#define CUTE_DISABLE_PREFETCH_OVERLOADS 1
+#define CUTE_DISABLE_PRINT_LATEX 1
+#define CUTE_DISABLE_COOPERATIVE_GEMM 1
+
+// CUTLASS/CUTE headers
 #include <cute/algorithm/copy.hpp>
 #include <cute/arch/tmem_allocator_sm100.hpp>
 #include <cute/atom/copy_traits_sm100.hpp>
 #include <cute/tensor.hpp>
+
+// PyTorch headers after CUTLASS
+#include <ATen/cuda/CUDAContext.h>
+#include <torch/extension.h>
 
 namespace {
 
@@ -24,7 +36,7 @@ using cuda_tma::load_cuTensorMapEncodeTiled;
 using cute::Int;
 
 constexpr int TILE_M = 128;
-constexpr int TILE_N = 128;
+constexpr int TILE_N = 32;  // Must be <= 32 for 128B swizzle with float32 (128B / 4B = 32 elements)
 constexpr int CHUNK_M = 32;
 constexpr int PIPELINE_STAGES = 2;
 
@@ -147,11 +159,12 @@ __global__ void tma_decode_kernel(
 
         const int row_base = row0 + chunk_idx * CHUNK_M_VALUE;
         if (threadIdx.x == 0 && threadIdx.y == 0) {
+            // TMA coordinates are (dim0, dim1) = (col, row) for row-major tensors
             cde::cp_async_bulk_tensor_2d_global_to_shared(
                 &stage_buffers[stage],
                 &in_desc,
-                row_base,
                 col0,
+                row_base,
                 bar);
             stage_tokens[stage] = cuda::device::barrier_arrive_tx(bar, 1, BYTES_PER_CHUNK);
         } else {
@@ -239,10 +252,11 @@ __global__ void tma_decode_kernel(
 #endif  // CUTE_ARCH_TCGEN05_TMEM_ENABLED
         if (can_use_tma_store) {
             if (threadIdx.x == 0 && threadIdx.y == 0) {
+                // TMA coordinates are (dim0, dim1) = (col, row) for row-major tensors
                 cde::cp_async_bulk_tensor_2d_shared_to_global(
                     &out_desc,
-                    row_base,
                     col0,
+                    row_base,
                     &stage_buffers[stage]);
                 cde::cp_async_bulk_commit_group();
                 cde::cp_async_bulk_wait_group_read<0>();
@@ -273,6 +287,8 @@ __global__ void tma_decode_kernel(
 }
 
 #endif  // CAPSTONE3_TMA_AVAILABLE
+
+}  // namespace
 
 void run_optimized_kernel(torch::Tensor input, torch::Tensor output) {
     TORCH_CHECK(input.is_cuda(), "Input must be CUDA tensor");
@@ -325,7 +341,7 @@ void run_optimized_kernel(torch::Tensor input, torch::Tensor output) {
             ld_input,
             TILE_N,
             CHUNK_M,
-            CU_TENSOR_MAP_SWIZZLE_128B),
+            CU_TENSOR_MAP_SWIZZLE_NONE),  // No swizzle - simpler and compatible with all sizes
         "Failed to encode input tensor map for TMA decode kernel");
     TORCH_CHECK(
         encode_tensor_map_silent(
@@ -337,7 +353,7 @@ void run_optimized_kernel(torch::Tensor input, torch::Tensor output) {
             ld_output,
             TILE_N,
             CHUNK_M,
-            CU_TENSOR_MAP_SWIZZLE_128B),
+            CU_TENSOR_MAP_SWIZZLE_NONE),  // No swizzle
         "Failed to encode output tensor map for TMA decode kernel");
 
     tma_decode_kernel<TILE_N, CHUNK_M, PIPELINE_STAGES><<<grid, block, 0, stream>>>(
@@ -386,7 +402,7 @@ bool supports_tma_for_shape(int rows, int cols, int ld) {
         ld,
         TILE_N,
         CHUNK_M,
-        CU_TENSOR_MAP_SWIZZLE_128B);
+        CU_TENSOR_MAP_SWIZZLE_NONE);
     cudaFree(buffer);
     return ok;
 }
@@ -398,8 +414,6 @@ bool supports_tma_for_shape(int rows, int cols, int ld) {
     return false;
 }
 #endif
-
-}  // namespace
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def(

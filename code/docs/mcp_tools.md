@@ -6,12 +6,14 @@ Complete reference for the 76 MCP tools available in the `aisp` MCP server.
 
 ```bash
 # Start the MCP server
-python -m mcp.server --serve
+python -m mcp.mcp_server --serve
 
 # Or configure via mcp.json for IDE integration
 ```
 
-**Response Format:** All tools return JSON with `application/json` content type.
+Tool descriptions returned by `tools/list` (or `python -m mcp.mcp_server --list`) now embed **Inputs**, **Outputs**, and **Expectations** so MCP clients can surface guidance on parameters, the JSON envelope that comes back, and runtime/side-effect hints.
+
+**Response Format:** All tools return a `text` content entry containing a JSON envelope.
 
 ---
 
@@ -280,4 +282,3 @@ Parameters: { "max_vram_gb": 24, "max_latency_ms": 50 }
 Tool: ask
 Parameters: { "question": "Why is my attention kernel slow on H100?" }
 ```
-

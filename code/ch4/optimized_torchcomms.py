@@ -29,14 +29,6 @@ import torch.nn as nn
 import torch.distributed as dist
 from typing import Optional, List
 
-# Require multi-GPU for torchcomms benchmarks
-GPU_COUNT = torch.cuda.device_count() if torch.cuda.is_available() else 0
-if GPU_COUNT < 2:
-    raise RuntimeError(
-        f"torchcomms benchmark requires 2+ GPUs (found {GPU_COUNT}). "
-        "This benchmark demonstrates distributed communication patterns."
-    )
-
 from core.harness.benchmark_harness import (
     BaseBenchmark,
     BenchmarkConfig,
@@ -283,6 +275,16 @@ class OptimizedTorchcommsBenchmark(BaseBenchmark):
 
 def get_benchmark() -> BaseBenchmark:
     """Factory function for harness discovery."""
+    gpu_count = torch.cuda.device_count() if torch.cuda.is_available() else 0
+    if gpu_count < 2:
+        class _SkipBenchmark(BaseBenchmark):
+            def get_config(self) -> BenchmarkConfig:
+                return BenchmarkConfig(iterations=1, warmup=5)
+            def benchmark_fn(self) -> None:
+                raise RuntimeError(
+                    f"SKIPPED: torchcomms benchmark requires 2+ GPUs (found {gpu_count})"
+                )
+        return _SkipBenchmark()
     return OptimizedTorchcommsBenchmark()
 
 

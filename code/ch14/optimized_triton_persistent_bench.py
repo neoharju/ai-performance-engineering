@@ -117,9 +117,11 @@ class OptimizedTritonPersistentBenchmark(BaseBenchmark):
         super().__init__()
         self.a = None
         self.b = None
-        self.M = 1024
-        self.N = 1024
-        self.K = 1024
+        # Match baseline dimensions for fair comparison (baseline uses batch_size=32, M=N=K=256)
+        self.batch_size = 32
+        self.M = 256
+        self.N = 256
+        self.K = 256
         self.dtype = torch.float16
         self._last = 0.0
         self.num_sms = 108  # Will be updated in setup

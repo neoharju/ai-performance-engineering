@@ -2,10 +2,10 @@
   "mcpServers": {
     "aisp": {
       "command": "python",
-      "args": ["-m", "mcp.server", "--serve"],
-      "cwd": ".",
+      "args": ["-m", "mcp.mcp_server", "--serve"],
+      "cwd": "/mnt/dev-fin-03/ai-performance-engineering/code",
       "env": {
-        "PYTHONPATH": "."
+        "PYTHONPATH": "/mnt/dev-fin-03/ai-performance-engineering/code"
       }
     }
   }

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Play, Loader2, XCircle, CheckCircle, Gauge, AlertTriangle } from 'lucide-react';
 import { Benchmark } from '@/types';
-import { runBenchmark } from '@/lib/api';
+import { runBenchmark, verifyBenchmark } from '@/lib/api';
 import { useToast } from './Toast';
 
 interface RunBenchmarkModalProps {
@@ -17,6 +17,10 @@ export function RunBenchmarkModal({ isOpen, onClose, benchmarks, onRunComplete }
   const [selected, setSelected] = useState<string>('');
   const [runBaseline, setRunBaseline] = useState(true);
   const [runOptimized, setRunOptimized] = useState(true);
+  const [mode, setMode] = useState<'run' | 'verify'>('run');
+  const [precheckOnly, setPrecheckOnly] = useState(false);
+  const [dryRun, setDryRun] = useState(false);
+  const [timeoutSeconds, setTimeoutSeconds] = useState<number | ''>('');
   const [output, setOutput] = useState<string>('');
   const [running, setRunning] = useState(false);
   const { showToast } = useToast();
@@ -46,22 +50,41 @@ export function RunBenchmarkModal({ isOpen, onClose, benchmarks, onRunComplete }
   const handleRun = async () => {
     if (!selectedBenchmark) return;
     setRunning(true);
-    setOutput(`▶️ Starting benchmark: ${selectedBenchmark.chapter}:${selectedBenchmark.name}\n`);
+    setOutput(
+      `▶️ ${mode === 'run' ? 'Starting benchmark' : 'Verifying benchmark'}: ${selectedBenchmark.chapter}:${selectedBenchmark.name}\n`
+    );
     try {
-      const result = await runBenchmark(selectedBenchmark.chapter, selectedBenchmark.name, {
-        run_baseline: runBaseline,
-        run_optimized: runOptimized,
-      });
+      const payload = {
+        precheck_only: precheckOnly,
+        dry_run: dryRun,
+        timeout_seconds: timeoutSeconds === '' ? undefined : Number(timeoutSeconds),
+      };
+      const result =
+        mode === 'run'
+          ? await runBenchmark(selectedBenchmark.chapter, selectedBenchmark.name, {
+              run_baseline: runBaseline,
+              run_optimized: runOptimized,
+              ...payload,
+            })
+          : await verifyBenchmark(selectedBenchmark.chapter, selectedBenchmark.name, payload);
 
-      if ((result as any).success) {
-        const baseline = (result as any).baseline_ms;
-        const optimized = (result as any).optimized_ms;
-        const speedup = (result as any).speedup;
-        setOutput((prev) =>
-          `${prev}\n✅ Completed successfully!\n\nBaseline: ${baseline?.toFixed?.(2) ?? 'N/A'} ms\nOptimized: ${optimized?.toFixed?.(2) ?? 'N/A'} ms\nSpeedup: ${speedup?.toFixed?.(2) ?? 'N/A'}x\n`
-        );
-        showToast('🏃 Benchmark finished', 'success');
-        onRunComplete?.();
+      if ((result as any).success || (result as any).precheck_only || (result as any).dry_run) {
+        if ((result as any).precheck_only) {
+          setOutput((prev) => `${prev}\nℹ️ Precheck only.\n${JSON.stringify(result, null, 2)}\n`);
+          showToast('Precheck completed', 'info');
+        } else if ((result as any).dry_run) {
+          setOutput((prev) => `${prev}\nℹ️ Dry run (no execution):\n${JSON.stringify(result, null, 2)}\n`);
+          showToast('Dry run completed', 'info');
+        } else {
+          const baseline = (result as any).baseline_ms;
+          const optimized = (result as any).optimized_ms;
+          const speedup = (result as any).speedup;
+          setOutput((prev) =>
+            `${prev}\n✅ Completed successfully!\n\nBaseline: ${baseline?.toFixed?.(2) ?? 'N/A'} ms\nOptimized: ${optimized?.toFixed?.(2) ?? 'N/A'} ms\nSpeedup: ${speedup?.toFixed?.(2) ?? 'N/A'}x\n`
+          );
+          showToast(mode === 'run' ? '🏃 Benchmark finished' : '✅ Verify completed', 'success');
+          onRunComplete?.();
+        }
       } else {
         const err = (result as any).error || 'Benchmark failed';
         setOutput((prev) => `${prev}\n❌ ${err}\n`);
@@ -143,6 +166,66 @@ export function RunBenchmarkModal({ isOpen, onClose, benchmarks, onRunComplete }
                     className="w-4 h-4 accent-accent-primary"
                   />
                   Run optimized
+                </label>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <label className="flex items-center gap-2 text-white/70">
+                  <input
+                    type="radio"
+                    name="benchmark-mode"
+                    value="run"
+                    checked={mode === 'run'}
+                    onChange={() => setMode('run')}
+                    className="w-4 h-4 accent-accent-primary"
+                  />
+                  Run
+                </label>
+                <label className="flex items-center gap-2 text-white/70">
+                  <input
+                    type="radio"
+                    name="benchmark-mode"
+                    value="verify"
+                    checked={mode === 'verify'}
+                    onChange={() => setMode('verify')}
+                    className="w-4 h-4 accent-accent-primary"
+                  />
+                  Verify
+                </label>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <label className="flex items-center gap-2 text-white/70">
+                  <input
+                    type="checkbox"
+                    checked={precheckOnly}
+                    onChange={(e) => setPrecheckOnly(e.target.checked)}
+                    className="w-4 h-4 accent-accent-primary"
+                  />
+                  Precheck only
+                </label>
+                <label className="flex items-center gap-2 text-white/70">
+                  <input
+                    type="checkbox"
+                    checked={dryRun}
+                    onChange={(e) => setDryRun(e.target.checked)}
+                    className="w-4 h-4 accent-accent-primary"
+                  />
+                  Dry run (no execution)
+                </label>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <label className="flex items-center gap-2 text-white/70">
+                  Timeout (s)
+                  <input
+                    type="number"
+                    min={0}
+                    className="w-28 px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white"
+                    value={timeoutSeconds}
+                    onChange={(e) => setTimeoutSeconds(e.target.value === '' ? '' : Number(e.target.value))}
+                    placeholder="300"
+                  />
                 </label>
               </div>
 

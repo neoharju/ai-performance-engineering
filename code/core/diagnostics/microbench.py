@@ -16,13 +16,19 @@ def _now() -> float:
     return time.perf_counter()
 
 
-def disk_io_test(file_size_mb: int = 256, block_size_kb: int = 1024, tmp_dir: str | None = None) -> Dict[str, Any]:
+def disk_io_test(
+    file_size_mb: int = 256,
+    block_size_kb: int = 1024,
+    tmp_dir: str | None = None,
+    timeout_seconds: float | None = None,
+) -> Dict[str, Any]:
     """Simple sequential disk write/read benchmark.
 
     Args:
         file_size_mb: Size of file to write/read.
         block_size_kb: Block size used for write/read.
         tmp_dir: Optional directory for the test file.
+        timeout_seconds: Optional max duration; returns partial progress when exceeded.
     """
     tmp_path = Path(tmp_dir) if tmp_dir else Path(tempfile.gettempdir())
     tmp_path.mkdir(parents=True, exist_ok=True)
@@ -31,6 +37,8 @@ def disk_io_test(file_size_mb: int = 256, block_size_kb: int = 1024, tmp_dir: st
     total_bytes = file_size_mb * 1024 * 1024
     block_bytes = block_size_kb * 1024
     data = os.urandom(block_bytes)
+    deadline = _now() + timeout_seconds if timeout_seconds and timeout_seconds > 0 else None
+    timeout_hit = False
 
     # Write
     start = _now()
@@ -39,14 +47,27 @@ def disk_io_test(file_size_mb: int = 256, block_size_kb: int = 1024, tmp_dir: st
         while written < total_bytes:
             f.write(data)
             written += len(data)
+            if deadline and _now() > deadline:
+                timeout_hit = True
+                break
     write_time = _now() - start
 
-    # Read
-    start = _now()
-    with open(file_path, "rb") as f:
-        while f.read(block_bytes):
-            pass
-    read_time = _now() - start
+    read_time = None
+    bytes_read = 0
+
+    # Read (only if we did not time out during writes)
+    if not timeout_hit:
+        start = _now()
+        with open(file_path, "rb") as f:
+            while True:
+                chunk = f.read(block_bytes)
+                if not chunk:
+                    break
+                bytes_read += len(chunk)
+                if deadline and _now() > deadline:
+                    timeout_hit = True
+                    break
+        read_time = _now() - start
 
     try:
         file_path.unlink()
@@ -57,14 +78,18 @@ def disk_io_test(file_size_mb: int = 256, block_size_kb: int = 1024, tmp_dir: st
         "file_size_mb": file_size_mb,
         "block_size_kb": block_size_kb,
         "write_seconds": write_time,
-        "write_gbps": (total_bytes / write_time) / 1e9 if write_time > 0 else None,
+        "write_gbps": (written / write_time) / 1e9 if write_time > 0 else None,
         "read_seconds": read_time,
-        "read_gbps": (total_bytes / read_time) / 1e9 if read_time > 0 else None,
+        "read_gbps": (bytes_read / read_time) / 1e9 if read_time and read_time > 0 else None,
+        "bytes_written": written,
+        "bytes_read": bytes_read,
         "path": str(tmp_path),
+        "timeout_seconds": timeout_seconds,
+        "timeout_hit": timeout_hit,
     }
 
 
-def pcie_bandwidth_test(size_mb: int = 256, iters: int = 10) -> Dict[str, Any]:
+def pcie_bandwidth_test(size_mb: int = 256, iters: int = 10, timeout_seconds: float | None = None) -> Dict[str, Any]:
     """Measure H2D and D2H bandwidth using torch CUDA if available."""
     try:
         import torch
@@ -79,30 +104,51 @@ def pcie_bandwidth_test(size_mb: int = 256, iters: int = 10) -> Dict[str, Any]:
     tensor_cpu = torch.empty(size_bytes // 4, dtype=torch.float32, device="cpu")
     tensor_gpu = torch.empty_like(tensor_cpu, device=device)
 
+    deadline = _now() + timeout_seconds if timeout_seconds and timeout_seconds > 0 else None
+    timeout_hit = False
+
     torch.cuda.synchronize()
     # H2D
     start = _now()
+    h2d_iters = 0
     for _ in range(iters):
         tensor_gpu.copy_(tensor_cpu, non_blocking=True)
+        h2d_iters += 1
+        if deadline and _now() > deadline:
+            timeout_hit = True
+            break
     torch.cuda.synchronize()
-    h2d_time = (_now() - start) / iters
+    elapsed_h2d = _now() - start
+    h2d_time = elapsed_h2d / max(h2d_iters, 1)
 
     # D2H
-    start = _now()
-    for _ in range(iters):
-        tensor_cpu.copy_(tensor_gpu, non_blocking=True)
-    torch.cuda.synchronize()
-    d2h_time = (_now() - start) / iters
+    d2h_time = None
+    d2h_iters = 0
+    if not timeout_hit:
+        start = _now()
+        for _ in range(iters):
+            tensor_cpu.copy_(tensor_gpu, non_blocking=True)
+            d2h_iters += 1
+            if deadline and _now() > deadline:
+                timeout_hit = True
+                break
+        torch.cuda.synchronize()
+        elapsed_d2h = _now() - start
+        d2h_time = elapsed_d2h / max(d2h_iters, 1)
 
     return {
         "size_mb": size_mb,
         "iters": iters,
-        "h2d_gbps": (size_bytes / h2d_time) / 1e9 if h2d_time > 0 else None,
-        "d2h_gbps": (size_bytes / d2h_time) / 1e9 if d2h_time > 0 else None,
+        "h2d_completed": h2d_iters,
+        "d2h_completed": d2h_iters,
+        "h2d_gbps": (size_bytes / h2d_time) / 1e9 if h2d_time and h2d_time > 0 else None,
+        "d2h_gbps": (size_bytes / d2h_time) / 1e9 if d2h_time and d2h_time > 0 else None,
+        "timeout_seconds": timeout_seconds,
+        "timeout_hit": timeout_hit,
     }
 
 
-def mem_hierarchy_test(size_mb: int = 256, stride: int = 128) -> Dict[str, Any]:
+def mem_hierarchy_test(size_mb: int = 256, stride: int = 128, timeout_seconds: float | None = None) -> Dict[str, Any]:
     """Crude stride-based bandwidth test on GPU memory."""
     try:
         import torch
@@ -126,10 +172,12 @@ def mem_hierarchy_test(size_mb: int = 256, stride: int = 128) -> Dict[str, Any]:
         "stride": stride,
         "bandwidth_gbps": (bytes_moved / elapsed) / 1e9 if elapsed > 0 else None,
         "elements": y.numel(),
+        "timeout_seconds": timeout_seconds,
+        "timeout_hit": timeout_seconds is not None and timeout_seconds > 0 and elapsed > timeout_seconds,
     }
 
 
-def tensor_core_bench(size: int = 4096, precision: str = "fp16") -> Dict[str, Any]:
+def tensor_core_bench(size: int = 4096, precision: str = "fp16", timeout_seconds: float | None = None) -> Dict[str, Any]:
     """Matmul throughput benchmark to stress tensor cores."""
     try:
         import torch
@@ -177,10 +225,12 @@ def tensor_core_bench(size: int = 4096, precision: str = "fp16") -> Dict[str, An
         "elapsed_seconds": elapsed,
         "output_shape": list(c.shape),
         "placeholder_used": placeholder_used,
+        "timeout_seconds": timeout_seconds,
+        "timeout_hit": timeout_seconds is not None and timeout_seconds > 0 and elapsed > timeout_seconds,
     }
 
 
-def sfu_bench(size: int = 64 * 1024 * 1024) -> Dict[str, Any]:
+def sfu_bench(size: int = 64 * 1024 * 1024, timeout_seconds: float | None = None) -> Dict[str, Any]:
     """SFU-heavy benchmark using sin/cos operations."""
     try:
         import torch
@@ -203,13 +253,17 @@ def sfu_bench(size: int = 64 * 1024 * 1024) -> Dict[str, Any]:
         "elapsed_seconds": elapsed,
         "gops": gops,
         "result_sample": float(y[0].item()) if y.numel() > 0 else None,
+        "timeout_seconds": timeout_seconds,
+        "timeout_hit": timeout_seconds is not None and timeout_seconds > 0 and elapsed > timeout_seconds,
     }
 
 
-def network_loopback_test(size_mb: int = 64, port: int = 50007) -> Dict[str, Any]:
+def network_loopback_test(size_mb: int = 64, port: int = 50007, timeout_seconds: float | None = None) -> Dict[str, Any]:
     """Simple loopback TCP throughput test (localhost)."""
     total_bytes = size_mb * 1024 * 1024
     payload = b"x" * 65536
+    deadline = _now() + timeout_seconds if timeout_seconds and timeout_seconds > 0 else None
+    timeout_hit = False
 
     def server():
         srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -238,6 +292,9 @@ def network_loopback_test(size_mb: int = 64, port: int = 50007) -> Dict[str, Any
     while sent < total_bytes:
         cli.sendall(payload)
         sent += len(payload)
+        if deadline and _now() > deadline:
+            timeout_hit = True
+            break
     cli.shutdown(socket.SHUT_WR)
     cli.close()
     t.join()
@@ -245,8 +302,11 @@ def network_loopback_test(size_mb: int = 64, port: int = 50007) -> Dict[str, Any
     return {
         "size_mb": size_mb,
         "elapsed_seconds": elapsed,
-        "throughput_gbps": (total_bytes / elapsed) / 1e9 if elapsed > 0 else None,
+        "bytes_sent": sent,
+        "throughput_gbps": (sent / elapsed) / 1e9 if elapsed > 0 else None,
         "notes": "Loopback TCP only; use iperf for real NIC tests",
+        "timeout_seconds": timeout_seconds,
+        "timeout_hit": timeout_hit,
     }
 
 

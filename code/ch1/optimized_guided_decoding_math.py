@@ -36,6 +36,7 @@ class OptimizedGuidedDecodingMathBenchmark(BaseBenchmark):
         super().__init__()
         # Output verification is brittle for stochastic generation; rely on performance only.
         self.skip_output_check = True
+        self.skip_input_check = True
         self.model = None
         self.input_ids = None
         self.schema = None

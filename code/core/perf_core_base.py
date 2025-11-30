@@ -25,6 +25,7 @@ from core.analysis.performance_analyzer import (
 )
 from core import profile_artifacts
 from core.compile_analysis import load_compile_analysis
+from core.discovery import get_bench_roots, discover_all_chapters
 
 CODE_ROOT = Path(__file__).resolve().parents[1]
 _HISTORY_CACHE: Dict[str, Any] = {"key": None, "runs": None, "trends": None}
@@ -33,24 +34,42 @@ _HISTORY_CACHE: Dict[str, Any] = {"key": None, "runs": None, "trends": None}
 class PerformanceCoreBase:
     """Shared performance logic without HTTP concerns."""
 
-    def __init__(self, data_file: Optional[Path] = None):
+    def __init__(self, data_file: Optional[Path] = None, bench_root: Optional[Path] = None):
         self.data_file = data_file
-        self._analyzer: Optional[PerformanceAnalyzer] = PerformanceAnalyzer(
-            lambda: load_benchmark_results(self.data_file)
+        self.bench_roots = get_bench_roots(repo_root=CODE_ROOT, bench_root=bench_root)
+        self.bench_root = self.bench_roots[0]
+        self._analyzer: Optional[PerformanceAnalyzer] = None
+        self._make_analyzer()
+
+    def _make_analyzer(self) -> None:
+        """Bind an analyzer to the current bench roots and data file."""
+        self._analyzer = PerformanceAnalyzer(
+            lambda: load_benchmark_results(self.data_file, self.bench_roots)
         )
+
+    def set_bench_root(self, bench_root: Path) -> dict:
+        """Dynamically update the benchmark root without restarting the server."""
+        new_roots = get_bench_roots(repo_root=CODE_ROOT, bench_root=bench_root)
+        self.bench_roots = new_roots
+        self.bench_root = new_roots[0]
+        self._make_analyzer()
+        _HISTORY_CACHE["key"] = None
+        _HISTORY_CACHE["runs"] = None
+        _HISTORY_CACHE["trends"] = None
+        return {"bench_root": str(self.bench_root)}
 
     @property
     def analyzer(self) -> PerformanceAnalyzer:
         if not hasattr(self, "_analyzer") or self._analyzer is None:
             data_path = getattr(self, "data_file", None)
-            self._analyzer = PerformanceAnalyzer(lambda: load_benchmark_results(data_path))
+            self._analyzer = PerformanceAnalyzer(lambda: load_benchmark_results(data_path, self.bench_roots))
         return self._analyzer
 
     # ------------------------------------------------------------------
     # Benchmark data + exports
     # ------------------------------------------------------------------
     def load_benchmark_data(self) -> dict:
-        return load_benchmark_results(self.data_file)
+        return load_benchmark_results(self.data_file, self.bench_roots)
 
     def export_benchmarks_csv(self) -> str:
         data = self.load_benchmark_data()
@@ -64,19 +83,19 @@ class PerformanceCoreBase:
     # Profiling artifact helpers
     # ------------------------------------------------------------------
     def get_flame_graph_data(self) -> dict:
-        return profile_artifacts.load_flame_graph_data(CODE_ROOT)
+        return profile_artifacts.load_flame_graph_data(self.bench_root)
 
     def get_memory_timeline(self) -> dict:
-        return profile_artifacts.load_memory_timeline(CODE_ROOT)
+        return profile_artifacts.load_memory_timeline(self.bench_root)
 
     def get_cpu_gpu_timeline(self) -> dict:
-        return profile_artifacts.load_cpu_gpu_timeline(CODE_ROOT)
+        return profile_artifacts.load_cpu_gpu_timeline(self.bench_root)
 
     def get_kernel_breakdown(self) -> dict:
         return profile_artifacts.load_kernel_breakdown(self.get_flame_graph_data())
 
     def get_hta_analysis(self) -> dict:
-        hta_data = profile_artifacts.load_hta_analysis(CODE_ROOT)
+        hta_data = profile_artifacts.load_hta_analysis(self.bench_root)
         if not hta_data.get("top_kernels"):
             kernel_data = self.get_kernel_breakdown()
             total_time = kernel_data.get("summary", {}).get("total_time_us", 0)
@@ -96,7 +115,7 @@ class PerformanceCoreBase:
 
     def get_compile_analysis(self) -> dict:
         benchmarks = self.load_benchmark_data().get("benchmarks", [])
-        return load_compile_analysis(CODE_ROOT, benchmarks)
+        return load_compile_analysis(self.bench_root, benchmarks)
 
     def get_roofline_data(self) -> dict:
         roofline_data = {
@@ -166,6 +185,15 @@ class PerformanceCoreBase:
     # ------------------------------------------------------------------
     # Benchmark discovery
     # ------------------------------------------------------------------
+    def _relative_to_bench_root(self, path: Path) -> str:
+        """Return a stable relative path against the configured benchmark roots."""
+        for root in self.bench_roots:
+            try:
+                return str(path.resolve().relative_to(root.resolve()))
+            except Exception:
+                continue
+        return str(path)
+
     def get_available_benchmarks(self) -> dict:
         available = {
             "chapters": [],
@@ -175,19 +203,16 @@ class PerformanceCoreBase:
             "total_benchmarks": 0,
         }
 
-        for ch_dir in sorted(CODE_ROOT.glob("ch[0-9]*")):
-            if ch_dir.is_dir():
-                chapter_info = self._scan_directory(ch_dir, "chapter")
-                if chapter_info["benchmarks"]:
-                    available["chapters"].append(chapter_info)
-
-        labs_dir = CODE_ROOT / "labs"
-        if labs_dir.exists():
-            for lab_dir in sorted(labs_dir.iterdir()):
-                if lab_dir.is_dir() and not lab_dir.name.startswith("."):
-                    lab_info = self._scan_directory(lab_dir, "lab")
-                    if lab_info["benchmarks"]:
-                        available["labs"].append(lab_info)
+        for dir_path in discover_all_chapters(self.bench_root, bench_roots=self.bench_roots):
+            rel = self._relative_to_bench_root(dir_path)
+            dir_type = "lab" if rel.startswith("labs/") else "chapter"
+            info = self._scan_directory(dir_path, dir_type)
+            if not info["benchmarks"]:
+                continue
+            if dir_type == "lab":
+                available["labs"].append(info)
+            else:
+                available["chapters"].append(info)
 
         available["total_chapters"] = len(available["chapters"])
         available["total_labs"] = len(available["labs"])
@@ -200,7 +225,7 @@ class PerformanceCoreBase:
     def _scan_directory(self, directory: Path, dir_type: str) -> dict:
         info = {
             "name": directory.name,
-            "path": str(directory.relative_to(CODE_ROOT)),
+            "path": self._relative_to_bench_root(directory),
             "type": dir_type,
             "benchmarks": [],
             "has_expectations": False,
@@ -225,7 +250,8 @@ class PerformanceCoreBase:
             (directory / "expectations_b200.json").exists()
             or (directory / "expectations_gb10.json").exists()
         )
-        profile_dir = CODE_ROOT / "benchmark_profiles" / directory.name
+        rel_path = Path(self._relative_to_bench_root(directory))
+        profile_dir = self.bench_root / "benchmark_profiles" / rel_path
         info["has_profiles"] = profile_dir.exists() and any(profile_dir.iterdir()) if profile_dir.exists() else False
         return info
 
@@ -240,13 +266,14 @@ class PerformanceCoreBase:
             if candidate.exists():
                 paths.append(candidate)
 
-        artifacts_dir = CODE_ROOT / "artifacts"
-        if artifacts_dir.exists():
-            paths.extend(sorted(artifacts_dir.rglob("benchmark_test_results.json")))
+        for root in self.bench_roots:
+            artifacts_dir = root / "artifacts"
+            if artifacts_dir.exists():
+                paths.extend(sorted(artifacts_dir.rglob("benchmark_test_results.json")))
 
-        root_default = CODE_ROOT / "benchmark_test_results.json"
-        if root_default.exists():
-            paths.append(root_default)
+            root_default = root / "benchmark_test_results.json"
+            if root_default.exists():
+                paths.append(root_default)
 
         # Deduplicate while preserving order
         seen = set()
@@ -315,7 +342,10 @@ class PerformanceCoreBase:
     def get_history_runs(self) -> dict:
         """Return a chronological list of benchmark runs with summary stats."""
         files = self._list_result_files()
-        key = tuple((str(p), p.stat().st_mtime) for p in files if p.exists())
+        key = (
+            tuple(str(r.resolve()) for r in self.bench_roots),
+            tuple((str(p), p.stat().st_mtime) for p in files if p.exists()),
+        )
 
         if _HISTORY_CACHE.get("key") == key and _HISTORY_CACHE.get("runs"):
             return _HISTORY_CACHE["runs"]
@@ -780,24 +810,14 @@ class PerformanceCoreBase:
         """List all available benchmark targets in chapter:example format."""
         targets = []
 
-        for ch_dir in sorted(CODE_ROOT.glob("ch*")):
-            if ch_dir.is_dir():
-                chapter = ch_dir.name
-                for baseline in ch_dir.glob("baseline_*.py"):
-                    name = baseline.stem.replace("baseline_", "")
-                    targets.append(f"{chapter}:{name}")
-                for baseline in ch_dir.glob("baseline_*.cu"):
-                    name = baseline.stem.replace("baseline_", "")
-                    targets.append(f"{chapter}:{name}")
-
-        labs_dir = CODE_ROOT / "labs"
-        if labs_dir.exists():
-            for lab_dir in sorted(labs_dir.glob("*")):
-                if lab_dir.is_dir():
-                    lab_name = f"labs/{lab_dir.name}"
-                    for baseline in lab_dir.glob("baseline_*.py"):
-                        name = baseline.stem.replace("baseline_", "")
-                        targets.append(f"{lab_name}:{name}")
+        for dir_path in discover_all_chapters(self.bench_root, bench_roots=self.bench_roots):
+            chapter = self._relative_to_bench_root(dir_path)
+            for baseline in dir_path.glob("baseline_*.py"):
+                name = baseline.stem.replace("baseline_", "")
+                targets.append(f"{chapter}:{name}")
+            for baseline in dir_path.glob("baseline_*.cu"):
+                name = baseline.stem.replace("baseline_", "")
+                targets.append(f"{chapter}:{name}")
 
         unique = sorted(set(targets))
         return {"targets": unique, "count": len(unique)}
@@ -1303,7 +1323,7 @@ class PerformanceCoreBase:
         """Energy efficiency analysis combining measured data if available."""
         from core.analysis import power_efficiency_analyzer as pea
 
-        artifacts_dir = CODE_ROOT / "artifacts"
+        artifacts_dir = self.bench_root / "artifacts"
         power_file = None
         throughput_file = None
 
@@ -1791,3 +1811,159 @@ class PerformanceCoreBase:
         for chapter in raw_data.get("results", []):
             flattened.extend(chapter.get("benchmarks", []))
         return flattened
+
+    # ------------------------------------------------------------------
+    # Deep Profile Comparison (baseline vs optimized nsys/ncu)
+    # ------------------------------------------------------------------
+    def list_deep_profile_pairs(self) -> dict:
+        """List all chapters/directories with baseline + optimized profile pairs."""
+        from core.discovery import discover_all_chapters
+        
+        pairs = []
+        
+        # Check artifacts directory
+        artifacts_dir = self.bench_root / "artifacts"
+        if artifacts_dir.exists():
+            for subdir in artifacts_dir.iterdir():
+                if subdir.is_dir():
+                    baseline_nsys = list(subdir.glob("*baseline*.nsys-rep"))
+                    optimized_nsys = list(subdir.glob("*optimized*.nsys-rep"))
+                    baseline_ncu = list(subdir.glob("*baseline*.ncu-rep"))
+                    optimized_ncu = list(subdir.glob("*optimized*.ncu-rep"))
+                    
+                    if (baseline_nsys and optimized_nsys) or (baseline_ncu and optimized_ncu):
+                        pairs.append({
+                            "chapter": subdir.name,
+                            "name": subdir.name,
+                            "path": str(subdir),
+                            "type": "artifact",
+                            "has_nsys": bool(baseline_nsys and optimized_nsys),
+                            "has_ncu": bool(baseline_ncu and optimized_ncu),
+                            "baseline_nsys": [f.name for f in baseline_nsys],
+                            "optimized_nsys": [f.name for f in optimized_nsys],
+                            "baseline_ncu": [f.name for f in baseline_ncu],
+                            "optimized_ncu": [f.name for f in optimized_ncu],
+                        })
+        
+        # Check benchmark_profiles directory
+        profiles_dir = self.bench_root / "benchmark_profiles"
+        if profiles_dir.exists():
+            for subdir in profiles_dir.iterdir():
+                if subdir.is_dir():
+                    baseline_nsys = list(subdir.glob("*baseline*.nsys-rep"))
+                    optimized_nsys = list(subdir.glob("*optimized*.nsys-rep"))
+                    
+                    if baseline_nsys and optimized_nsys:
+                        pairs.append({
+                            "chapter": subdir.name,
+                            "name": subdir.name,
+                            "path": str(subdir),
+                            "type": "profile",
+                            "has_nsys": True,
+                            "has_ncu": False,
+                        })
+        
+        # Check chapter directories
+        for dir_path in discover_all_chapters(self.bench_root, bench_roots=self.bench_roots):
+            baseline_nsys = list(dir_path.glob("*baseline*.nsys-rep"))
+            optimized_nsys = list(dir_path.glob("*optimized*.nsys-rep"))
+            
+            if baseline_nsys and optimized_nsys:
+                rel = self._relative_to_bench_root(dir_path)
+                pairs.append({
+                    "chapter": dir_path.name,
+                    "name": rel,
+                    "path": str(dir_path),
+                    "type": "chapter",
+                    "has_nsys": True,
+                    "has_ncu": bool(list(dir_path.glob("*baseline*.ncu-rep")) and list(dir_path.glob("*optimized*.ncu-rep"))),
+                })
+        
+        return {"pairs": pairs, "count": len(pairs)}
+
+    def compare_profiles(self, chapter: str) -> dict:
+        """Compare baseline vs optimized profiles for a chapter."""
+        from core import profile_insights
+        
+        # Find the chapter directory
+        chapter_dir = self._find_profile_directory(chapter)
+        
+        if not chapter_dir:
+            return {"error": f"Chapter not found: {chapter}", "chapter": chapter}
+        
+        # Get nsys comparison
+        nsys_comparison = profile_insights.compare_nsys_files(chapter_dir)
+        
+        # Get ncu comparison
+        ncu_comparison = profile_insights.compare_ncu_files(chapter_dir)
+        
+        # Generate recommendations
+        result = {
+            "chapter": chapter,
+            "path": str(chapter_dir),
+            "nsys_comparison": nsys_comparison,
+            "ncu_comparison": ncu_comparison,
+        }
+        
+        recommendations = profile_insights.generate_recommendations_from_profiles(result)
+        result["recommendations"] = recommendations
+        
+        return result
+
+    def get_profile_recommendations(self) -> dict:
+        """Get general profiling recommendations based on all available profiles."""
+        recommendations = [
+            {
+                "title": "Profile Both Versions",
+                "description": "Run nsys and ncu on both baseline and optimized code to enable comparison",
+                "impact": "Essential for understanding optimization impact",
+            },
+            {
+                "title": "Use NVTX Markers",
+                "description": "Add torch.cuda.nvtx.range() markers around key operations for clearer profiling",
+                "impact": "Better visibility into performance hotspots",
+            },
+            {
+                "title": "Check Stream Synchronization",
+                "description": "Reduce cudaDeviceSynchronize() calls in favor of stream-specific synchronization",
+                "impact": "Can significantly improve overlap and throughput",
+            },
+            {
+                "title": "Analyze Kernel Occupancy",
+                "description": "Use ncu to check SM occupancy and identify register/shared memory bottlenecks",
+                "impact": "Higher occupancy often means better GPU utilization",
+            },
+        ]
+        
+        # Check what profiles are available
+        pairs = self.list_deep_profile_pairs()
+        if pairs.get("count", 0) > 0:
+            recommendations.insert(0, {
+                "title": f"{pairs['count']} Profile Pairs Available",
+                "description": "Select a chapter to view detailed baseline vs optimized comparison",
+                "impact": "Ready for analysis",
+            })
+        
+        return {"recommendations": recommendations, "profile_count": pairs.get("count", 0)}
+
+    def _find_profile_directory(self, chapter: str) -> Optional[Path]:
+        """Find the directory containing profiles for a chapter."""
+        from core.discovery import discover_all_chapters
+        
+        # Try artifacts directory first
+        artifacts_dir = self.bench_root / "artifacts" / chapter
+        if artifacts_dir.exists():
+            return artifacts_dir
+        
+        # Try benchmark_profiles directory
+        profiles_dir = self.bench_root / "benchmark_profiles" / chapter
+        if profiles_dir.exists():
+            return profiles_dir
+        
+        # Search chapter directories
+        for dir_path in discover_all_chapters(self.bench_root, bench_roots=self.bench_roots):
+            rel = self._relative_to_bench_root(dir_path)
+            if chapter in rel or rel.endswith(chapter) or dir_path.name == chapter:
+                return dir_path
+        
+        return None

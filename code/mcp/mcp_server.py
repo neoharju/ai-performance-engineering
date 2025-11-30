@@ -6,7 +6,7 @@ Exposes PerformanceEngine functionality as MCP tools for AI chat integration.
 
 Usage:
     # Start the MCP server
-    python -m mcp.server
+    python -m mcp.mcp_server
     
     # Or use the aisp command
     aisp mcp serve
@@ -27,7 +27,7 @@ Architecture:
       HuggingFace: aisp_hf_search, aisp_hf_trending
       Cluster/Cost: aisp_cluster_slurm, aisp_cost_estimate
       Benchmark: aisp_run_benchmarks, aisp_verify_benchmarks, aisp_benchmark_targets, aisp_available_benchmarks
-      Nsight: aisp_profile_nsys, aisp_profile_ncu, aisp_nsys_summary, aisp_compare_nsys, aisp_compare_ncu
+      Nsight: aisp_profile_nsys, aisp_profile_ncu, aisp_nsys_summary, aisp_compare_nsys, aisp_compare_ncu, aisp_profile_compare
       Microbenches: aisp_test_disk, aisp_test_pcie, aisp_test_mem_hierarchy, aisp_test_tensor_core, aisp_test_sfu, aisp_test_network_loopback
       Exports: aisp_export_csv, aisp_export_pdf, aisp_export_html
       System/Analysis: aisp_system_capabilities, aisp_full_system_analysis, aisp_nsys_ncu_available
@@ -40,9 +40,12 @@ import sys
 import subprocess
 import traceback
 import time
+import threading
+import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 # Ensure repository root is on sys.path for imports (e.g., analysis.advanced_analysis)
 CODE_ROOT = Path(__file__).resolve().parent.parent
@@ -66,6 +69,128 @@ class ToolResult:
 
 
 # =============================================================================
+# DESCRIPTION ENRICHMENT HELPERS
+# =============================================================================
+
+_OUTPUT_ENVELOPE_SUMMARY = (
+    "JSON envelope with tool/status/timestamp/duration_ms, sanitized arguments + details, "
+    "result + preview + metadata, context_summary, guidance.next_steps; content is emitted as a "
+    "text (JSON string) entry."
+)
+
+# Explicit overrides for tools that have notable runtime/side effects.
+_EXPECTATION_OVERRIDES: Dict[str, str] = {
+    "aisp_run_benchmarks": "Runs the bench CLI; can take minutes and writes artifacts/logs to the repo. Slow/interactive; run aisp_status or aisp_triage first and consider precheck_only/dry_run/timeout_seconds.",
+    "aisp_verify_benchmarks": "Runs bench verify; can take minutes and writes artifacts/logs to the repo. Slow/interactive; run aisp_status or aisp_triage first and consider precheck_only/dry_run/timeout_seconds.",
+    "aisp_benchmark_report": "Generates a report from existing benchmark JSON; writes PDF/HTML to the chosen output.",
+    "aisp_benchmark_export": "Exports existing benchmark JSON to csv/markdown/json; writes to the chosen output file.",
+    "aisp_benchmark_compare_runs": "Diffs two benchmark JSON files; CPU-bound and quick, writes only if an output is specified.",
+    "aisp_profile_nsys": "Calls Nsight Systems; requires nsys installed and writes .nsys-rep into output_dir. Slow/interactive; run aisp_status or aisp_triage first. Default preset is full; set preset=light explicitly to shrink traces.",
+    "aisp_profile_ncu": "Calls Nsight Compute; requires ncu installed and writes .ncu-rep into output_dir. Slow/interactive; run aisp_status or aisp_triage first. Defaults to memory_bound metric set; opt into heavier modes explicitly.",
+    "aisp_compare_nsys": "Parses Nsight Systems reports and may traverse multiple files; allow extra runtime.",
+    "aisp_compare_ncu": "Parses Nsight Compute reports and may traverse multiple files; allow extra runtime.",
+    "aisp_profile_compare": "Generates flame graph comparison; parses NSYS reports and may traverse multiple files; allow extra runtime.",
+    "aisp_test_speed": "Runs GPU/host micro-benchmarks; stresses hardware briefly. Run aisp_status first; supports precheck_only/dry_run/timeout_seconds.",
+    "aisp_test_roofline": "Runs roofline micro-benchmark; stresses memory subsystem briefly. Run aisp_status first; supports precheck_only/dry_run/timeout_seconds.",
+    "aisp_test_disk": "Runs disk I/O micro-benchmark; writes temporary files to tmp_dir. Supports precheck_only/dry_run/timeout_seconds.",
+    "aisp_test_pcie": "Runs PCIe micro-benchmark; exercises host↔GPU transfers. Run aisp_status first; supports precheck_only/dry_run/timeout_seconds.",
+    "aisp_test_mem_hierarchy": "Runs memory hierarchy micro-benchmark; exercises GPU memory. Run aisp_status first; supports precheck_only/dry_run/timeout_seconds.",
+    "aisp_test_tensor_core": "Runs tensor core micro-benchmark; exercises GPU math units. Run aisp_status first; supports precheck_only/dry_run/timeout_seconds.",
+}
+
+def _property_implies_output(prop: str) -> bool:
+    """Detect property names that imply writing to disk."""
+    return (
+        prop == "output"
+        or prop.startswith("output_")
+        or prop.endswith("_output")
+        or prop == "output_dir"
+        or prop == "path"
+        or prop.startswith("path_")
+        or prop.endswith("_path")
+        or prop == "file"
+        or prop.startswith("file_")
+        or prop.endswith("_file")
+        or prop == "dir"
+        or prop.startswith("dir_")
+        or prop.endswith("_dir")
+        or prop == "report"
+        or prop.startswith("report_")
+        or prop.endswith("_report")
+    )
+
+
+def _repr_default(value: Any) -> str:
+    """Stringify a default value for inline descriptions."""
+    try:
+        return json.dumps(value)
+    except Exception:
+        return str(value)
+
+
+def _format_inputs_from_schema(schema: Optional[Dict[str, Any]]) -> str:
+    """Create a compact inline summary of inputs from JSON schema."""
+    schema = schema or {}
+    props = schema.get("properties") or {}
+    if not props:
+        return "none"
+    required = set(schema.get("required") or [])
+    parts: List[str] = []
+    for name, meta in props.items():
+        param_type = meta.get("type") or "any"
+        if isinstance(param_type, list):
+            param_type = "/".join(map(str, param_type))
+        details = [param_type, "required" if name in required else "optional"]
+        if "default" in meta:
+            details.append(f"default={_repr_default(meta.get('default'))}")
+        desc = meta.get("description")
+        detail_str = ", ".join(details)
+        text = f"{name} ({detail_str})"
+        if desc:
+            text += f" - {desc}"
+        parts.append(text)
+    return "; ".join(parts)
+
+
+def _expectations_from_name_and_schema(name: str, schema: Optional[Dict[str, Any]]) -> str:
+    """Build expectation hints (runtime, side effects, context toggles)."""
+    name_key = name.lower()
+    props: Dict[str, Any] = schema.get("properties") if schema else {}
+    notes: List[str] = []
+
+    override = _EXPECTATION_OVERRIDES.get(name)
+    if override:
+        notes.append(override)
+    elif "benchmark" in name_key:
+        notes.append("Runs benchmarks; can be long-running and GPU-intensive.")
+    elif "profile" in name_key:
+        notes.append("Runs profiling; may be slower and produce trace files.")
+    elif name_key.startswith("aisp_test_"):
+        notes.append("Runs micro-benchmarks; may briefly stress hardware.")
+    else:
+        notes.append("Typically fast, read-only snapshot.")
+
+    if props and any(_property_implies_output(prop) for prop in props):
+        notes.append("May write files when output/path parameters are set (creates directories when needed).")
+    if props and "include_context" in props:
+        notes.append("Use include_context/context_level to attach system snapshot to the response.")
+    return " ".join(notes)
+
+
+def _enrich_description(name: str, description: str, schema: Optional[Dict[str, Any]]) -> str:
+    """Combine base description with derived inputs/outputs/expectations."""
+    inputs_text = _format_inputs_from_schema(schema)
+    expectations = _expectations_from_name_and_schema(name, schema)
+    parts = [
+        description.strip(),
+        f"Inputs: {inputs_text}.",
+        f"Outputs: {_OUTPUT_ENVELOPE_SUMMARY}",
+        f"Expectations: {expectations}",
+    ]
+    return " ".join(parts)
+
+
+# =============================================================================
 # TOOL REGISTRY
 # =============================================================================
 
@@ -76,10 +201,12 @@ HANDLERS: Dict[str, callable] = {}
 def register_tool(name: str, description: str, schema: Dict[str, Any] = None):
     """Decorator to register an MCP tool."""
     def decorator(func):
+        tool_schema = schema or {"type": "object", "properties": {}}
+        enriched_description = _enrich_description(name, description, tool_schema)
         TOOLS[name] = ToolDefinition(
             name=name,
-            description=description,
-            input_schema=schema or {"type": "object", "properties": {}}
+            description=enriched_description,
+            input_schema=tool_schema
         )
 
         def wrapper(*args, **kwargs):
@@ -112,6 +239,26 @@ _CONTEXT_TS: Dict[str, float] = {"summary": 0.0, "full": 0.0}
 _CONTEXT_TTL_SECONDS = 60.0
 _PREVIEW_MAX_LENGTH = int(os.environ.get("AISP_MCP_PREVIEW_LIMIT", "200000") or "200000")
 _PREVIEW_MAX_ITEMS = int(os.environ.get("AISP_MCP_PREVIEW_ITEMS", "2000") or "2000")
+
+
+def _subprocess_env() -> Dict[str, str]:
+    """Build an environment with repo root on PYTHONPATH for child processes."""
+    env = os.environ.copy()
+    existing = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = f"{CODE_ROOT}:{existing}" if existing else str(CODE_ROOT)
+    return env
+
+
+def _ensure_dir(path: Path) -> None:
+    """Create parent directory for a file path (no-op if already exists)."""
+    try:
+        if path.suffix:
+            path.parent.mkdir(parents=True, exist_ok=True)
+        else:
+            path.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        # best-effort; let downstream errors surface
+        pass
 
 
 def _build_context(level: str):
@@ -170,20 +317,28 @@ _BENCH_CLI_TIMEOUT = 900  # generous default; keeps CLI invocations from hanging
 def _run_bench_cli(args: List[str], timeout: Optional[int] = _BENCH_CLI_TIMEOUT) -> Dict[str, Any]:
     """Invoke bench CLI and return stdout/stderr/exit code."""
     cmd = [sys.executable, "-m", "cli.aisp", "bench", *args]
+    env = _subprocess_env()
+    started_at = time.time()
     try:
         proc = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
             timeout=None if timeout is None or timeout <= 0 else timeout,
+            env=env,
         )
-        return {
+        result = {
             "command": " ".join(cmd),
             "returncode": proc.returncode,
             "stdout": proc.stdout,
             "stderr": proc.stderr,
             "timeout_seconds": timeout if timeout and timeout > 0 else None,
+            "timeout_hit": False,
+            "duration_seconds": round(time.time() - started_at, 2),
         }
+        if proc.returncode != 0 and not result.get("error"):
+            result["error"] = proc.stderr or proc.stdout or f"bench CLI failed with code {proc.returncode}"
+        return result
     except subprocess.TimeoutExpired as exc:
         return {
             "command": " ".join(cmd),
@@ -191,6 +346,8 @@ def _run_bench_cli(args: List[str], timeout: Optional[int] = _BENCH_CLI_TIMEOUT)
             "stdout": exc.stdout or "",
             "stderr": exc.stderr or "",
             "timeout_seconds": timeout,
+            "timeout_hit": True,
+            "duration_seconds": round(time.time() - started_at, 2),
         }
 
 
@@ -253,6 +410,30 @@ def _result_metadata(result: Any) -> Dict[str, Any]:
     return meta
 
 
+def _cuda_precheck() -> Dict[str, Any]:
+    """Lightweight CUDA/GPU availability snapshot for precheck-only flows."""
+    try:
+        import torch
+    except ImportError as exc:
+        return {
+            "ok": False,
+            "torch_available": False,
+            "cuda_available": False,
+            "reason": f"torch not available: {exc}",
+        }
+
+    cuda_ok = torch.cuda.is_available()
+    info: Dict[str, Any] = {
+        "ok": cuda_ok,
+        "torch_available": True,
+        "cuda_available": cuda_ok,
+        "device_count": torch.cuda.device_count() if cuda_ok else 0,
+    }
+    if not cuda_ok:
+        info["reason"] = "CUDA not available"
+    return info
+
+
 def _looks_like_error(result: Any, had_exception: bool = False) -> bool:
     """Heuristic to flag errors so callers can react quickly."""
     if had_exception:
@@ -263,6 +444,55 @@ def _looks_like_error(result: Any, had_exception: bool = False) -> bool:
         if result.get("success") is False:
             return True
     return False
+
+
+_JOB_EXECUTOR = ThreadPoolExecutor(max_workers=int(os.environ.get("AISP_MCP_JOB_WORKERS", "4") or "4"))
+_JOB_STORE: Dict[str, Dict[str, Any]] = {}
+_JOB_LOCK = threading.Lock()
+
+
+def _queue_job(tool_name: str, runner: Callable[[], Any], arguments: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Run a task in the background and return a ticket for polling."""
+    job_id = f"{tool_name}-{uuid.uuid4().hex[:10]}"
+    submitted_at = time.time()
+    record: Dict[str, Any] = {
+        "job_id": job_id,
+        "tool": tool_name,
+        "status": "running",
+        "submitted_at": submitted_at,
+        "arguments": _sanitize_arguments(arguments),
+    }
+    with _JOB_LOCK:
+        _JOB_STORE[job_id] = record
+
+    def _runner():
+        try:
+            result = runner()
+            status = "completed"
+            error = None
+        except Exception as exc:  # pragma: no cover - defensive
+            status = "error"
+            error = {"error": str(exc), "traceback": traceback.format_exc()}
+            result = None
+        finished_at = time.time()
+        with _JOB_LOCK:
+            record.update(
+                {
+                    "status": status,
+                    "result": result if result is not None else error,
+                    "finished_at": finished_at,
+                    "duration_ms": int((finished_at - submitted_at) * 1000),
+                }
+            )
+
+    _JOB_EXECUTOR.submit(_runner)
+    return {
+        "job_id": job_id,
+        "status": "started",
+        "tool": tool_name,
+        "submitted_at": submitted_at,
+        "note": "Use aisp_job_status with job_id to poll until completed.",
+    }
 
 
 def _context_snapshot() -> Dict[str, Any]:
@@ -335,12 +565,14 @@ def _build_enriched_tool_payload(
 def _content_from_payload(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
     Build MCP content entries for structured consumption.
-    Returns JSON format as per MCP protocol specification.
-    Clients should consume the application/json content entry from MCP responses.
+    Returns text (JSON string) to align with MCP content type expectations (text/image/audio/resource).
     """
-    return [
-        {"type": "application/json", "json": payload},
-    ]
+    try:
+        text_payload = json.dumps(payload, indent=2, default=str)
+    except Exception:
+        text_payload = str(payload)
+
+    return [{"type": "text", "text": text_payload}]
 
 
 # =============================================================================
@@ -442,7 +674,7 @@ def tool_gpu_topology_matrix(params: Dict[str, Any]) -> Dict[str, Any]:
 
 @register_tool(
     "aisp_run_benchmarks",
-    "Tags: benchmarks, run, profiling. Run benchmarks via the bench CLI with optional profiling/LLM analysis. Example: \"Run standard benchmarks and include profiling.\"",
+    "Tags: benchmarks, run, profiling. Run benchmarks via the bench CLI with optional profiling/LLM analysis. Slow/interactive; run aisp_status or aisp_triage first. Supports precheck_only/dry_run/timeout_seconds to avoid kicking off long runs by default. Example: \"Run standard benchmarks and include profiling.\"",
     {
         "type": "object",
         "properties": {
@@ -450,6 +682,21 @@ def tool_gpu_topology_matrix(params: Dict[str, Any]) -> Dict[str, Any]:
             "profile": {"type": "string"},
             "llm_analysis": {"type": "boolean"},
             "apply_patches": {"type": "boolean"},
+            "precheck_only": {
+                "type": "boolean",
+                "description": "Return prerequisites and planned command without running",
+                "default": False
+            },
+            "dry_run": {
+                "type": "boolean",
+                "description": "Describe the bench run without executing it (alias: estimate_only)",
+                "default": False
+            },
+            "timeout_seconds": {
+                "type": "integer",
+                "description": "Max runtime before returning with partial output; set 0/null for no timeout",
+                "default": 900
+            },
             "include_context": {
                 "type": "boolean",
                 "description": "Include full system context in the response",
@@ -470,8 +717,13 @@ def tool_run_benchmarks(params: Dict[str, Any]) -> Dict[str, Any]:
     profile = params.get("profile") or "minimal"
     llm_analysis = params.get("llm_analysis", True)
     apply_patches = params.get("apply_patches", False)
+    precheck_only = bool(params.get("precheck_only", False))
+    dry_run = bool(params.get("dry_run") or params.get("estimate_only"))
+    timeout_param = params.get("timeout_seconds")
+    timeout_seconds = None if timeout_param is None else int(timeout_param)
     include_context = bool(params.get("include_context", False))
     context_level = params.get("context_level", "summary")
+    cuda_check = _cuda_precheck()
 
     args: List[str] = ["run", "--profile", profile]
     for t in targets:
@@ -481,17 +733,56 @@ def tool_run_benchmarks(params: Dict[str, Any]) -> Dict[str, Any]:
     if apply_patches:
         args.append("--apply-llm-patches")
 
-    result = _run_bench_cli(args, timeout=None)
+    if precheck_only:
+        return {
+            "precheck_only": True,
+            "cuda": cuda_check,
+            "planned_args": args,
+            "note": "Run aisp_status or aisp_triage first, then rerun without precheck_only.",
+        }
+
+    if not cuda_check.get("ok", True):
+        return {
+            "error": cuda_check.get("reason", "CUDA not available"),
+            "cuda": cuda_check,
+            "planned_args": args,
+        }
+
+    if dry_run:
+        return {
+            "dry_run": True,
+            "cuda": cuda_check,
+            "command": " ".join([sys.executable, "-m", "cli.aisp", "bench", *args]),
+            "timeout_seconds": timeout_seconds if timeout_seconds and timeout_seconds > 0 else None,
+            "note": "Set dry_run=false to execute; run aisp_status first.",
+        }
+
+    result = _run_bench_cli(args, timeout=timeout_seconds if timeout_seconds and timeout_seconds > 0 else None)
     return attach_context_if_requested(result, include_context, context_level)
 
 
 @register_tool(
     "aisp_verify_benchmarks",
-    "Tags: benchmarks, verify. Verify benchmarks via the bench CLI. Example: \"Validate previous benchmark runs.\"",
+    "Tags: benchmarks, verify. Verify benchmarks via the bench CLI. Slow/interactive; run aisp_status or aisp_triage first. Supports precheck_only/dry_run/timeout_seconds to avoid surprise execution. Example: \"Validate previous benchmark runs.\"",
     {
         "type": "object",
         "properties": {
             "targets": {"type": "array", "items": {"type": "string"}},
+            "precheck_only": {
+                "type": "boolean",
+                "description": "Return prerequisites and planned command without running",
+                "default": False
+            },
+            "dry_run": {
+                "type": "boolean",
+                "description": "Describe the verify run without executing (alias: estimate_only)",
+                "default": False
+            },
+            "timeout_seconds": {
+                "type": "integer",
+                "description": "Max runtime before returning partial output; set 0/null for no timeout",
+                "default": 900
+            },
             "include_context": {
                 "type": "boolean",
                 "description": "Include full system context in the response",
@@ -509,11 +800,40 @@ def tool_run_benchmarks(params: Dict[str, Any]) -> Dict[str, Any]:
 def tool_verify_benchmarks(params: Dict[str, Any]) -> Dict[str, Any]:
     targets = params.get("targets") or []
     args: List[str] = ["verify"]
+    precheck_only = bool(params.get("precheck_only", False))
+    dry_run = bool(params.get("dry_run") or params.get("estimate_only"))
+    timeout_param = params.get("timeout_seconds")
+    timeout_seconds = None if timeout_param is None else int(timeout_param)
+    cuda_check = _cuda_precheck()
     include_context = bool(params.get("include_context", False))
     context_level = params.get("context_level", "summary")
     for t in targets:
         args.extend(["-t", t])
-    result = _run_bench_cli(args, timeout=None)
+    if precheck_only:
+        return {
+            "precheck_only": True,
+            "cuda": cuda_check,
+            "planned_args": args,
+            "note": "Run aisp_status or aisp_triage first, then rerun without precheck_only.",
+        }
+
+    if not cuda_check.get("ok", True):
+        return {
+            "error": cuda_check.get("reason", "CUDA not available"),
+            "cuda": cuda_check,
+            "planned_args": args,
+        }
+
+    if dry_run:
+        return {
+            "dry_run": True,
+            "cuda": cuda_check,
+            "command": " ".join([sys.executable, "-m", "cli.aisp", "bench", *args]),
+            "timeout_seconds": timeout_seconds if timeout_seconds and timeout_seconds > 0 else None,
+            "note": "Set dry_run=false to execute; run aisp_status first.",
+        }
+
+    result = _run_bench_cli(args, timeout=timeout_seconds if timeout_seconds and timeout_seconds > 0 else None)
     return attach_context_if_requested(result, include_context, context_level)
 
 
@@ -580,7 +900,7 @@ def tool_list_chapters(params: Dict[str, Any]) -> Dict[str, Any]:
 
 @register_tool(
     "aisp_benchmark_report",
-    "Generate PDF/HTML report from benchmark results via bench report.",
+    "Generate PDF/HTML report from benchmark results via bench report. Expects benchmark_test_results.json; outputs default to artifacts/ if not provided.",
     {"type": "object", "properties": {
         "data_file": {"type": "string", "description": "Path/URL to benchmark_test_results.json"},
         "output": {"type": "string", "description": "Output file (.pdf or .html)", "default": "report.pdf"},
@@ -591,10 +911,17 @@ def tool_list_chapters(params: Dict[str, Any]) -> Dict[str, Any]:
 )
 def tool_benchmark_report(params: Dict[str, Any]) -> Dict[str, Any]:
     args = ["report"]
-    if params.get("data_file"):
-        args.extend(["--data-file", params["data_file"]])
+    data_file = params.get("data_file")
+    if data_file:
+        if not Path(data_file).exists():
+            return {"error": f"data_file not found: {data_file}", "data_file": data_file}
+        args.extend(["--data-file", data_file])
     if params.get("output"):
         args.extend(["--output", params["output"]])
+        try:
+            _ensure_dir(Path(params["output"]))
+        except Exception:
+            pass
     if params.get("format"):
         args.extend(["--format", params["format"]])
     if params.get("title"):
@@ -606,7 +933,7 @@ def tool_benchmark_report(params: Dict[str, Any]) -> Dict[str, Any]:
 
 @register_tool(
     "aisp_benchmark_export",
-    "Export benchmark results to csv/markdown/json via bench export.",
+    "Export benchmark results to csv/markdown/json via bench export. Expects benchmark_test_results.json; outputs default to artifacts/ if not provided.",
     {"type": "object", "properties": {
         "data_file": {"type": "string", "description": "Path to benchmark_test_results.json"},
         "format": {"type": "string", "description": "csv|markdown|json", "default": "csv"},
@@ -626,8 +953,10 @@ def tool_benchmark_export(params: Dict[str, Any]) -> Dict[str, Any]:
         return {"error": f"format must be one of {sorted(valid_formats)}"}
 
     data_path = Path(data_file) if data_file else None
+    if data_path and not data_path.exists():
+        return {"error": f"data_file not found: {data_path}", "data_file": str(data_path)}
     output_path = Path(output) if output else Path(f"benchmark_export.{fmt}")
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    _ensure_dir(output_path)
 
     analyzer = PerformanceAnalyzer(lambda: load_benchmark_data(data_path))
     data = analyzer._load_data() or {}
@@ -682,6 +1011,10 @@ def tool_benchmark_compare_runs(params: Dict[str, Any]) -> Dict[str, Any]:
     candidate = params.get("candidate")
     if not baseline or not candidate:
         return {"error": "baseline and candidate benchmark files are required"}
+    if baseline and not Path(baseline).exists():
+        return {"error": f"baseline file not found: {baseline}", "baseline": baseline}
+    if candidate and not Path(candidate).exists():
+        return {"error": f"candidate file not found: {candidate}", "candidate": candidate}
 
     args = [
         "compare-runs",
@@ -1343,7 +1676,7 @@ def tool_profile_roofline(params: Dict[str, Any]) -> Dict[str, Any]:
 
 @register_tool(
     "aisp_compare_nsys",
-    "Compare baseline vs optimized Nsight Systems reports in a directory. Use after deep profiling to see deltas.",
+    "Compare baseline vs optimized Nsight Systems reports in a directory. Expects a directory containing baseline/optimized .nsys-rep files.",
     {"type": "object", "properties": {
         "profiles_dir": {
             "type": "string",
@@ -1372,7 +1705,7 @@ def tool_compare_nsys(params: Dict[str, Any]) -> Dict[str, Any]:
     context_level = params.get("context_level", "summary")
 
     if not profiles_dir.exists():
-        return {"error": f"profiles_dir not found: {profiles_dir}"}
+        return {"error": f"profiles_dir not found: {profiles_dir}", "profiles_dir": str(profiles_dir)}
 
     result = profile_insights.compare_nsys_files(profiles_dir)
     if result is None:
@@ -1382,7 +1715,7 @@ def tool_compare_nsys(params: Dict[str, Any]) -> Dict[str, Any]:
 
 @register_tool(
     "aisp_compare_ncu",
-    "Compare baseline vs optimized Nsight Compute reports in a directory. Use after deep profiling to see kernel metric deltas.",
+    "Compare baseline vs optimized Nsight Compute reports in a directory. Expects a directory containing baseline/optimized .ncu-rep files.",
     {"type": "object", "properties": {
         "profiles_dir": {
             "type": "string",
@@ -1411,7 +1744,7 @@ def tool_compare_ncu(params: Dict[str, Any]) -> Dict[str, Any]:
     context_level = params.get("context_level", "summary")
 
     if not profiles_dir.exists():
-        return {"error": f"profiles_dir not found: {profiles_dir}"}
+        return {"error": f"profiles_dir not found: {profiles_dir}", "profiles_dir": str(profiles_dir)}
 
     result = profile_insights.compare_ncu_files(profiles_dir)
     if result is None:
@@ -1420,13 +1753,104 @@ def tool_compare_ncu(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
+    "aisp_profile_compare",
+    "Tags: compare, flamegraph, baseline, optimized, speedup. Generate flame graph comparison between baseline and optimized profiles showing CUDA API distribution, kernel breakdown, and speedup metrics. Use for understanding WHY optimized code is faster. Example: \"Compare baseline vs optimized streams profiles\".",
+    {"type": "object", "properties": {
+        "chapter": {
+            "type": "string",
+            "description": "Chapter name or profile directory name (e.g., 'ch11-streams-comparison', 'ch11')"
+        },
+        "profiles_dir": {
+            "type": "string",
+            "description": "Direct path to directory containing baseline/optimized *.nsys-rep files (alternative to chapter)"
+        },
+        "output_html": {
+            "type": "string",
+            "description": "Path to write HTML flame graph comparison (optional)",
+            "default": None
+        },
+        "include_context": {
+            "type": "boolean",
+            "description": "Include full system context in the response",
+            "default": False
+        },
+        "context_level": {
+            "type": "string",
+            "description": "Context level: summary or full",
+            "enum": ["summary", "full"],
+            "default": "summary"
+        }
+    }}
+)
+def tool_profile_compare(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Generate flame graph comparison between baseline and optimized profiles."""
+    from pathlib import Path
+    from core import profile_insights
+    from core.perf_core_base import PerformanceCoreBase
+    
+    chapter = params.get("chapter")
+    profiles_dir_param = params.get("profiles_dir")
+    output_html = params.get("output_html")
+    include_context = bool(params.get("include_context", False))
+    context_level = params.get("context_level", "summary")
+    
+    # Resolve the profile directory
+    if profiles_dir_param:
+        profiles_dir = Path(profiles_dir_param)
+    elif chapter:
+        core = PerformanceCoreBase()
+        profiles_dir = core._find_profile_directory(chapter)
+        if not profiles_dir:
+            return {
+                "error": f"Chapter not found: {chapter}",
+                "hint": "Use aisp_profile_compare with profiles_dir parameter, or run 'aisp profile compare' to list available chapters",
+            }
+    else:
+        # List available profile pairs
+        core = PerformanceCoreBase()
+        pairs = core.list_deep_profile_pairs()
+        return {
+            "available_chapters": [p.get("chapter") for p in pairs.get("pairs", [])],
+            "count": pairs.get("count", 0),
+            "hint": "Provide chapter parameter to compare profiles. Example: aisp_profile_compare(chapter='ch11-streams-comparison')",
+        }
+    
+    if not profiles_dir or not profiles_dir.exists():
+        return {"error": f"profiles_dir not found: {profiles_dir}"}
+    
+    result = profile_insights.generate_flamegraph_comparison(profiles_dir)
+    if result is None:
+        return {
+            "error": "No baseline/optimized nsys profiles found",
+            "profiles_dir": str(profiles_dir),
+            "hint": "Profile both baseline and optimized with: nsys profile --stats=true -o <name> python <script>.py",
+        }
+    
+    if result.get("error"):
+        return result
+    
+    # Optionally generate HTML
+    if output_html:
+        from cli.commands.profiling import _generate_comparison_html
+        html_content = _generate_comparison_html(result, chapter or profiles_dir.name)
+        Path(output_html).write_text(html_content)
+        result["html_output"] = output_html
+    
+    # Add chapter/directory info
+    result["chapter"] = chapter
+    result["profiles_dir"] = str(profiles_dir)
+    
+    return attach_context_if_requested(result, include_context, context_level)
+
+
+@register_tool(
     "aisp_profile_nsys",
-    "Run Nsight Systems on a command. Use to capture timelines/trace for a workload. Example: \"Profile python train.py with nsys\".",
+    "Run Nsight Systems on a command. Slow/interactive; run aisp_status or aisp_triage first. Default preset is full; set preset=light explicitly to shrink traces. Supports precheck_only/dry_run/timeout_seconds/queue_only so you can opt in before firing a capture. Example: \"Profile python train.py with nsys\". Command is an argv list; output_dir defaults to artifacts/mcp-profiles.",
     {"type": "object", "properties": {
         "command": {
             "type": "array",
             "items": {"type": "string"},
-            "description": "Command to profile, e.g., ['python', 'train.py', '--batch', '32']"
+            "description": "Command to profile (argv list), e.g., ['python', 'train.py', '--batch', '32']"
         },
         "output_name": {
             "type": "string",
@@ -1435,7 +1859,7 @@ def tool_compare_ncu(params: Dict[str, Any]) -> Dict[str, Any]:
         },
         "output_dir": {
             "type": "string",
-            "description": "Directory to write profiling outputs",
+            "description": "Directory to write profiling outputs (default: artifacts/mcp-profiles)",
             "default": "artifacts/mcp-profiles"
         },
         "trace_cuda": {"type": "boolean", "default": True, "description": "Trace CUDA API calls"},
@@ -1447,7 +1871,27 @@ def tool_compare_ncu(params: Dict[str, Any]) -> Dict[str, Any]:
             "type": "string",
             "description": "NSYS preset: light (default) or full (adds cuda-hw/cublas/cusolver/cusparse/cudnn + fork tracing)",
             "enum": ["light", "full"],
-            "default": "light"
+            "default": "full"
+        },
+        "precheck_only": {
+            "type": "boolean",
+            "description": "Return prerequisites without running (nsys/ncu/cuda availability, output path)",
+            "default": False
+        },
+        "dry_run": {
+            "type": "boolean",
+            "description": "Describe the capture without executing (alias: estimate_only)",
+            "default": False
+        },
+        "queue_only": {
+            "type": "boolean",
+            "description": "Return a job ticket and run capture in background; poll with aisp_job_status",
+            "default": False
+        },
+        "timeout_seconds": {
+            "type": "integer",
+            "description": "Max runtime before returning partial output; set 0/null for no timeout",
+            "default": 300
         },
         "include_context": {
             "type": "boolean",
@@ -1476,49 +1920,103 @@ def tool_profile_nsys(params: Dict[str, Any]) -> Dict[str, Any]:
     trace_cuda = bool(params.get("trace_cuda", True))
     trace_nvtx = bool(params.get("trace_nvtx", True))
     trace_osrt = bool(params.get("trace_osrt", True))
-    full_timeline = bool(params.get("full_timeline", True))
+    full_timeline = bool(params.get("full_timeline", False))
     trace_forks = bool(params.get("trace_forks", True))
     preset = params.get("preset", "light")
+    precheck_only = bool(params.get("precheck_only", False))
+    dry_run = bool(params.get("dry_run") or params.get("estimate_only"))
+    queue_only = bool(params.get("queue_only"))
+    timeout_param = params.get("timeout_seconds")
+    timeout_seconds = None if timeout_param is None else int(timeout_param)
     include_context = bool(params.get("include_context", True))
     context_level = params.get("context_level", "summary")
 
     automation = NsightAutomation(output_dir)
-    path = automation.profile_nsys(
-        command=command,
-        output_name=output_name,
-        trace_cuda=trace_cuda,
-        trace_nvtx=trace_nvtx,
-        trace_osrt=trace_osrt,
-        full_timeline=full_timeline,
-        trace_forks=trace_forks,
-        preset=preset,
-    )
-
-    result = {
-        "success": path is not None,
-        "output": str(path) if path else None,
+    cuda_check = _cuda_precheck()
+    precheck = {
         "nsys_available": automation.nsys_available,
-        "cwd": str(output_dir),
-        "preset": preset,
-        "full_timeline": full_timeline or preset == "full",
-        "warning": "NSYS full timeline enabled: captures may run slower and produce large traces." if preset == "full" or full_timeline else None,
-        "suggestions": [
-            "Use preset=full only for deep dives; keep light for routine runs.",
-            "If disk space is low, set TMPDIR to a directory with >200MB free before capturing.",
-            "If capture fails, try preset=light to reduce trace size."
-        ],
+        "ncu_available": automation.ncu_available,
+        "cuda": cuda_check,
+        "output_dir": str(output_dir),
+        "command_provided": bool(command),
     }
-    return attach_context_if_requested(result, include_context, context_level)
+
+    if precheck_only:
+        return {
+            "precheck_only": True,
+            **precheck,
+            "note": "Prereq snapshot only; rerun without precheck_only to capture.",
+        }
+
+    if not precheck["command_provided"]:
+        return {"error": "command is required", **precheck}
+    if not automation.nsys_available:
+        return {"error": "nsys is not installed or not on PATH", **precheck}
+    if not cuda_check.get("ok", True):
+        return {"error": cuda_check.get("reason", "CUDA not available"), **precheck}
+
+    output_path = output_dir / f"{output_name}.nsys-rep"
+    if dry_run:
+        return {
+            "dry_run": True,
+            **precheck,
+            "preset": preset,
+            "full_timeline": full_timeline or preset == "full",
+            "timeout_seconds": timeout_seconds if timeout_seconds and timeout_seconds > 0 else None,
+            "planned_output": str(output_path),
+            "note": "Set dry_run=false to execute; use queue_only=true to background the run. Default preset is full; set preset=light for smaller/faster traces.",
+        }
+
+    def _execute_capture():
+        auto = NsightAutomation(output_dir)
+        path = auto.profile_nsys(
+            command=command,
+            output_name=output_name,
+            trace_cuda=trace_cuda,
+            trace_nvtx=trace_nvtx,
+            trace_osrt=trace_osrt,
+            full_timeline=full_timeline,
+            trace_forks=trace_forks,
+            preset=preset,
+            timeout_seconds=timeout_seconds if timeout_seconds and timeout_seconds > 0 else None,
+        )
+        result = {
+            "success": path is not None,
+            "output": str(path) if path else None,
+            "nsys_available": auto.nsys_available,
+            "cwd": str(output_dir),
+            "preset": preset,
+            "full_timeline": full_timeline or preset == "full",
+            "timeout_seconds": timeout_seconds if timeout_seconds and timeout_seconds > 0 else None,
+            "timeout_hit": bool(auto.last_run.get("timeout_hit")) if hasattr(auto, "last_run") else False,  # type: ignore[attr-defined]
+            "warning": "NSYS full timeline enabled by default: captures may run slower and produce large traces; set preset=light to keep it small." if preset == "full" or full_timeline else "Set preset=light to reduce trace size/runtime.",
+            "error": auto.last_error if path is None else None,
+            "run_details": getattr(auto, "last_run", {}),  # type: ignore[attr-defined]
+            "suggestions": [
+                "Use preset=full only for deep dives; keep light for routine runs.",
+                "If disk space is low, set TMPDIR to a directory with >200MB free before capturing.",
+                "If capture fails, try preset=light to reduce trace size."
+            ],
+        }
+        return attach_context_if_requested(result, include_context, context_level)
+
+    if queue_only:
+        queued = _queue_job("aisp_profile_nsys", _execute_capture, params)
+        queued["note"] = "Background capture started; poll with aisp_job_status using job_id."
+        queued["preset"] = preset
+        return queued
+
+    return _execute_capture()
 
 
 @register_tool(
     "aisp_profile_ncu",
-    "Run Nsight Compute on a command. Use to capture kernel metrics. Example: \"Profile python train.py with ncu\".",
+    "Run Nsight Compute on a command. Slow/interactive; run aisp_status or aisp_triage first. Defaults to lightest metric set; opt into heavier modes explicitly. Supports precheck_only/dry_run/timeout_seconds/queue_only so you can opt in before firing a capture. Example: \"Profile python train.py with ncu\". Command is an argv list; output_dir defaults to artifacts/mcp-profiles.",
     {"type": "object", "properties": {
         "command": {
             "type": "array",
             "items": {"type": "string"},
-            "description": "Command to profile, e.g., ['python', 'train.py', '--batch', '32']"
+            "description": "Command to profile (argv list), e.g., ['python', 'train.py', '--batch', '32']"
         },
         "output_name": {
             "type": "string",
@@ -1527,7 +2025,7 @@ def tool_profile_nsys(params: Dict[str, Any]) -> Dict[str, Any]:
         },
         "output_dir": {
             "type": "string",
-            "description": "Directory to write profiling outputs",
+            "description": "Directory to write profiling outputs (default: artifacts/mcp-profiles)",
             "default": "artifacts/mcp-profiles"
         },
         "workload_type": {
@@ -1538,6 +2036,26 @@ def tool_profile_nsys(params: Dict[str, Any]) -> Dict[str, Any]:
         "kernel_filter": {
             "type": "string",
             "description": "Optional kernel name filter (regex)"
+        },
+        "precheck_only": {
+            "type": "boolean",
+            "description": "Return prerequisites without running (nsys/ncu/cuda availability, output path)",
+            "default": False
+        },
+        "dry_run": {
+            "type": "boolean",
+            "description": "Describe the capture without executing (alias: estimate_only)",
+            "default": False
+        },
+        "queue_only": {
+            "type": "boolean",
+            "description": "Return a job ticket and run capture in background; poll with aisp_job_status",
+            "default": False
+        },
+        "timeout_seconds": {
+            "type": "integer",
+            "description": "Max runtime before returning partial output; set 0/null for no timeout",
+            "default": 300
         },
         "include_context": {
             "type": "boolean",
@@ -1565,30 +2083,85 @@ def tool_profile_ncu(params: Dict[str, Any]) -> Dict[str, Any]:
     output_dir = Path(params.get("output_dir", "artifacts/mcp-profiles"))
     workload_type = params.get("workload_type", "memory_bound")
     kernel_filter = params.get("kernel_filter")
+    precheck_only = bool(params.get("precheck_only", False))
+    dry_run = bool(params.get("dry_run") or params.get("estimate_only"))
+    queue_only = bool(params.get("queue_only"))
+    timeout_param = params.get("timeout_seconds")
+    timeout_seconds = None if timeout_param is None else int(timeout_param)
     include_context = bool(params.get("include_context", True))
     context_level = params.get("context_level", "summary")
 
     automation = NsightAutomation(output_dir)
-    path = automation.profile_ncu(
-        command=command,
-        output_name=output_name,
-        workload_type=workload_type,
-        kernel_filter=kernel_filter,
-    )
-
-    result = {
-        "success": path is not None,
-        "output": str(path) if path else None,
-        "workload_type": workload_type,
+    cuda_check = _cuda_precheck()
+    precheck = {
+        "nsys_available": automation.nsys_available,
         "ncu_available": automation.ncu_available,
-        "cwd": str(output_dir),
+        "cuda": cuda_check,
+        "output_dir": str(output_dir),
+        "command_provided": bool(command),
     }
-    return attach_context_if_requested(result, include_context, context_level)
+
+    if precheck_only:
+        return {
+            "precheck_only": True,
+            **precheck,
+            "note": "Prereq snapshot only; rerun without precheck_only to capture.",
+        }
+
+    if not precheck["command_provided"]:
+        return {"error": "command is required", **precheck}
+    if not automation.ncu_available:
+        return {"error": "ncu is not installed or not on PATH", **precheck}
+    if not cuda_check.get("ok", True):
+        return {"error": cuda_check.get("reason", "CUDA not available"), **precheck}
+
+    output_path = output_dir / f"{output_name}.ncu-rep"
+    if dry_run:
+        return {
+            "dry_run": True,
+            **precheck,
+            "workload_type": workload_type,
+            "kernel_filter": kernel_filter,
+            "timeout_seconds": timeout_seconds if timeout_seconds and timeout_seconds > 0 else None,
+            "planned_output": str(output_path),
+            "note": "Set dry_run=false to execute; use queue_only=true to background the run.",
+        }
+
+    def _execute_capture():
+        auto = NsightAutomation(output_dir)
+        path = auto.profile_ncu(
+            command=command,
+            output_name=output_name,
+            workload_type=workload_type,
+            kernel_filter=kernel_filter,
+            timeout_seconds=timeout_seconds if timeout_seconds and timeout_seconds > 0 else None,
+        )
+
+        result = {
+            "success": path is not None,
+            "output": str(path) if path else None,
+            "workload_type": workload_type,
+            "ncu_available": auto.ncu_available,
+            "cwd": str(output_dir),
+            "timeout_seconds": timeout_seconds if timeout_seconds and timeout_seconds > 0 else None,
+            "timeout_hit": bool(auto.last_run.get("timeout_hit")) if hasattr(auto, "last_run") else False,  # type: ignore[attr-defined]
+            "error": auto.last_error if path is None else None,
+            "run_details": getattr(auto, "last_run", {}),  # type: ignore[attr-defined]
+        }
+        return attach_context_if_requested(result, include_context, context_level)
+
+    if queue_only:
+        queued = _queue_job("aisp_profile_ncu", _execute_capture, params)
+        queued["note"] = "Background capture started; poll with aisp_job_status using job_id."
+        queued["workload_type"] = workload_type
+        return queued
+
+    return _execute_capture()
 
 
 @register_tool(
     "aisp_nsys_summary",
-    "Summarize an existing Nsight Systems report (.nsys-rep or CSV). Use when you already captured a trace and want key metrics.",
+    "Summarize an existing Nsight Systems report (.nsys-rep or CSV). Expects report_path to an existing file you already captured.",
     {"type": "object", "properties": {
         "report_path": {
             "type": "string",
@@ -1621,7 +2194,7 @@ def tool_nsys_summary(params: Dict[str, Any]) -> Dict[str, Any]:
 
     path = Path(report_path)
     if not path.exists():
-        return {"error": f"report_path not found: {path}"}
+        return {"error": f"report_path not found: {path}", "report_path": str(path)}
 
     try:
         metrics = harvest(path)
@@ -1745,12 +2318,27 @@ def tool_export_html(params: Dict[str, Any]) -> Dict[str, Any]:
 
 @register_tool(
     "aisp_test_speed",
-    "Run speed tests on the system. Use for quick performance sanity checks. Example: \"Quickly benchmark host/GPU speed.\"",
+    "Run speed tests on the system. Run aisp_status or aisp_triage first; supports precheck_only/dry_run/timeout_seconds so you can opt in before executing. Example: \"Quickly benchmark host/GPU speed.\"",
     {"type": "object", "properties": {
         "gemm_size": {"type": "integer", "description": "GEMM size", "default": 512},
         "precision": {"type": "string", "description": "Precision (fp16/bf16/tf32/fp32/fp8)", "default": "fp16"},
         "mem_size_mb": {"type": "integer", "description": "Memory test size MB", "default": 16},
         "mem_stride": {"type": "integer", "description": "Memory stride bytes", "default": 128},
+        "precheck_only": {
+            "type": "boolean",
+            "description": "Return prerequisites and planned command without running",
+            "default": False
+        },
+        "dry_run": {
+            "type": "boolean",
+            "description": "Describe the bench invocation without executing (alias: estimate_only)",
+            "default": False
+        },
+        "timeout_seconds": {
+            "type": "integer",
+            "description": "Max runtime before returning partial output; set 0/null for no timeout",
+            "default": 300
+        },
         "include_context": {
             "type": "boolean",
             "description": "Include full system context in the response",
@@ -1766,6 +2354,11 @@ def tool_export_html(params: Dict[str, Any]) -> Dict[str, Any]:
 )
 def tool_test_speed(params: Dict[str, Any]) -> Dict[str, Any]:
     """Run speed tests."""
+    precheck_only = bool(params.get("precheck_only", False))
+    dry_run = bool(params.get("dry_run") or params.get("estimate_only"))
+    timeout_param = params.get("timeout_seconds")
+    timeout_seconds = None if timeout_param is None else int(timeout_param)
+    cuda_check = _cuda_precheck()
     args = [
         "test", "speed",
         "--type", "all",
@@ -1776,117 +2369,405 @@ def tool_test_speed(params: Dict[str, Any]) -> Dict[str, Any]:
     ]
     include_context = bool(params.get("include_context", False))
     context_level = params.get("context_level", "summary")
-    result = _run_bench_cli(args)
+    if precheck_only:
+        return {
+            "precheck_only": True,
+            "cuda": cuda_check,
+            "planned_args": args,
+            "note": "Run aisp_status or aisp_triage first, then rerun without precheck_only.",
+        }
+
+    if not cuda_check.get("ok", True):
+        return {
+            "error": cuda_check.get("reason", "CUDA not available"),
+            "cuda": cuda_check,
+            "planned_args": args,
+        }
+
+    if dry_run:
+        return {
+            "dry_run": True,
+            "cuda": cuda_check,
+            "command": " ".join([sys.executable, "-m", "cli.aisp", "bench", *args]),
+            "timeout_seconds": timeout_seconds if timeout_seconds and timeout_seconds > 0 else None,
+            "note": "Set dry_run=false to execute; run aisp_status first.",
+        }
+
+    result = _run_bench_cli(args, timeout=timeout_seconds if timeout_seconds and timeout_seconds > 0 else None)
     return attach_context_if_requested(result, include_context, context_level)
 
 
 @register_tool(
     "aisp_test_roofline",
-    "Stride sweep ASCII roofline for memory (bench test roofline).",
+    "Stride sweep ASCII roofline for memory (bench test roofline). Run aisp_status first; supports precheck_only/dry_run/timeout_seconds to keep this opt-in.",
     {"type": "object", "properties": {
         "size_mb": {"type": "integer", "description": "Buffer size MB", "default": 32},
         "strides": {"type": "array", "items": {"type": "integer"}, "description": "Stride values"},
+        "precheck_only": {
+            "type": "boolean",
+            "description": "Return prerequisites and planned command without running",
+            "default": False
+        },
+        "dry_run": {
+            "type": "boolean",
+            "description": "Describe the bench invocation without executing (alias: estimate_only)",
+            "default": False
+        },
+        "timeout_seconds": {
+            "type": "integer",
+            "description": "Max runtime before returning partial output; set 0/null for no timeout",
+            "default": 300
+        },
     }}
 )
 def tool_test_roofline(params: Dict[str, Any]) -> Dict[str, Any]:
     args: List[str] = ["test", "roofline", "--size-mb", str(params.get("size_mb", 32))]
+    precheck_only = bool(params.get("precheck_only", False))
+    dry_run = bool(params.get("dry_run") or params.get("estimate_only"))
+    timeout_param = params.get("timeout_seconds")
+    timeout_seconds = None if timeout_param is None else int(timeout_param)
+    cuda_check = _cuda_precheck()
     for s in params.get("strides") or []:
         args.extend(["--stride", str(s)])
-    return _run_bench_cli(args)
+    if precheck_only:
+        return {
+            "precheck_only": True,
+            "cuda": cuda_check,
+            "planned_args": args,
+            "note": "Run aisp_status or aisp_triage first, then rerun without precheck_only.",
+        }
+    if not cuda_check.get("ok", True):
+        return {
+            "error": cuda_check.get("reason", "CUDA not available"),
+            "cuda": cuda_check,
+            "planned_args": args,
+        }
+    if dry_run:
+        return {
+            "dry_run": True,
+            "cuda": cuda_check,
+            "command": " ".join([sys.executable, "-m", "cli.aisp", "bench", *args]),
+            "timeout_seconds": timeout_seconds if timeout_seconds and timeout_seconds > 0 else None,
+            "note": "Set dry_run=false to execute; run aisp_status first.",
+        }
+    return _run_bench_cli(args, timeout=timeout_seconds if timeout_seconds and timeout_seconds > 0 else None)
 
 @register_tool(
     "aisp_test_disk",
-    "Disk I/O benchmark (sequential). Use to gauge disk throughput.",
+    "Disk I/O benchmark (sequential). Supports precheck_only/dry_run/timeout_seconds; optional tmp_dir will be created if missing.",
     {"type": "object", "properties": {
         "file_size_mb": {"type": "integer", "default": 256},
         "block_size_kb": {"type": "integer", "default": 1024},
-        "tmp_dir": {"type": "string"}
+        "tmp_dir": {"type": "string"},
+        "precheck_only": {
+            "type": "boolean",
+            "description": "Return prerequisites and paths without running",
+            "default": False
+        },
+        "dry_run": {
+            "type": "boolean",
+            "description": "Describe the disk test without executing (alias: estimate_only)",
+            "default": False
+        },
+        "timeout_seconds": {
+            "type": "integer",
+            "description": "Max runtime before returning partial output; set 0/null for no timeout",
+            "default": 120
+        },
     }}
 )
 def tool_test_disk(params: Dict[str, Any]) -> Dict[str, Any]:
     from core.diagnostics import microbench
+    precheck_only = bool(params.get("precheck_only", False))
+    dry_run = bool(params.get("dry_run") or params.get("estimate_only"))
+    timeout_param = params.get("timeout_seconds")
+    timeout_seconds = None if timeout_param is None else int(timeout_param)
+    tmp_dir = params.get("tmp_dir")
+    tmp_path = Path(tmp_dir) if tmp_dir else None
+    precheck = {
+        "tmp_dir": str(tmp_path) if tmp_path else None,
+        "exists": tmp_path.exists() if tmp_path else True,
+        "writable": os.access(tmp_path, os.W_OK) if tmp_path and tmp_path.exists() else None,
+    }
+    if precheck_only:
+        return {
+            "precheck_only": True,
+            "disk": precheck,
+            "note": "No data written; rerun without precheck_only to execute.",
+        }
+    if dry_run:
+        return {
+            "dry_run": True,
+            "disk": precheck,
+            "timeout_seconds": timeout_seconds if timeout_seconds and timeout_seconds > 0 else None,
+            "note": "No data written; rerun with dry_run=false to execute.",
+        }
+    if tmp_dir:
+        try:
+            _ensure_dir(Path(tmp_dir))
+        except Exception:
+            return {"error": f"failed to create tmp_dir: {tmp_dir}", "tmp_dir": tmp_dir}
     return microbench.disk_io_test(
         file_size_mb=int(params.get("file_size_mb", 256)),
         block_size_kb=int(params.get("block_size_kb", 1024)),
-        tmp_dir=params.get("tmp_dir"),
+        tmp_dir=tmp_dir,
+        timeout_seconds=timeout_seconds if timeout_seconds and timeout_seconds > 0 else None,
     )
 
 
 @register_tool(
     "aisp_test_pcie",
-    "PCIe H2D/D2H bandwidth benchmark using CUDA (torch).",
+    "PCIe H2D/D2H bandwidth benchmark using CUDA (torch). Run aisp_status first; supports precheck_only/dry_run/timeout_seconds so you can opt in to execution.",
     {"type": "object", "properties": {
         "size_mb": {"type": "integer", "default": 256},
-        "iters": {"type": "integer", "default": 10}
+        "iters": {"type": "integer", "default": 10},
+        "precheck_only": {
+            "type": "boolean",
+            "description": "Return prerequisites without running",
+            "default": False
+        },
+        "dry_run": {
+            "type": "boolean",
+            "description": "Describe the PCIe test without executing (alias: estimate_only)",
+            "default": False
+        },
+        "timeout_seconds": {
+            "type": "integer",
+            "description": "Max runtime before returning partial output; set 0/null for no timeout",
+            "default": 120
+        },
     }}
 )
 def tool_test_pcie(params: Dict[str, Any]) -> Dict[str, Any]:
     from core.diagnostics import microbench
+    precheck_only = bool(params.get("precheck_only", False))
+    dry_run = bool(params.get("dry_run") or params.get("estimate_only"))
+    timeout_param = params.get("timeout_seconds")
+    timeout_seconds = None if timeout_param is None else int(timeout_param)
+    cuda_check = _cuda_precheck()
+    if precheck_only:
+        return {
+            "precheck_only": True,
+            "cuda": cuda_check,
+            "note": "Run aisp_status or aisp_triage first, then rerun without precheck_only.",
+        }
+    if not cuda_check.get("ok", True):
+        return {"error": cuda_check.get("reason", "CUDA not available"), "cuda": cuda_check}
+    if dry_run:
+        return {
+            "dry_run": True,
+            "cuda": cuda_check,
+            "params": {"size_mb": params.get("size_mb", 256), "iters": params.get("iters", 10)},
+            "timeout_seconds": timeout_seconds if timeout_seconds and timeout_seconds > 0 else None,
+        }
     return microbench.pcie_bandwidth_test(
         size_mb=int(params.get("size_mb", 256)),
         iters=int(params.get("iters", 10)),
+        timeout_seconds=timeout_seconds if timeout_seconds and timeout_seconds > 0 else None,
     )
 
 
 @register_tool(
     "aisp_test_mem_hierarchy",
-    "Memory hierarchy stride test on GPU to gauge bandwidth.",
+    "Memory hierarchy stride test on GPU to gauge bandwidth. Run aisp_status first; supports precheck_only/dry_run/timeout_seconds.",
     {"type": "object", "properties": {
         "size_mb": {"type": "integer", "default": 256},
-        "stride": {"type": "integer", "default": 128}
+        "stride": {"type": "integer", "default": 128},
+        "precheck_only": {
+            "type": "boolean",
+            "description": "Return prerequisites without running",
+            "default": False
+        },
+        "dry_run": {
+            "type": "boolean",
+            "description": "Describe the test without executing (alias: estimate_only)",
+            "default": False
+        },
+        "timeout_seconds": {
+            "type": "integer",
+            "description": "Max runtime before returning partial output; set 0/null for no timeout",
+            "default": 120
+        },
     }}
 )
 def tool_test_mem_hierarchy(params: Dict[str, Any]) -> Dict[str, Any]:
     from core.diagnostics import microbench
+    precheck_only = bool(params.get("precheck_only", False))
+    dry_run = bool(params.get("dry_run") or params.get("estimate_only"))
+    timeout_param = params.get("timeout_seconds")
+    timeout_seconds = None if timeout_param is None else int(timeout_param)
+    cuda_check = _cuda_precheck()
+    if precheck_only:
+        return {
+            "precheck_only": True,
+            "cuda": cuda_check,
+            "note": "Run aisp_status or aisp_triage first, then rerun without precheck_only.",
+        }
+    if not cuda_check.get("ok", True):
+        return {"error": cuda_check.get("reason", "CUDA not available"), "cuda": cuda_check}
+    if dry_run:
+        return {
+            "dry_run": True,
+            "cuda": cuda_check,
+            "params": {"size_mb": params.get("size_mb", 256), "stride": params.get("stride", 128)},
+            "timeout_seconds": timeout_seconds if timeout_seconds and timeout_seconds > 0 else None,
+        }
     return microbench.mem_hierarchy_test(
         size_mb=int(params.get("size_mb", 256)),
         stride=int(params.get("stride", 128)),
+        timeout_seconds=timeout_seconds if timeout_seconds and timeout_seconds > 0 else None,
     )
 
 
 @register_tool(
     "aisp_test_tensor_core",
-    "Tensor Core matmul throughput test for various precisions.",
+    "Tensor Core matmul throughput test for various precisions. Run aisp_status first; supports precheck_only/dry_run/timeout_seconds.",
     {"type": "object", "properties": {
         "size": {"type": "integer", "default": 4096},
-        "precision": {"type": "string", "default": "fp16"}
+        "precision": {"type": "string", "default": "fp16"},
+        "precheck_only": {
+            "type": "boolean",
+            "description": "Return prerequisites without running",
+            "default": False
+        },
+        "dry_run": {
+            "type": "boolean",
+            "description": "Describe the test without executing (alias: estimate_only)",
+            "default": False
+        },
+        "timeout_seconds": {
+            "type": "integer",
+            "description": "Max runtime before returning partial output; set 0/null for no timeout",
+            "default": 120
+        },
     }}
 )
 def tool_test_tensor_core(params: Dict[str, Any]) -> Dict[str, Any]:
     from core.diagnostics import microbench
+    precheck_only = bool(params.get("precheck_only", False))
+    dry_run = bool(params.get("dry_run") or params.get("estimate_only"))
+    timeout_param = params.get("timeout_seconds")
+    timeout_seconds = None if timeout_param is None else int(timeout_param)
+    cuda_check = _cuda_precheck()
+    if precheck_only:
+        return {
+            "precheck_only": True,
+            "cuda": cuda_check,
+            "note": "Run aisp_status or aisp_triage first, then rerun without precheck_only.",
+        }
+    if not cuda_check.get("ok", True):
+        return {"error": cuda_check.get("reason", "CUDA not available"), "cuda": cuda_check}
+    if dry_run:
+        return {
+            "dry_run": True,
+            "cuda": cuda_check,
+            "params": {"size": params.get("size", 4096), "precision": params.get("precision", "fp16")},
+            "timeout_seconds": timeout_seconds if timeout_seconds and timeout_seconds > 0 else None,
+        }
     return microbench.tensor_core_bench(
         size=int(params.get("size", 4096)),
         precision=params.get("precision", "fp16"),
+        timeout_seconds=timeout_seconds if timeout_seconds and timeout_seconds > 0 else None,
     )
 
 
 @register_tool(
     "aisp_test_sfu",
-    "SFU-heavy benchmark (sin/cos) to gauge special function performance.",
+    "SFU-heavy benchmark (sin/cos) to gauge special function performance. Run aisp_status first; supports precheck_only/dry_run/timeout_seconds.",
     {"type": "object", "properties": {
-        "elements": {"type": "integer", "default": 67108864}
+        "elements": {"type": "integer", "default": 67108864},
+        "precheck_only": {
+            "type": "boolean",
+            "description": "Return prerequisites without running",
+            "default": False
+        },
+        "dry_run": {
+            "type": "boolean",
+            "description": "Describe the test without executing (alias: estimate_only)",
+            "default": False
+        },
+        "timeout_seconds": {
+            "type": "integer",
+            "description": "Max runtime before returning partial output; set 0/null for no timeout",
+            "default": 120
+        },
     }}
 )
 def tool_test_sfu(params: Dict[str, Any]) -> Dict[str, Any]:
     from core.diagnostics import microbench
+    precheck_only = bool(params.get("precheck_only", False))
+    dry_run = bool(params.get("dry_run") or params.get("estimate_only"))
+    timeout_param = params.get("timeout_seconds")
+    timeout_seconds = None if timeout_param is None else int(timeout_param)
+    cuda_check = _cuda_precheck()
+    if precheck_only:
+        return {
+            "precheck_only": True,
+            "cuda": cuda_check,
+            "note": "Run aisp_status or aisp_triage first, then rerun without precheck_only.",
+        }
+    if not cuda_check.get("ok", True):
+        return {"error": cuda_check.get("reason", "CUDA not available"), "cuda": cuda_check}
+    if dry_run:
+        return {
+            "dry_run": True,
+            "cuda": cuda_check,
+            "params": {"elements": params.get("elements", 64 * 1024 * 1024)},
+            "timeout_seconds": timeout_seconds if timeout_seconds and timeout_seconds > 0 else None,
+        }
     return microbench.sfu_bench(
         size=int(params.get("elements", 64 * 1024 * 1024)),
+        timeout_seconds=timeout_seconds if timeout_seconds and timeout_seconds > 0 else None,
     )
 
 
 @register_tool(
     "aisp_test_network_loopback",
-    "Loopback TCP throughput test (localhost). Use for quick NIC sanity checks.",
+    "Loopback TCP throughput test (localhost). Supports precheck_only/dry_run/timeout_seconds for opt-in execution.",
     {"type": "object", "properties": {
         "size_mb": {"type": "integer", "default": 64},
-        "port": {"type": "integer", "default": 50007}
+        "port": {"type": "integer", "default": 50007},
+        "precheck_only": {
+            "type": "boolean",
+            "description": "Return port/info without running",
+            "default": False
+        },
+        "dry_run": {
+            "type": "boolean",
+            "description": "Describe the loopback test without executing (alias: estimate_only)",
+            "default": False
+        },
+        "timeout_seconds": {
+            "type": "integer",
+            "description": "Max runtime before returning partial output; set 0/null for no timeout",
+            "default": 60
+        },
     }}
 )
 def tool_test_network_loopback(params: Dict[str, Any]) -> Dict[str, Any]:
     from core.diagnostics import microbench
+    precheck_only = bool(params.get("precheck_only", False))
+    dry_run = bool(params.get("dry_run") or params.get("estimate_only"))
+    timeout_param = params.get("timeout_seconds")
+    timeout_seconds = None if timeout_param is None else int(timeout_param)
+    port = int(params.get("port", 50007))
+    if precheck_only:
+        return {
+            "precheck_only": True,
+            "port": port,
+            "note": "No sockets opened; rerun without precheck_only to execute.",
+        }
+    if dry_run:
+        return {
+            "dry_run": True,
+            "port": port,
+            "params": {"size_mb": params.get("size_mb", 64)},
+            "timeout_seconds": timeout_seconds if timeout_seconds and timeout_seconds > 0 else None,
+        }
     return microbench.network_loopback_test(
         size_mb=int(params.get("size_mb", 64)),
-        port=int(params.get("port", 50007)),
+        port=port,
+        timeout_seconds=timeout_seconds if timeout_seconds and timeout_seconds > 0 else None,
     )
 
 
@@ -2278,6 +3159,39 @@ def tool_triage(params: Dict[str, Any]) -> Dict[str, Any]:
         "status": engine.status(),
         "context": get_cached_context("summary"),
     }
+
+
+@register_tool(
+    "aisp_job_status",
+    "Check the status/result of a queued tool (e.g., aisp_profile_nsys/aisp_profile_ncu with queue_only=true). Use job_id returned by the queueing call.",
+    {"type": "object", "properties": {
+        "job_id": {
+            "type": "string",
+            "description": "Job ID returned from queue_only=true call"
+        }
+    }, "required": ["job_id"]}
+)
+def tool_job_status(params: Dict[str, Any]) -> Dict[str, Any]:
+    job_id = params.get("job_id")
+    if not job_id:
+        return {"error": "job_id is required"}
+    with _JOB_LOCK:
+        record = _JOB_STORE.get(job_id)
+    if not record:
+        return {
+            "job_id": job_id,
+            "status": "not_found",
+            "note": "No job with this id; ensure you passed queue_only=true on the original call.",
+        }
+    # Copy so we don't mutate stored record when adding error decoration
+    payload = dict(record)
+    if payload.get("status") == "error" and "error" not in payload:
+        result = payload.get("result") or {}
+        if isinstance(result, dict) and result.get("error"):
+            payload["error"] = result.get("error")
+        else:
+            payload["error"] = "Job failed"
+    return payload
 
 
 @register_tool(

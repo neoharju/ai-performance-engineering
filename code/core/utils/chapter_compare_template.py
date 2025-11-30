@@ -91,15 +91,18 @@ def load_benchmark(module_path: Path, timeout_seconds: int = 120) -> Optional[Ba
                 return
             
             module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
             
+            # Register module in sys.modules BEFORE exec_module() - this is critical!
+            # Dataclasses and other introspection tools need the module to be registered
+            # during class definition, otherwise sys.modules.get(cls.__module__) returns None
+            # and causes "'NoneType' object has no attribute '__dict__'" errors.
             simple_name = module_path.stem
-            # Ensure module is discoverable via both its fully-qualified name and simple stem.
-            # inspect.getmodule() checks sys.modules, so register both keys if missing.
             if module_name and module_name not in sys.modules:
                 sys.modules[module_name] = module
             if simple_name not in sys.modules:
                 sys.modules[simple_name] = module
+            
+            spec.loader.exec_module(module)
             
             if hasattr(module, 'get_benchmark'):
                 result["benchmark"] = module.get_benchmark()

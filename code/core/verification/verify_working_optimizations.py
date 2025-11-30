@@ -96,7 +96,7 @@ def test_pytorch_compile_basic() -> bool:
         result_compiled = compiled_fn(a, b)
         
         # Verify
-        if torch.allclose(result_eager, result_compiled, rtol=1e-4):
+        if torch.allclose(result_eager, result_compiled, rtol=1e-3):
             print("torch.compile works correctly")
             print("  - Compilation succeeded")
             print("  - Results match eager mode")

@@ -87,8 +87,9 @@ class OptimizedSlidingWindowBenchmark(BaseBenchmark):
         super().__init__()
         self.model = None
         self.x = None
+        # Match baseline dimensions for fair comparison
         self.batch_size = 4
-        self.seq_len = 2048
+        self.seq_len = 4096
         self.embed_dim = 1024
         self.num_heads = 16
         self.window_size = 512  # Kept for API compatibility

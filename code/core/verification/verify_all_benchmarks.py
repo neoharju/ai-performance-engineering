@@ -18,16 +18,19 @@ from core.discovery import (
     chapter_slug as _chapter_slug,
     discover_all_chapters,
     discover_benchmarks,
+    get_bench_roots,
     normalize_chapter_token,
 )
 
 # Repository root (…/code)
 REPO_ROOT = Path(__file__).resolve().parents[2]
+BENCH_ROOTS = get_bench_roots(repo_root=REPO_ROOT)
+BENCH_ROOT = BENCH_ROOTS[0]
 
 
-def chapter_slug(chapter_dir: Path, repo_root: Path = REPO_ROOT) -> str:
+def chapter_slug(chapter_dir: Path, repo_root: Path = REPO_ROOT, bench_root: Optional[Path] = None) -> str:
     """Return a stable chapter identifier relative to the repo root."""
-    return _chapter_slug(chapter_dir, repo_root)
+    return _chapter_slug(chapter_dir, repo_root, bench_root=bench_root or BENCH_ROOT)
 
 
 def _parse_examples(examples: str) -> List[str]:
@@ -38,6 +41,7 @@ def _parse_examples(examples: str) -> List[str]:
 
 def resolve_target_chapters(
     targets: Optional[List[str]],
+    bench_root: Optional[Path] = None,
 ) -> Tuple[List[Path], Dict[str, Set[str]]]:
     """
     Translate CLI target tokens into chapter directories + per-chapter filters.
@@ -52,9 +56,12 @@ def resolve_target_chapters(
     """
     chapter_filters: Dict[str, Set[str]] = {}
 
+    roots = [Path(bench_root).resolve()] if bench_root else BENCH_ROOTS
+    primary_root = roots[0]
+
     # Default: run everything
     if not targets or any(str(t).lower() == "all" for t in targets):
-        return discover_all_chapters(REPO_ROOT), chapter_filters
+        return discover_all_chapters(primary_root, bench_roots=roots), chapter_filters
 
     chapter_dirs: List[Path] = []
     for raw_target in targets:
@@ -66,8 +73,10 @@ def resolve_target_chapters(
             continue
 
         chapter_token, sep, examples = target.partition(":")
-        normalized = normalize_chapter_token(chapter_token, repo_root=REPO_ROOT)
-        chapter_dir = REPO_ROOT / normalized
+        normalized = normalize_chapter_token(chapter_token, repo_root=REPO_ROOT, bench_root=primary_root)
+        chapter_dir = Path(normalized)
+        if not chapter_dir.is_absolute():
+            chapter_dir = (primary_root / normalized).resolve()
         if not chapter_dir.is_dir():
             raise FileNotFoundError(f"Chapter '{normalized}' not found at {chapter_dir}")
 
@@ -76,7 +85,7 @@ def resolve_target_chapters(
 
         # Collect per-chapter example filters when provided
         if sep:
-            slug = chapter_slug(chapter_dir, REPO_ROOT)
+            slug = chapter_slug(chapter_dir, REPO_ROOT, bench_root=primary_root)
             allowed = {example for _, _, example in discover_benchmarks(chapter_dir)}
             for example in _parse_examples(examples):
                 if allowed and example not in allowed:
@@ -92,7 +101,11 @@ def resolve_target_chapters(
     return chapter_dirs, chapter_filters
 
 
-def run_verification(targets: Optional[List[str]] = None) -> int:
+def run_verification(
+    targets: Optional[List[str]] = None,
+    bench_root: Optional[Path] = None,
+    timeout_seconds: Optional[int] = None,
+) -> int:
     """
     Run a quick verification pass (smoke mode, no profiling) over selected targets.
 
@@ -105,6 +118,10 @@ def run_verification(targets: Optional[List[str]] = None) -> int:
     if targets:
         argv.append("--targets")
         argv.extend(targets)
+    if bench_root:
+        argv.extend(["--bench-root", str(bench_root)])
+    if timeout_seconds is not None:
+        argv.extend(["--suite-timeout", str(timeout_seconds)])
 
     old_argv = sys.argv
     sys.argv = argv

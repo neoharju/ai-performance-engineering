@@ -5,9 +5,26 @@ Provides functions to discover benchmarks across chapters and CUDA benchmarks.
 
 from __future__ import annotations
 
+import os
 import warnings
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
+
+# Repository root (…/code)
+DEFAULT_REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def get_bench_roots(repo_root: Optional[Path] = None, bench_root: Optional[Path] = None) -> List[Path]:
+    """
+    Resolve benchmark search roots.
+
+    Flags/explicit args control the root; environment variables are intentionally
+    ignored to avoid hidden implicit overrides.
+    """
+    if bench_root:
+        return [Path(bench_root).expanduser().resolve()]
+    root = Path(repo_root or DEFAULT_REPO_ROOT).expanduser().resolve()
+    return [root]
 
 
 def _has_get_benchmark(file_path: Path) -> bool:
@@ -58,13 +75,14 @@ LAB_ALIASES: Dict[str, str] = {
 }
 
 
-def _labs_root(repo_root: Path) -> Path:
-    return repo_root / "labs"
+def _labs_root(repo_root: Path, bench_root: Optional[Path] = None) -> Path:
+    root = bench_root or get_bench_roots(repo_root=repo_root, bench_root=bench_root)[0]
+    return root / "labs"
 
 
-def _lab_dirs(repo_root: Path) -> Iterable[Path]:
+def _lab_dirs(repo_root: Path, bench_root: Optional[Path] = None) -> Iterable[Path]:
     """Auto-discover all lab directories that contain benchmark files."""
-    labs_root = _labs_root(repo_root)
+    labs_root = _labs_root(repo_root, bench_root=bench_root)
     if not labs_root.is_dir():
         return []
     
@@ -80,12 +98,52 @@ def _lab_dirs(repo_root: Path) -> Iterable[Path]:
     return sorted(lab_dirs, key=lambda p: p.name)
 
 
-def chapter_slug(chapter_dir: Path, repo_root: Path) -> str:
-    """Return a consistent chapter identifier relative to repo_root."""
-    return str(chapter_dir.resolve().relative_to(repo_root).as_posix())
+def _iter_benchmark_dirs(bench_root: Path) -> Iterable[Path]:
+    """Yield directories that contain baseline_* benchmarks."""
+    ignore_dirs = {
+        ".git",
+        ".hg",
+        ".svn",
+        "__pycache__",
+        ".mypy_cache",
+        ".pytest_cache",
+        "node_modules",
+        ".venv",
+        "venv",
+        ".next",
+        ".turbo",
+        "build",
+        "dist",
+        "out",
+    }
+    for current, dirnames, filenames in os.walk(bench_root):
+        dirnames[:] = [d for d in dirnames if d not in ignore_dirs and not d.startswith(".")]
+        if any(
+            fname.startswith("baseline_") and (fname.endswith(".py") or fname.endswith(".cu"))
+            for fname in filenames
+        ):
+            yield Path(current)
 
 
-def normalize_chapter_token(token: str, repo_root: Optional[Path] = None) -> str:
+def chapter_slug(chapter_dir: Path, repo_root: Path, bench_root: Optional[Path] = None) -> str:
+    """Return a consistent chapter identifier relative to the benchmark root."""
+    roots = [bench_root] if bench_root else get_bench_roots(repo_root=repo_root)
+    for root in roots:
+        try:
+            return chapter_dir.resolve().relative_to(root.resolve()).as_posix()
+        except Exception:
+            continue
+    try:
+        return chapter_dir.resolve().relative_to(repo_root.resolve()).as_posix()
+    except Exception:
+        return chapter_dir.name
+
+
+def normalize_chapter_token(
+    token: str,
+    repo_root: Optional[Path] = None,
+    bench_root: Optional[Path] = None,
+) -> str:
     """Normalize chapter token (CLI arg or alias) to a relative path slug.
 
     Examples:
@@ -99,6 +157,20 @@ def normalize_chapter_token(token: str, repo_root: Optional[Path] = None) -> str
     chapter = token.strip().lower()
     if not chapter:
         raise ValueError("Chapter token cannot be empty.")
+    
+    roots = [bench_root] if bench_root else get_bench_roots(repo_root=repo_root or DEFAULT_REPO_ROOT)
+    primary_root = roots[0]
+
+    # Absolute path or explicit relative path
+    candidate_path = Path(chapter).expanduser()
+    if candidate_path.is_absolute() and candidate_path.is_dir():
+        try:
+            return candidate_path.resolve().relative_to(primary_root.resolve()).as_posix()
+        except Exception:
+            return str(candidate_path.resolve())
+    candidate_relative = (primary_root / chapter)
+    if candidate_relative.is_dir():
+        return Path(chapter).as_posix()
 
     if chapter.isdigit():
         return f"ch{chapter}"
@@ -110,10 +182,10 @@ def normalize_chapter_token(token: str, repo_root: Optional[Path] = None) -> str
 
     # Get repo root for auto-discovery
     if repo_root is None:
-        repo_root = Path(__file__).parent.parent.parent
+        repo_root = DEFAULT_REPO_ROOT
     
     # Auto-discover valid lab names from filesystem
-    discovered_labs = {p.name for p in _lab_dirs(repo_root)}
+    discovered_labs = {p.name for p in _lab_dirs(repo_root, bench_root=primary_root)}
 
     if chapter.startswith("lab_"):
         trimmed = chapter[len("lab_") :]
@@ -138,9 +210,9 @@ def normalize_chapter_token(token: str, repo_root: Optional[Path] = None) -> str
 
 
 def discover_benchmarks(
-    chapter_dir: Path, 
+    chapter_dir: Path,
     validate: bool = False,
-    warn_missing: bool = False
+    warn_missing: bool = False,
 ) -> List[Tuple[Path, List[Path], str]]:
     """Discover benchmark modules by looking for baseline_*.py files with matching optimized_*.py.
     
@@ -154,7 +226,7 @@ def discover_benchmarks(
         Example: (Path('ch16/baseline_moe_dense.py'), [Path('ch16/optimized_moe_sparse.py')], 'moe')
     """
     pairs = []
-    baseline_files = sorted(chapter_dir.glob("baseline_*.py"))
+    baseline_files = sorted(chapter_dir.glob("baseline_*.py")) + sorted(chapter_dir.glob("baseline_*.cu"))
 
     example_names = {
         baseline_file.stem.replace("baseline_", "")
@@ -213,14 +285,7 @@ def discover_benchmarks(
 
 
 def discover_cuda_benchmarks(repo_root: Path) -> List[Path]:
-    """Discover CUDA benchmark files (files with .cu extension or in cuda/ directories).
-    
-    Args:
-        repo_root: Path to repository root
-        
-    Returns:
-        List of paths to CUDA benchmark files
-    """
+    """Discover CUDA benchmark files (files with .cu extension or in cuda/ directories)."""
     cuda_benchmarks: List[Path] = []
 
     def _collect_from_dir(root: Path) -> None:
@@ -229,42 +294,49 @@ def discover_cuda_benchmarks(repo_root: Path) -> List[Path]:
         if cuda_subdir.exists() and cuda_subdir.is_dir():
             cuda_benchmarks.extend(cuda_subdir.glob("*.cu"))
 
-    # Look for .cu files in chapter directories
-    for chapter_dir in repo_root.glob("ch*/"):
-        if chapter_dir.is_dir():
-            _collect_from_dir(chapter_dir)
+    for chapter_dir in discover_all_chapters(repo_root):
+        _collect_from_dir(chapter_dir)
 
-    for lab_dir in _lab_dirs(repo_root):
-        _collect_from_dir(lab_dir)
-
-    return sorted(cuda_benchmarks)
+    return sorted(set(cuda_benchmarks))
 
 
-def discover_all_chapters(repo_root: Path) -> List[Path]:
-    """Discover all chapter and lab directories.
-    
-    Args:
-        repo_root: Path to repository root
-        
-    Returns:
-        List of chapter directory paths, sorted numerically (ch1, ch2, ..., ch10, ch11, ...)
-    """
-    def chapter_sort_key(path: Path) -> int:
-        """Extract numeric part from chapter name for natural sorting."""
-        if path.name.startswith('ch') and path.name[2:].isdigit():
-            return int(path.name[2:])
-        return 0
-    
-    chapter_dirs = sorted(
-        [
-            d
-            for d in repo_root.iterdir()
-            if d.is_dir() and d.name.startswith("ch") and d.name[2:].isdigit()
-        ],
-        key=chapter_sort_key,
-    )
+def discover_all_chapters(repo_root: Path, bench_roots: Optional[List[Path]] = None) -> List[Path]:
+    """Discover all directories that contain benchmark pairs."""
+    roots = bench_roots or get_bench_roots(repo_root=repo_root)
+    chapter_dirs: List[Path] = []
+    seen = set()
 
-    chapter_dirs.extend(list(_lab_dirs(repo_root)))
+    for bench_root in roots:
+        if not bench_root.exists():
+            continue
+
+        # Legacy ch* and labs/* paths (keep natural ordering for these)
+        for ch_dir in sorted(
+            [
+                d
+                for d in bench_root.iterdir()
+                if d.is_dir() and d.name.startswith("ch") and d.name[2:].isdigit()
+            ],
+            key=lambda p: int(p.name[2:]) if p.name[2:].isdigit() else 0,
+        ):
+            if ch_dir.resolve() not in seen:
+                seen.add(ch_dir.resolve())
+                chapter_dirs.append(ch_dir)
+
+        for lab_dir in _lab_dirs(repo_root, bench_root=bench_root):
+            if lab_dir.resolve() not in seen:
+                seen.add(lab_dir.resolve())
+                chapter_dirs.append(lab_dir)
+
+        # Generic discovery: any directory with baseline_* files
+        for dir_with_benchmark in _iter_benchmark_dirs(bench_root):
+            resolved = dir_with_benchmark.resolve()
+            if resolved not in seen:
+                seen.add(resolved)
+                chapter_dirs.append(resolved)
+
+    # Stable, human-friendly ordering
+    chapter_dirs.sort(key=lambda p: p.as_posix())
     return chapter_dirs
 
 
@@ -279,17 +351,21 @@ def discover_benchmark_pairs(repo_root: Path, chapter: str = "all") -> List[Tupl
         List of tuples: (baseline_path, [optimized_paths], example_name)
     """
     all_pairs = []
+    bench_roots = get_bench_roots(repo_root=repo_root)
+    primary_root = bench_roots[0]
     
     if chapter == "all":
-        chapter_dirs = discover_all_chapters(repo_root)
+        chapter_dirs = discover_all_chapters(repo_root, bench_roots=bench_roots)
     else:
         try:
-            normalized = normalize_chapter_token(chapter)
+            normalized = normalize_chapter_token(chapter, repo_root=repo_root, bench_root=primary_root)
         except ValueError:
             chapter_dirs = []
         else:
-            chapter_dir = repo_root / normalized
-            chapter_dirs = [chapter_dir] if chapter_dir.exists() else []
+            chapter_path = Path(normalized)
+            if not chapter_path.is_absolute():
+                chapter_path = (primary_root / normalized).resolve()
+            chapter_dirs = [chapter_path] if chapter_path.exists() else []
     
     for chapter_dir in chapter_dirs:
         pairs = discover_benchmarks(chapter_dir)

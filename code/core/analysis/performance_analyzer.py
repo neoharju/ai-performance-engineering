@@ -7,6 +7,7 @@ from typing import Callable, Dict, Any, Optional, List
 
 # Find the repo root
 CODE_ROOT = Path(__file__).parent.parent.parent
+from core.discovery import get_bench_roots
 
 
 def _transform_aggregated_data(all_benchmarks: dict, timestamp: str) -> dict:
@@ -109,10 +110,11 @@ def _transform_aggregated_data(all_benchmarks: dict, timestamp: str) -> dict:
     }
 
 
-def load_benchmark_data(data_file: Optional[Path] = None) -> dict:
+def load_benchmark_data(data_file: Optional[Path] = None, bench_roots: Optional[List[Path]] = None) -> dict:
     """Load benchmark results from disk (single file or aggregated artifacts)."""
     all_benchmarks: Dict[tuple, Dict[str, Any]] = {}
     latest_timestamp: Optional[str] = None
+    bench_roots = bench_roots or get_bench_roots(repo_root=CODE_ROOT)
 
     def _ingest_result_file(path: Path) -> None:
         nonlocal latest_timestamp
@@ -140,20 +142,21 @@ def load_benchmark_data(data_file: Optional[Path] = None) -> dict:
             except Exception:
                 pass
     else:
-        artifacts_dir = CODE_ROOT / "artifacts"
-        if artifacts_dir.exists():
-            for result_file in sorted(artifacts_dir.rglob("benchmark_test_results.json")):
+        for root in bench_roots:
+            artifacts_dir = root / "artifacts"
+            if artifacts_dir.exists():
+                for result_file in sorted(artifacts_dir.rglob("benchmark_test_results.json")):
+                    try:
+                        _ingest_result_file(result_file)
+                    except Exception:
+                        pass
+
+            default_path = root / "benchmark_test_results.json"
+            if default_path.exists():
                 try:
-                    _ingest_result_file(result_file)
+                    _ingest_result_file(default_path)
                 except Exception:
                     pass
-
-        default_path = CODE_ROOT / "benchmark_test_results.json"
-        if default_path.exists():
-            try:
-                _ingest_result_file(default_path)
-            except Exception:
-                pass
 
     if not all_benchmarks:
         return {

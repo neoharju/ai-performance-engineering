@@ -378,10 +378,12 @@ class SlidingWindowDemoBenchmark(BaseBenchmark):
         super().__init__()
         self.sliding_attn = None
         self.x = None
+        # Match baseline dimensions for fair comparison
         self.batch_size = 4
-        self.num_heads = 32
-        self.head_dim = 128
-        self.seq_len = 2048
+        self.num_heads = 16
+        self.head_dim = 64  # embed_dim(1024) / num_heads(16)
+        self.seq_len = 4096
+        self.embed_dim = 1024
         self.window_size = 512
         self._last = 0.0
         

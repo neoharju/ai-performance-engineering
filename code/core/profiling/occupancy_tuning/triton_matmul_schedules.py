@@ -123,6 +123,8 @@ class TritonMatmulProtonBenchmark(BaseBenchmark):
     def setup(self) -> None:
         if not torch.cuda.is_available():
             raise RuntimeError("SKIPPED: Triton Proton lab requires a CUDA device.")
+        if torch.cuda.device_count() < 1:
+            raise RuntimeError("SKIPPED: CUDA device unavailable for Triton Proton lab.")
 
         device = torch.device("cuda")
         _ensure_inductor_env()
@@ -164,9 +166,14 @@ class TritonMatmulProtonBenchmark(BaseBenchmark):
 
     def benchmark_fn(self) -> None:
         assert self._runner is not None
-        with self._nvtx_range(self.schedule.name):
-            self._output = self._runner()
-        torch.cuda.synchronize()
+        try:
+            with self._nvtx_range(self.schedule.name):
+                self._output = self._runner()
+            torch.cuda.synchronize()
+        except AttributeError as exc:
+            if "SymNodeVariable" in str(exc):
+                raise RuntimeError("SKIPPED: Triton/Proton SymNode inference is incompatible on this build.") from exc
+            raise
 
     def validate_result(self) -> Optional[str]:
         if self._reference is None or self._output is None:

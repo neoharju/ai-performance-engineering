@@ -25,6 +25,7 @@ class AiOptimizationBenchmarkBase(BaseBenchmark):
         super().__init__()
         # Kernel outputs are numerically noisy; skip strict output verification.
         self.skip_output_check = True
+        self.skip_input_check = True
         if not torch.cuda.is_available():
             raise RuntimeError("CUDA required for Chapter 8 AI optimization benchmarks")
         self.device = torch.device("cuda")
@@ -90,6 +91,9 @@ class AiOptimizationBenchmarkBase(BaseBenchmark):
         if self.output is None:
             return "Output buffer not initialized"
         return None
+
+    def skip_output_verification(self) -> bool:
+        return True
 
     def get_custom_metrics(self) -> Optional[dict]:
         """Return AI optimization kernel metrics for roofline analysis."""

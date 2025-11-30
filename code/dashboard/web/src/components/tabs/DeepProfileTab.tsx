@@ -13,15 +13,22 @@ import {
   Code,
   ToggleRight,
   ToggleLeft,
+  Rocket,
 } from 'lucide-react';
 import {
   getDeepProfileList,
   getDeepProfileRecommendations,
   getNcuDeepDive,
   getDeepProfileCompare,
+  getFlameGraphComparison,
+  startNsightSystemsCapture,
+  startNsightComputeCapture,
+  fetchNsightJobStatus,
+  fetchMcpJobStatus,
 } from '@/lib/api';
 import { EmptyState, ErrorState, LoadingState } from '@/components/DataState';
 import { getErrorMessage, useApiQuery } from '@/lib/useApi';
+import { FlameGraphComparison } from '@/components/FlameGraphComparison';
 
 type DeepProfileDataset = {
   profiles: any[];
@@ -33,6 +40,21 @@ export function DeepProfileTab() {
   const [fullTimelineToggle, setFullTimelineToggle] = useState(false);
   const [preset, setPreset] = useState<'light' | 'full'>('light');
   const [selectedChapter, setSelectedChapter] = useState<string | null>(null);
+  const [nsysCommand, setNsysCommand] = useState('python -c "print(123)"');
+  const [nsysQueue, setNsysQueue] = useState(false);
+  const [nsysTimeout, setNsysTimeout] = useState<number | ''>('');
+  const [nsysResult, setNsysResult] = useState<any>(null);
+  const [nsysLoading, setNsysLoading] = useState(false);
+
+  const [ncuCommand, setNcuCommand] = useState('python -c "print(456)"');
+  const [ncuWorkload, setNcuWorkload] = useState('memory_bound');
+  const [ncuQueue, setNcuQueue] = useState(false);
+  const [ncuTimeout, setNcuTimeout] = useState<number | ''>('');
+  const [ncuResult, setNcuResult] = useState<any>(null);
+  const [ncuLoading, setNcuLoading] = useState(false);
+
+  const [jobId, setJobId] = useState('');
+  const [jobStatus, setJobStatus] = useState<any>(null);
 
   const baseQuery = useApiQuery<DeepProfileDataset>('deep-profile/base', async () => {
     const [profilesData, recsData, ncuDataRes] = await Promise.allSettled([
@@ -71,12 +93,20 @@ export function DeepProfileTab() {
     { keepPreviousData: true }
   );
 
+  const flameGraphQuery = useApiQuery(
+    selectedChapter ? ['deep-profile/flamegraph', selectedChapter] : null,
+    () => getFlameGraphComparison(selectedChapter as string),
+    { keepPreviousData: true }
+  );
+
   const profiles = baseQuery.data?.profiles || [];
   const recommendations = baseQuery.data?.recommendations;
   const ncuData = baseQuery.data?.ncuData;
   const compareData = compareQuery.data;
   const compareLoading = compareQuery.isLoading;
   const compareError = compareQuery.error;
+  const flameGraphData = flameGraphQuery.data as any;
+  const flameGraphLoading = flameGraphQuery.isLoading;
 
   if (baseQuery.isLoading) {
     return (
@@ -175,6 +205,180 @@ export function DeepProfileTab() {
         </div>
       </div>
 
+      <div className="card">
+        <div className="card-header flex items-center gap-2">
+          <Rocket className="w-4 h-4 text-accent-primary" />
+          <h3 className="font-medium text-white">Capture New Profiles (nsys/ncu)</h3>
+        </div>
+        <div className="card-body space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <label className="text-xs text-white/60">Nsight Systems command</label>
+              <input
+                className="w-full rounded-lg bg-white/10 border border-white/10 px-3 py-2 text-sm text-white"
+                value={nsysCommand}
+                onChange={(e) => setNsysCommand(e.target.value)}
+              />
+              <div className="flex flex-wrap gap-3 text-xs text-white/70 items-center">
+                <label className="flex items-center gap-2">
+                  <input type="checkbox" className="accent-accent-secondary" checked={nsysQueue} onChange={(e) => setNsysQueue(e.target.checked)} />
+                  Queue only
+                </label>
+                <label className="flex items-center gap-2">
+                  Timeout (s)
+                  <input
+                    type="number"
+                    className="bg-white/10 border border-white/10 rounded-lg px-2 py-1 w-20 text-white"
+                    value={nsysTimeout}
+                    onChange={(e) => setNsysTimeout(e.target.value === '' ? '' : Number(e.target.value))}
+                  />
+                </label>
+              </div>
+              <button
+                className="rounded-lg bg-accent-primary/20 px-3 py-2 text-sm text-accent-primary hover:bg-accent-primary/30 transition-colors"
+                onClick={async () => {
+                  if (!nsysCommand.trim()) {
+                    setNsysResult({ error: 'Command is required' });
+                    return;
+                  }
+                  setNsysLoading(true);
+                  setNsysResult(null);
+                  try {
+                    const res = await startNsightSystemsCapture({
+                      command: nsysCommand,
+                      preset: preset,
+                      full_timeline: fullTimelineToggle || preset === 'full',
+                      queue_only: nsysQueue,
+                      timeout_seconds: nsysTimeout === '' ? undefined : Number(nsysTimeout),
+                    });
+                    setNsysResult(res);
+                    if (res.job_id) setJobId(res.job_id);
+                  } catch (e: any) {
+                    setNsysResult({ error: e.message });
+                  } finally {
+                    setNsysLoading(false);
+                  }
+                }}
+              >
+                {nsysLoading ? 'Running...' : 'Run Nsight Systems'}
+              </button>
+              <div className="text-xs text-white/50">Uses preset {preset} (full timeline toggle respected).</div>
+              <pre className="bg-white/5 border border-white/10 rounded-lg p-2 text-xs text-white/80 whitespace-pre-wrap">
+                {nsysResult ? JSON.stringify(nsysResult, null, 2) : 'No result yet.'}
+              </pre>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs text-white/60">Nsight Compute command</label>
+              <input
+                className="w-full rounded-lg bg-white/10 border border-white/10 px-3 py-2 text-sm text-white"
+                value={ncuCommand}
+                onChange={(e) => setNcuCommand(e.target.value)}
+              />
+              <div className="flex flex-wrap gap-3 text-xs text-white/70 items-center">
+                <label className="flex items-center gap-2">
+                  Workload
+                  <select
+                    className="bg-white/10 border border-white/10 rounded-lg px-2 py-1 text-white"
+                    value={ncuWorkload}
+                    onChange={(e) => setNcuWorkload(e.target.value)}
+                  >
+                    <option value="memory_bound">memory_bound</option>
+                    <option value="compute_bound">compute_bound</option>
+                    <option value="tensor_core">tensor_core</option>
+                    <option value="communication">communication</option>
+                    <option value="occupancy">occupancy</option>
+                  </select>
+                </label>
+                <label className="flex items-center gap-2">
+                  <input type="checkbox" className="accent-accent-secondary" checked={ncuQueue} onChange={(e) => setNcuQueue(e.target.checked)} />
+                  Queue only
+                </label>
+                <label className="flex items-center gap-2">
+                  Timeout (s)
+                  <input
+                    type="number"
+                    className="bg-white/10 border border-white/10 rounded-lg px-2 py-1 w-20 text-white"
+                    value={ncuTimeout}
+                    onChange={(e) => setNcuTimeout(e.target.value === '' ? '' : Number(e.target.value))}
+                  />
+                </label>
+              </div>
+              <button
+                className="rounded-lg bg-accent-warning/20 px-3 py-2 text-sm text-accent-warning hover:bg-accent-warning/30 transition-colors"
+                onClick={async () => {
+                  if (!ncuCommand.trim()) {
+                    setNcuResult({ error: 'Command is required' });
+                    return;
+                  }
+                  setNcuLoading(true);
+                  setNcuResult(null);
+                  try {
+                    const res = await startNsightComputeCapture({
+                      command: ncuCommand,
+                      workload_type: ncuWorkload,
+                      queue_only: ncuQueue,
+                      timeout_seconds: ncuTimeout === '' ? undefined : Number(ncuTimeout),
+                    });
+                    setNcuResult(res);
+                    if (res.job_id) setJobId(res.job_id);
+                  } catch (e: any) {
+                    setNcuResult({ error: e.message });
+                  } finally {
+                    setNcuLoading(false);
+                  }
+                }}
+              >
+                {ncuLoading ? 'Running...' : 'Run Nsight Compute'}
+              </button>
+              <pre className="bg-white/5 border border-white/10 rounded-lg p-2 text-xs text-white/80 whitespace-pre-wrap">
+                {ncuResult ? JSON.stringify(ncuResult, null, 2) : 'No result yet.'}
+              </pre>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-3 items-center">
+            <input
+              className="rounded-lg bg-white/10 border border-white/10 px-3 py-2 text-sm text-white w-72"
+              value={jobId}
+              onChange={(e) => setJobId(e.target.value)}
+              placeholder="Job ID (queue runs)"
+            />
+            <button
+              className="rounded-lg bg-accent-info/20 px-3 py-2 text-sm text-accent-info hover:bg-accent-info/30 transition-colors"
+              onClick={async () => {
+                if (!jobId) return;
+                try {
+                  const res = await fetchNsightJobStatus(jobId);
+                  setJobStatus(res);
+                } catch (e: any) {
+                  setJobStatus({ error: e.message });
+                }
+              }}
+            >
+              Check Job Status
+            </button>
+            <button
+              className="rounded-lg bg-accent-secondary/20 px-3 py-2 text-sm text-accent-secondary hover:bg-accent-secondary/30 transition-colors"
+              onClick={async () => {
+                if (!jobId) return;
+                try {
+                  const res = await fetchMcpJobStatus(jobId);
+                  setJobStatus(res);
+                } catch (e: any) {
+                  setJobStatus({ error: e.message });
+                }
+              }}
+            >
+              Check MCP Job
+            </button>
+          </div>
+          <pre className="bg-white/5 border border-white/10 rounded-lg p-2 text-xs text-white/80 whitespace-pre-wrap">
+            {jobStatus ? JSON.stringify(jobStatus, null, 2) : 'No job queried yet.'}
+          </pre>
+        </div>
+      </div>
+
       {/* Profiles list */}
       {profiles.length > 0 ? (
         <div className="card">
@@ -219,6 +423,11 @@ export function DeepProfileTab() {
           actionLabel="Refresh list"
           onAction={() => baseQuery.mutate()}
         />
+      )}
+
+      {/* Flame Graph Comparison - NEW! */}
+      {selectedChapter && (
+        <FlameGraphComparison data={flameGraphData} isLoading={flameGraphLoading} />
       )}
 
       {/* Recommendations */}

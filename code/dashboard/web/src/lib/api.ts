@@ -77,8 +77,24 @@ export async function scanAllBenchmarks() {
   return fetchAPI('/scan-all');
 }
 
+// Bench root configuration
+export async function getBenchRootConfig() {
+  return fetchAPI('/config/bench-root');
+}
+
+export async function setBenchRootConfig(payload: { bench_root?: string; data_file?: string | null }) {
+  return fetchAPI('/config/bench-root', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
 // Quick benchmark runner
-export async function runBenchmark(chapter: string, name: string, options?: { run_baseline?: boolean; run_optimized?: boolean }) {
+export async function runBenchmark(
+  chapter: string,
+  name: string,
+  options?: { run_baseline?: boolean; run_optimized?: boolean; precheck_only?: boolean; dry_run?: boolean; timeout_seconds?: number }
+) {
   return fetchAPI('/benchmark/run', {
     method: 'POST',
     body: JSON.stringify({
@@ -86,6 +102,26 @@ export async function runBenchmark(chapter: string, name: string, options?: { ru
       name,
       run_baseline: options?.run_baseline ?? true,
       run_optimized: options?.run_optimized ?? true,
+      precheck_only: options?.precheck_only ?? false,
+      dry_run: options?.dry_run ?? false,
+      timeout_seconds: options?.timeout_seconds,
+    }),
+  });
+}
+
+export async function verifyBenchmark(
+  chapter: string,
+  name: string,
+  options?: { precheck_only?: boolean; dry_run?: boolean; timeout_seconds?: number }
+) {
+  return fetchAPI('/benchmark/verify', {
+    method: 'POST',
+    body: JSON.stringify({
+      chapter,
+      name,
+      precheck_only: options?.precheck_only ?? false,
+      dry_run: options?.dry_run ?? false,
+      timeout_seconds: options?.timeout_seconds,
     }),
   });
 }
@@ -190,6 +226,46 @@ export async function runAIAnalysis(type?: string) {
   return fetchAPI(`/ai/analyze${qs ? `?${qs}` : ''}`);
 }
 
+// ============================================================================
+// Nsight / Profiling Helpers
+// ============================================================================
+
+export async function startNsightSystemsCapture(payload: {
+  command: string;
+  preset?: 'light' | 'full';
+  full_timeline?: boolean;
+  queue_only?: boolean;
+  timeout_seconds?: number;
+}) {
+  return fetchAPI('/nsight/profile/nsys', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function startNsightComputeCapture(payload: {
+  command: string;
+  workload_type?: string;
+  queue_only?: boolean;
+  timeout_seconds?: number;
+}) {
+  return fetchAPI('/nsight/profile/ncu', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function fetchNsightJobStatus(job_id: string) {
+  const search = new URLSearchParams({ job_id });
+  return fetchAPI(`/nsight/job-status?${search.toString()}`);
+}
+
+// MCP job status convenience (aisp_job_status)
+export async function fetchMcpJobStatus(job_id: string) {
+  const search = new URLSearchParams({ job_id });
+  return fetchAPI(`/mcp/job-status?${search.toString()}`);
+}
+
 export async function runAIQuery(question: string, context?: string) {
   return fetchAPI('/ai/query', {
     method: 'POST',
@@ -272,6 +348,10 @@ export async function getDeepProfileRecommendations() {
 
 export async function getDeepProfileCompare(chapter: string) {
   return fetchAPI(`/deep-profile/compare/${encodeURIComponent(chapter)}`);
+}
+
+export async function getFlameGraphComparison(chapter: string) {
+  return fetchAPI(`/deep-profile/flamegraph/${encodeURIComponent(chapter)}`);
 }
 
 // ============================================================================

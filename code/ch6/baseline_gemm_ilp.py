@@ -15,7 +15,6 @@ class BaselineGEMMILPBenchmark(BaseBenchmark):
     
     def __init__(self):
         super().__init__()
-        self.skip_output_check = True
         self.input: Optional[torch.Tensor] = None
         self.output: Optional[torch.Tensor] = None
         self.N = 10_000_000
@@ -58,6 +57,7 @@ class BaselineGEMMILPBenchmark(BaseBenchmark):
         self.input = None
         self.output = None
         torch.cuda.empty_cache()
+
     
     def get_config(self) -> BenchmarkConfig:
         """Return benchmark configuration."""

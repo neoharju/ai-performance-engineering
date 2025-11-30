@@ -37,7 +37,9 @@ class OptimizedMatmulTCGen05Benchmark(BaseBenchmark):
         self._skip_reason = reason or "SKIPPED: tcgen05 matmul unavailable"
         self.device = resolve_device()
         self.dtype = torch.float16
-        self.size = 4096
+        # Match baseline dimensions (baseline uses n=8192)
+        self.n = 8192
+        self.size = self.n  # For compatibility
         self.A: Optional[torch.Tensor] = None
         self.B: Optional[torch.Tensor] = None
 

@@ -21,6 +21,8 @@ python ch7/optimized_memory_access.py
 
 # Or use the CLI
 python -m cli.aisp bench run --targets ch7 --profile minimal
+# Point at a different benchmark root (defaults to this repo)
+python -m cli.aisp bench run --bench-root /path/to/benchmarks --targets ch7
 ```
 
 ---
@@ -47,6 +49,14 @@ make metrics        # Check get_custom_metrics() status
 ---
 
 ## Running Benchmarks
+### Project root selection
+- Default project root: the repo directory you're in (e.g., `ai-performance-engineering/code`).
+- Override everywhere with `--bench-root /path/to/project`.
+  - CLI: `python -m cli.aisp bench run --bench-root /path/to/project --targets ch7`
+  - Full runner: `python -m core.harness.run_all_benchmarks --bench-root /path/to/project`
+  - Dashboard backend: `python -m dashboard.api.server serve --bench-root /path/to/project --data /path/to/benchmark_test_results.json`
+- Environment variables are ignored for project-root selection; use flags only.
+- In the dashboard UI, you can change the project root live (no restart) from the Settings tab’s “Project Root” card; the choice is stored in your browser.
 
 ### Direct Execution
 ```bash
@@ -98,7 +108,7 @@ ncu-ui kernel_analysis.ncu-rep
 
 ## MCP Integration (aisp MCP server)
 
-Start the server with `python -m mcp.server --serve` (or via `mcp.json`). Clients should consume the `application/json` content entry from MCP responses.
+Start the server with `python -m mcp.mcp_server --serve` (or via `mcp.json`). Responses emit a `text` content entry containing the JSON envelope. Tool descriptions returned by `tools/list` (or `python -m mcp.mcp_server --list`) embed Inputs/Outputs/Expectations so clients can surface parameter guidance and side-effect hints.
 
 **76 MCP tools available** organized by category. See [docs/mcp_tools.md](docs/mcp_tools.md) for complete reference with parameters and examples.
 
@@ -252,8 +262,12 @@ python -m cli.aisp bench analyze
 
 ### Dashboard UI
 ```bash
-python dashboard/api/server.py --port 8100
-# Open http://localhost:8100
+python -m dashboard.api.server serve --port 8100 --bench-root /path/to/benchmarks --data /path/to/benchmark_test_results.json
+# Open http://localhost:8100 (defaults to repo root if --bench-root is omitted)
+
+# Or start the Next.js frontend plus backend:
+#   SKIP_BACKEND=1 ./start-dashboard.sh    # then start backend manually with --bench-root as above
+#   ./start-dashboard.sh                   # uses repo root as bench root
 ```
 
 ### Interactive TUI

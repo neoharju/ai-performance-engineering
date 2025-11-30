@@ -129,8 +129,13 @@ class DecodeBenchmark(BaseBenchmark):
                     self.fp8_recipe = None
 
     def setup(self) -> None:
-        torch.manual_seed(0)
-        torch.cuda.manual_seed_all(0)
+        # Ensure deterministic behavior for verification
+        torch.manual_seed(42)
+        torch.cuda.manual_seed_all(42)
+        # Enable deterministic algorithms where possible
+        torch.use_deterministic_algorithms(True, warn_only=True)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
         if enable_tf32 is not None:
             enable_tf32(set_global_precision=True)
         else:
@@ -456,6 +461,8 @@ class DecodeBenchmark(BaseBenchmark):
             percentiles=[50, 90, 99],
         )
 
+
     def get_custom_metrics(self) -> Dict[str, float]:
         return self._custom_metrics
+
 

@@ -594,7 +594,8 @@ if typer and EXT_ENABLED and report_app is not None:
 # Category: profile (extension)
 # =============================================================================
 
-if typer and EXT_ENABLED and profile_app is not None:
+if typer and profile_app is not None:
+    # Commands always registered to profile_app; access controlled via EXT_ENABLED when adding to main app
 
     @profile_app.command("flame", help="Generate flame graph")
     def profile_flame(
@@ -653,6 +654,16 @@ if typer and EXT_ENABLED and profile_app is not None:
     def profile_occupancy(ctx: typer.Context) -> None:
         from cli.commands import profiling
         _run(profiling.occupancy, ctx)
+
+    @profile_app.command("compare", help="Compare baseline vs optimized profiles (flame graph)")
+    def profile_compare(
+        ctx: typer.Context,
+        chapter: Optional[str] = typer.Argument(None, help="Chapter name or path to profile directory"),
+        output: str = typer.Option("comparison_flamegraph.html", "--output", "-o", help="Output HTML file"),
+        json_out: Optional[str] = typer.Option(None, "--json", "-j", help="Also output JSON data"),
+    ) -> None:
+        from cli.commands import profiling
+        _run(profiling.compare_profiles, ctx, chapter=chapter, output=output, json_out=json_out)
 
 
 # =============================================================================

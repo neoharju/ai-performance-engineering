@@ -1,12 +1,13 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Sparkles, DollarSign, Zap, TrendingUp, Calculator, Loader2, AlertTriangle, RefreshCw } from 'lucide-react';
-import { getCostCalculator, getCostROI, simulateWhatIf, getAnalysisScaling, getAnalysisPower, getAnalysisCost } from '@/lib/api';
+import { Sparkles, DollarSign, Zap, TrendingUp, Calculator, Loader2, AlertTriangle, RefreshCw, HardDrive, CheckCircle2, Undo2 } from 'lucide-react';
+import { getCostCalculator, getCostROI, simulateWhatIf, getAnalysisScaling, getAnalysisPower, getAnalysisCost, getBenchRootConfig, setBenchRootConfig } from '@/lib/api';
 import { WhatIfSolverCard } from '@/components/WhatIfSolverCard';
 import { WarmupAuditCard } from '@/components/WarmupAuditCard';
 import { CiCdIntegrationCard } from '@/components/CiCdIntegrationCard';
 import { SystemDeepDiveCard, BenchmarkScannerCard } from '@/components';
+import { useToast } from '@/components/Toast';
 
 export function AdvancedTab() {
   const [loading, setLoading] = useState(true);
@@ -24,6 +25,16 @@ export function AdvancedTab() {
   const [whatifLatency, setWhatifLatency] = useState(50);
   const [whatifResult, setWhatifResult] = useState<any>(null);
   const [simulating, setSimulating] = useState(false);
+
+  // Project root config state
+  const [benchConfig, setBenchConfig] = useState<any>(null);
+  const [benchRootInput, setBenchRootInput] = useState('');
+  const [dataFileInput, setDataFileInput] = useState('');
+  const [benchRootSaving, setBenchRootSaving] = useState(false);
+  const [benchRootError, setBenchRootError] = useState<string | null>(null);
+  const [savedBenchRoot, setSavedBenchRoot] = useState<string | null>(null);
+
+  const { showToast } = useToast();
 
   const loadData = useCallback(async () => {
     try {
@@ -49,6 +60,24 @@ export function AdvancedTab() {
       setCostLoading(false);
     }
   }, [costGpu]);
+
+  const loadBenchConfig = useCallback(async () => {
+    try {
+      setBenchRootError(null);
+      const cfg = await getBenchRootConfig();
+      setBenchConfig(cfg);
+      setBenchRootInput(cfg?.bench_root || '');
+      setDataFileInput(cfg?.data_file || '');
+      if (typeof window !== 'undefined') {
+        const saved = window.localStorage.getItem('benchRoot');
+        if (saved) {
+          setSavedBenchRoot(saved);
+        }
+      }
+    } catch (e) {
+      setBenchRootError(e instanceof Error ? e.message : 'Failed to load bench root');
+    }
+  }, []);
 
   async function runWhatIf() {
     setSimulating(true);
@@ -79,7 +108,45 @@ export function AdvancedTab() {
 
   useEffect(() => {
     loadData();
-  }, [loadData]);
+    loadBenchConfig();
+  }, [loadData, loadBenchConfig]);
+
+  const applyBenchRoot = async (overrideRoot?: string) => {
+    const desiredRoot = overrideRoot !== undefined ? overrideRoot : benchRootInput;
+    const payload: { bench_root?: string; data_file?: string | null } = {};
+    payload.bench_root = (desiredRoot || '').trim();
+    const trimmedDataFile = (dataFileInput || '').trim();
+    if (dataFileInput !== undefined) {
+      payload.data_file = trimmedDataFile === '' ? '' : trimmedDataFile;
+    }
+    setBenchRootSaving(true);
+    setBenchRootError(null);
+    try {
+      const res = await setBenchRootConfig(payload);
+      if (!res?.success) {
+        throw new Error(res?.error || 'Failed to update bench root');
+      }
+      setBenchConfig(res);
+      setBenchRootInput(res.bench_root || '');
+      setDataFileInput(res.data_file || '');
+      const rootToPersist = (desiredRoot || '').trim();
+      if (typeof window !== 'undefined') {
+        if (rootToPersist) {
+          window.localStorage.setItem('benchRoot', rootToPersist);
+        } else {
+          window.localStorage.removeItem('benchRoot');
+        }
+      }
+      setSavedBenchRoot(rootToPersist || null);
+      showToast('Bench root updated (no restart needed)', 'success');
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Failed to update bench root';
+      setBenchRootError(msg);
+      showToast(msg, 'error');
+    } finally {
+      setBenchRootSaving(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -117,11 +184,86 @@ export function AdvancedTab() {
         <div className="card-header">
           <div className="flex items-center gap-2">
             <Sparkles className="w-5 h-5 text-accent-secondary" />
-            <h2 className="text-lg font-semibold text-white">Advanced Tools</h2>
+            <h2 className="text-lg font-semibold text-white">Settings</h2>
           </div>
           <button onClick={loadData} className="p-2 hover:bg-white/5 rounded-lg">
             <RefreshCw className="w-4 h-4 text-white/50" />
           </button>
+        </div>
+      </div>
+
+      {/* Project root configuration */}
+      <div className="card">
+        <div className="card-header items-start">
+          <div className="flex items-center gap-2">
+            <HardDrive className="w-5 h-5 text-accent-primary" />
+            <div>
+              <h3 className="font-medium text-white">Project Root</h3>
+              <p className="text-xs text-white/50">Change where the dashboard scans for baseline/optimized pairs. Applies live—no restart.</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            {benchRootSaving ? <Loader2 className="w-4 h-4 animate-spin text-accent-primary" /> : null}
+            {benchConfig?.benchmarks !== undefined && (
+              <span className="text-xs text-white/50">Benchmarks: {benchConfig.benchmarks}</span>
+            )}
+          </div>
+        </div>
+        <div className="card-body space-y-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs text-white/60">Bench root path</label>
+              <input
+                value={benchRootInput}
+                onChange={(e) => setBenchRootInput(e.target.value)}
+                placeholder="/path/to/project (blank = repo root)"
+                className="w-full mt-1 px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white"
+              />
+              <div className="text-[11px] text-white/40 mt-1">
+                Current: {benchConfig?.bench_root || 'repo root'}
+              </div>
+            </div>
+            <div>
+              <label className="text-xs text-white/60">Data file (optional)</label>
+              <input
+                value={dataFileInput}
+                onChange={(e) => setDataFileInput(e.target.value)}
+                placeholder="/path/to/benchmark_test_results.json"
+                className="w-full mt-1 px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white"
+              />
+              <div className="text-[11px] text-white/40 mt-1">
+                Current: {benchConfig?.data_file || 'benchmark_test_results.json in bench root'}
+              </div>
+            </div>
+          </div>
+          {benchRootError && <div className="text-sm text-accent-danger">{benchRootError}</div>}
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              onClick={() => applyBenchRoot()}
+              disabled={benchRootSaving}
+              className="flex items-center gap-2 px-4 py-2 bg-accent-primary/20 text-accent-primary rounded-lg hover:bg-accent-primary/30 disabled:opacity-50"
+            >
+              <CheckCircle2 className="w-4 h-4" />
+              Apply project root
+            </button>
+            <button
+              onClick={() => applyBenchRoot('')}
+              disabled={benchRootSaving}
+              className="flex items-center gap-2 px-4 py-2 bg-white/5 text-white rounded-lg hover:bg-white/10 disabled:opacity-50"
+            >
+              <Undo2 className="w-4 h-4" />
+              Reset to repo root
+            </button>
+            {savedBenchRoot && savedBenchRoot !== benchConfig?.bench_root && (
+              <button
+                onClick={() => applyBenchRoot(savedBenchRoot)}
+                disabled={benchRootSaving}
+                className="text-xs text-accent-info underline"
+              >
+                Apply saved root ({savedBenchRoot})
+              </button>
+            )}
+          </div>
         </div>
       </div>
 

@@ -303,23 +303,45 @@ if __name__ == "__main__":
     print(f"Expected: Higher acceptance rate with multiple drafts")
     print(f"         Best draft selection based on confidence")
 
-# Harness integration shim: light placeholder so the runner can measure.
+# Harness integration for benchmark discovery
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig  # noqa: E402
 from typing import Optional  # noqa: E402
 
 
-class _PlaceholderBenchmark(BaseBenchmark):
+class OptimizedSpeculativeDecodingMultiDraftBenchmark(BaseBenchmark):
+    """Benchmark wrapper for multi-draft speculative decoding."""
+
     def __init__(self):
         super().__init__()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self._spec_decoder: Optional[OptimizedMultiDraftSpeculative] = None
+        self._result: Optional[Dict[str, Any]] = None
 
     def get_config(self) -> BenchmarkConfig:
-        return BenchmarkConfig(iterations=1, warmup=5)
+        return BenchmarkConfig(iterations=5, warmup=5)
+
+    def setup(self) -> None:
+        """Initialize the multi-draft speculative decoder."""
+        self._spec_decoder = OptimizedMultiDraftSpeculative(
+            batch_size=4,
+            vocab_size=32000,
+            hidden_size=2048,  # Smaller for faster benchmarks
+            num_draft_tokens=4,
+            num_draft_models=2,
+            num_sequences=5,
+        )
+        self._spec_decoder.setup()
 
     def benchmark_fn(self) -> None:
-        x = torch.randn(256, 256, device=self.device, dtype=torch.float32)
-        y = torch.randn(256, 256, device=self.device, dtype=torch.float32)
-        _ = (x @ y).sum().item()
+        """Run multi-draft speculative decoding."""
+        if self._spec_decoder is not None:
+            self._result = self._spec_decoder.run()
+
+    def teardown(self) -> None:
+        """Clean up resources."""
+        if self._spec_decoder is not None:
+            self._spec_decoder.cleanup()
+            self._spec_decoder = None
 
     def get_custom_metrics(self) -> Optional[dict]:
         """Return domain-specific metrics using standardized helper."""
@@ -334,7 +356,17 @@ class _PlaceholderBenchmark(BaseBenchmark):
 
 
 def get_benchmark() -> BaseBenchmark:
-    return _PlaceholderBenchmark()
+    """Factory function for benchmark discovery."""
+    if not torch.cuda.is_available():
+        class _SkipBenchmark(BaseBenchmark):
+            def setup(self) -> None:
+                raise RuntimeError("SKIPPED: CUDA required for speculative decoding benchmark")
+            def benchmark_fn(self) -> None:
+                pass
+            def get_config(self) -> BenchmarkConfig:
+                return BenchmarkConfig(iterations=1, warmup=5)
+        return _SkipBenchmark()
+    return OptimizedSpeculativeDecodingMultiDraftBenchmark()
 
 
 

@@ -179,21 +179,22 @@ int main() {
     CUDA_CHECK(cudaGraphAddKernelNode(&set_cond_node, graph, nullptr, 0, &set_cond_params));
     
     // Node 2: Conditional node (IF condition_value != 0)
+    // CUDA 13.0 API: cudaConditionalNodeParams has handle, type, size, phGraph_out
     cudaGraphNode_t cond_node;
     cudaGraphNodeParams cond_node_params = {};
     cond_node_params.type = cudaGraphNodeTypeConditional;
     cond_node_params.conditional.handle = cond_handle;
     cond_node_params.conditional.type = cudaGraphCondTypeIf;
     cond_node_params.conditional.size = 1;
-    cond_node_params.conditional.ctx = nullptr;
+    // phGraph_out will be populated by cudaGraphAddNode
     
     cudaGraphNode_t deps_cond[] = {set_cond_node};
-    CUDA_CHECK(cudaGraphAddNode(&cond_node, graph, deps_cond, 1, &cond_node_params));
+    // CUDA 13.0 API: cudaGraphAddNode(pNode, graph, deps, dependencyData, numDeps, nodeParams)
+    CUDA_CHECK(cudaGraphAddNode(&cond_node, graph, deps_cond, nullptr, 1, &cond_node_params));
     
-    // Get the body graphs for IF and ELSE branches
-    cudaGraph_t body_graphs[2];  // [0] = IF body, [1] = ELSE body (for IF type, only [0] used)
-    CUDA_CHECK(cudaGraphConditionalHandleCreate(
-        &cond_handle, graph, 1, cudaGraphCondAssignDefault));
+    // Get the body graphs populated by the conditional node creation
+    // phGraph_out points to CUDA-owned array of conditional body graphs
+    cudaGraph_t* body_graphs = cond_node_params.conditional.phGraph_out;
     
     // Build IF branch body (expensive kernel)
     cudaGraph_t if_body;
@@ -280,7 +281,8 @@ int main() {
     while_params.conditional.phGraph_out = body_graph_ptr;
     
     cudaGraphNode_t while_deps[] = {set_cond_node};
-    CUDA_CHECK(cudaGraphAddNode(&while_node, graph, while_deps, 1, &while_params));
+    // CUDA 13.0 API
+    CUDA_CHECK(cudaGraphAddNode(&while_node, graph, while_deps, nullptr, 1, &while_params));
     
     // Instantiate graph
     cudaGraphExec_t graph_exec;

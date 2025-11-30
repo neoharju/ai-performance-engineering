@@ -646,15 +646,15 @@ class BaseBenchmark:
         - Model parameters (num_layers, num_heads, etc.)
         - Any other configuration that affects computational work
         
-        Default implementation infers from common attributes. Override for
-        custom workload descriptions.
+        Default implementation infers from common attributes (both instance
+        and class-level). Override for custom workload descriptions.
         
         Returns:
             Dict describing the input workload, or None if inference fails
         """
         signature: Dict[str, Any] = {}
         
-        # Common workload attributes to capture
+        # Common workload attributes to capture (lowercase instance attrs)
         workload_attrs = [
             # Tensor dimensions
             "batch_size", "B", "seq_len", "seq_length", "sequence_length",
@@ -669,6 +669,19 @@ class BaseBenchmark:
             # Other common params
             "num_tokens", "num_samples", "num_elements",
             "input_size", "output_size",
+            # MoE-specific
+            "num_experts", "num_experts_per_tok", "intermediate_size",
+        ]
+        
+        # Also check class-level UPPERCASE constants (common pattern)
+        class_attrs = [
+            "BATCH_SIZE", "SEQ_LEN", "SEQ_LENGTH", "SEQUENCE_LENGTH",
+            "HIDDEN_SIZE", "HIDDEN_DIM", "D_MODEL", "EMBED_DIM",
+            "NUM_HEADS", "N_HEADS", "NHEADS",
+            "NUM_LAYERS", "N_LAYERS", "NLAYERS",
+            "VOCAB_SIZE", "NUM_CLASSES",
+            "NUM_EXPERTS", "NUM_EXPERTS_PER_TOK", "INTERMEDIATE_SIZE",
+            "WIDTH", "HEIGHT", "CHANNELS",
         ]
         
         for attr in workload_attrs:
@@ -676,6 +689,14 @@ class BaseBenchmark:
                 value = getattr(self, attr)
                 if isinstance(value, (int, float)) and not isinstance(value, bool):
                     signature[attr] = value
+        
+        # Check class-level constants
+        for attr in class_attrs:
+            if hasattr(type(self), attr):
+                value = getattr(type(self), attr)
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    # Use lowercase key for consistency
+                    signature[attr.lower()] = value
         
         # Also capture tensor shapes if available
         for attr in ["data", "input", "x", "inputs", "input_tensor"]:

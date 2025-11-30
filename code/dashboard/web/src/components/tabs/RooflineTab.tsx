@@ -59,6 +59,7 @@ export function RooflineTab() {
     rooflineQuery.data?.hardware?.memory_bandwidth ||
     rooflineQuery.data?.data?.memory_bandwidth ||
     3350;
+  const timeoutSeconds = rooflineQuery.data?.data?.timeout_seconds ?? null;
   const ridgePoint = (peakFlops * 1000) / memoryBandwidth;
   const kernels = rooflineQuery.data?.data?.kernels || rooflineQuery.data?.data?.points || [];
 
@@ -98,6 +99,14 @@ export function RooflineTab() {
               <div className="text-sm text-white/50 mb-1">Kernels Analyzed</div>
               <div className="text-2xl font-bold text-white">{kernels.length}</div>
             </div>
+            {timeoutSeconds !== null && (
+              <div className="p-4 bg-white/5 rounded-lg">
+                <div className="text-sm text-white/50 mb-1">Timeout (s)</div>
+                <div className="text-2xl font-bold text-accent-warning">
+                  {timeoutSeconds || timeoutSeconds === 0 ? timeoutSeconds : '—'}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Roofline Chart */}

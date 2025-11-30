@@ -44,8 +44,10 @@ class OptimizedSpeculativeDecodingBenchmark(BaseBenchmark):
     def __init__(self):
         super().__init__()
         self.target_model = None
+        # Match baseline dimensions for fair comparison
         self.batch_size = 4
         self.seq_len = 32
+        self.hidden_size = 4096
         self.speculative_k = 4  # Verify K tokens at once
         self.num_iterations = 10
         

@@ -8,7 +8,9 @@ from typing import Any, Dict, Iterable, List
 
 import pytest
 
-import mcp.server as mcp_server
+import json
+
+import mcp.mcp_server as mcp_server
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -135,6 +137,7 @@ CATEGORY_TOOLS: Dict[str, List[str]] = {
         "aisp_context_summary",
         "aisp_context_full",
         "aisp_triage",
+        "aisp_job_status",
         "aisp_help",
         "aisp_suggest_tools",
     ],
@@ -230,6 +233,7 @@ TOOL_PARAMS: Dict[str, Dict[str, Any]] = {
     "aisp_cost_estimate": {"model_size": 7, "training_tokens": 100, "provider": "aws"},
     "aisp_help": {"query": "benchmark"},
     "aisp_suggest_tools": {"query": "profile this model"},
+    "aisp_job_status": {"job_id": "test_job_missing"},
 }
 
 
@@ -274,8 +278,13 @@ def server(monkeypatch: pytest.MonkeyPatch):
 def _payload_from_result(result: mcp_server.ToolResult) -> Dict[str, Any]:
     assert result.content, "Tool response must include content"
     entry = result.content[0]
-    assert entry.get("type") == "application/json", f"Unexpected content type: {entry.get('type')}"
-    payload = entry.get("json")
+    ctype = entry.get("type")
+    if ctype == "text":
+        payload = json.loads(entry.get("text"))
+    elif ctype == "application/json":
+        payload = entry.get("json")
+    else:
+        raise AssertionError(f"Unexpected content type: {ctype}")
     assert isinstance(payload, dict), "Payload must be a JSON object"
     return payload
 
@@ -294,7 +303,7 @@ def test_expected_tool_registration_matches_catalog():
     expected = {case.name for case in ALL_TOOL_CASES}
     registered = set(mcp_server.TOOLS.keys())
     assert expected == registered, "Tool catalog must mirror MCP server registry"
-    assert len(expected) == 76
+    assert len(expected) == 77
 
 
 def test_tool_list_protocol_matches_registration(server: mcp_server.MCPServer):
@@ -302,6 +311,17 @@ def test_tool_list_protocol_matches_registration(server: mcp_server.MCPServer):
     names = {tool["name"] for tool in tool_list}
     expected = {case.name for case in ALL_TOOL_CASES}
     assert names == expected
+
+
+def test_tool_response_is_text_only(server: mcp_server.MCPServer):
+    """MCP responses must emit only text content to satisfy clients that reject other types."""
+    result = server.call_tool("aisp_status", {})
+    assert isinstance(result.content, list)
+    assert len(result.content) == 1, "MCP content should contain exactly one text entry"
+    entry = result.content[0]
+    assert entry["type"] == "text"
+    payload = json.loads(entry["text"])
+    assert isinstance(payload, dict)
 
 
 @pytest.mark.parametrize("case", ALL_TOOL_CASES, ids=_case_ids(ALL_TOOL_CASES))
@@ -326,8 +346,14 @@ def test_mcp_protocol_round_trip(server: mcp_server.MCPServer):
         call = await server.handle_message(
             {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": sample_tool, "arguments": {}}}
         )
-        assert call and call["result"]["content"][0]["type"] == "application/json"
-        payload = call["result"]["content"][0]["json"]
+        assert call
+        entry = call["result"]["content"][0]
+        if entry["type"] == "text":
+            payload = json.loads(entry["text"])
+        elif entry["type"] == "application/json":
+            payload = entry["json"]
+        else:
+            raise AssertionError(f"Unexpected content type: {entry['type']}")
         assert payload["tool"] == sample_tool
 
     asyncio.run(_exercise())

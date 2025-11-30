@@ -46,3 +46,6 @@ python -m cli.aisp bench run --targets labs/decode_optimization --profile none
 - Multi-GPU target expects eight visible GPUs; reduce `--world-size` if you customize the script for smaller boxes.
 - This lab uses a simplified MLP model (no attention) to isolate serving optimization effects.
 
+
+
+

@@ -578,6 +578,207 @@ def compare_ncu_files(profiles_dir: Path) -> Optional[Dict[str, Any]]:
     return None
 
 
+def _extract_nsys_cuda_api_stats(nsys_path: Path) -> Dict[str, Any]:
+    """Extract CUDA API summary stats from nsys report."""
+    try:
+        with tempfile.TemporaryDirectory(prefix="nsys_api_") as tmp_dir:
+            output_prefix = Path(tmp_dir) / "report"
+            result = subprocess.run(
+                ["nsys", "stats", "--report", "cuda_api_sum", "--format", "csv",
+                 "--force-export", "true", "-o", str(output_prefix), str(nsys_path)],
+                capture_output=True, text=True, timeout=60
+            )
+            if result.returncode != 0:
+                return {}
+            
+            # Find the generated CSV file
+            csv_files = sorted(Path(tmp_dir).glob("report*cuda_api_sum.csv"))
+            if not csv_files:
+                return {}
+            
+            api_stats = {}
+            with open(csv_files[0], newline='') as fh:
+                reader = csv.DictReader(fh)
+                for row in reader:
+                    name = row.get('Name', '')
+                    if name:
+                        try:
+                            api_stats[name] = {
+                                'time_pct': float(row.get('Time (%)', 0) or 0),
+                                'total_time_ns': int(float(row.get('Total Time (ns)', 0) or 0)),
+                                'num_calls': int(row.get('Num Calls', 0) or 0),
+                                'avg_ns': float(row.get('Avg (ns)', 0) or 0),
+                            }
+                        except (ValueError, TypeError):
+                            continue
+            return api_stats
+    except Exception:
+        return {}
+
+
+def _extract_nsys_kernel_stats(nsys_path: Path) -> Dict[str, Any]:
+    """Extract GPU kernel summary stats from nsys report."""
+    try:
+        with tempfile.TemporaryDirectory(prefix="nsys_kern_") as tmp_dir:
+            output_prefix = Path(tmp_dir) / "report"
+            result = subprocess.run(
+                ["nsys", "stats", "--report", "cuda_gpu_kern_sum", "--format", "csv",
+                 "--force-export", "true", "-o", str(output_prefix), str(nsys_path)],
+                capture_output=True, text=True, timeout=60
+            )
+            if result.returncode != 0:
+                return {}
+            
+            # Find the generated CSV file
+            csv_files = sorted(Path(tmp_dir).glob("report*cuda_gpu_kern_sum.csv"))
+            if not csv_files:
+                return {}
+            
+            kernel_stats = {}
+            with open(csv_files[0], newline='') as fh:
+                reader = csv.DictReader(fh)
+                for row in reader:
+                    name = row.get('Name', '')
+                    if name:
+                        try:
+                            # Shorten kernel names for display
+                            short_name = name.split('<')[0].split('(')[0][-40:]
+                            kernel_stats[short_name] = {
+                                'time_pct': float(row.get('Time (%)', 0) or 0),
+                                'total_time_ns': int(float(row.get('Total Time (ns)', 0) or 0)),
+                                'instances': int(row.get('Instances', 0) or 0),
+                                'avg_ns': float(row.get('Avg (ns)', 0) or 0),
+                            }
+                        except (ValueError, TypeError):
+                            continue
+            return kernel_stats
+    except Exception:
+        return {}
+
+
+def generate_flamegraph_comparison(profiles_dir: Path) -> Optional[Dict[str, Any]]:
+    """Generate flame graph comparison data for baseline vs optimized profiles.
+    
+    Returns structured data for the FlameGraphComparison React component.
+    """
+    baseline_nsys = list(profiles_dir.glob("*baseline*.nsys-rep"))
+    optimized_nsys = list(profiles_dir.glob("*optimized*.nsys-rep"))
+    
+    if not baseline_nsys or not optimized_nsys:
+        return None
+    
+    try:
+        baseline_api = _extract_nsys_cuda_api_stats(baseline_nsys[0])
+        optimized_api = _extract_nsys_cuda_api_stats(optimized_nsys[0])
+        baseline_kernels = _extract_nsys_kernel_stats(baseline_nsys[0])
+        optimized_kernels = _extract_nsys_kernel_stats(optimized_nsys[0])
+        
+        # Calculate total times
+        baseline_total_ns = sum(s.get('total_time_ns', 0) for s in baseline_api.values())
+        optimized_total_ns = sum(s.get('total_time_ns', 0) for s in optimized_api.values())
+        
+        # Calculate speedup
+        speedup = baseline_total_ns / optimized_total_ns if optimized_total_ns > 0 else 1.0
+        
+        # Build API breakdown for flame bars
+        def build_api_bars(api_stats: Dict) -> List[Dict]:
+            bars = []
+            for name, stats in sorted(api_stats.items(), key=lambda x: -x[1].get('time_pct', 0)):
+                bar_type = 'sync' if 'Sync' in name else \
+                          'malloc' if 'Malloc' in name or 'Alloc' in name or 'Free' in name else \
+                          'launch' if 'Launch' in name else \
+                          'memcpy' if 'Memcpy' in name else \
+                          'wait' if 'Wait' in name else 'other'
+                bars.append({
+                    'name': name,
+                    'time_pct': stats.get('time_pct', 0),
+                    'total_time_ns': stats.get('total_time_ns', 0),
+                    'num_calls': stats.get('num_calls', 0),
+                    'type': bar_type,
+                })
+            return bars[:10]  # Top 10 API calls
+        
+        def build_kernel_bars(kernel_stats: Dict) -> List[Dict]:
+            bars = []
+            for name, stats in sorted(kernel_stats.items(), key=lambda x: -x[1].get('time_pct', 0)):
+                bars.append({
+                    'name': name,
+                    'time_pct': stats.get('time_pct', 0),
+                    'total_time_ns': stats.get('total_time_ns', 0),
+                    'instances': stats.get('instances', 0),
+                })
+            return bars[:8]  # Top 8 kernels
+        
+        # Key metrics for comparison
+        baseline_sync_calls = sum(
+            s.get('num_calls', 0) for n, s in baseline_api.items() 
+            if 'Sync' in n
+        )
+        optimized_sync_calls = sum(
+            s.get('num_calls', 0) for n, s in optimized_api.items() 
+            if 'Sync' in n
+        )
+        
+        baseline_device_sync = baseline_api.get('cudaDeviceSynchronize', {}).get('num_calls', 0)
+        optimized_device_sync = optimized_api.get('cudaDeviceSynchronize', {}).get('num_calls', 0)
+        
+        optimized_wait_events = optimized_api.get('cudaStreamWaitEvent', {}).get('num_calls', 0)
+        
+        return {
+            'baseline': {
+                'file': baseline_nsys[0].name,
+                'total_time_ms': baseline_total_ns / 1_000_000,
+                'api_bars': build_api_bars(baseline_api),
+                'kernel_bars': build_kernel_bars(baseline_kernels),
+            },
+            'optimized': {
+                'file': optimized_nsys[0].name,
+                'total_time_ms': optimized_total_ns / 1_000_000,
+                'api_bars': build_api_bars(optimized_api),
+                'kernel_bars': build_kernel_bars(optimized_kernels),
+            },
+            'speedup': round(speedup, 2),
+            'metrics': {
+                'baseline_sync_calls': baseline_sync_calls,
+                'optimized_sync_calls': optimized_sync_calls,
+                'sync_reduction_pct': round((1 - optimized_sync_calls / baseline_sync_calls) * 100, 1) if baseline_sync_calls > 0 else 0,
+                'baseline_device_sync': baseline_device_sync,
+                'optimized_device_sync': optimized_device_sync,
+                'device_sync_reduction_pct': round((1 - optimized_device_sync / baseline_device_sync) * 100, 1) if baseline_device_sync > 0 else 0,
+                'optimized_wait_events': optimized_wait_events,
+            },
+            'insight': _generate_optimization_insight(baseline_api, optimized_api),
+        }
+    except Exception as exc:
+        return {'error': str(exc)}
+
+
+def _generate_optimization_insight(baseline_api: Dict, optimized_api: Dict) -> str:
+    """Generate a human-readable insight about the optimization."""
+    insights = []
+    
+    # Check sync reduction
+    baseline_sync = baseline_api.get('cudaStreamSynchronize', {}).get('num_calls', 0)
+    optimized_sync = optimized_api.get('cudaStreamSynchronize', {}).get('num_calls', 0)
+    if baseline_sync > 0 and optimized_sync < baseline_sync:
+        reduction = (1 - optimized_sync / baseline_sync) * 100
+        insights.append(f"Stream syncs reduced by {reduction:.0f}% ({baseline_sync} → {optimized_sync})")
+    
+    # Check device sync reduction
+    baseline_dev = baseline_api.get('cudaDeviceSynchronize', {}).get('num_calls', 0)
+    optimized_dev = optimized_api.get('cudaDeviceSynchronize', {}).get('num_calls', 0)
+    if baseline_dev > 0 and optimized_dev < baseline_dev:
+        reduction = (1 - optimized_dev / baseline_dev) * 100
+        insights.append(f"Device syncs reduced by {reduction:.0f}% ({baseline_dev} → {optimized_dev})")
+    
+    # Check for stream wait events (pipelining indicator)
+    wait_events = optimized_api.get('cudaStreamWaitEvent', {}).get('num_calls', 0)
+    if wait_events > 0:
+        insights.append(f"Uses {wait_events} stream wait events for lightweight coordination")
+    
+    return "; ".join(insights) if insights else "Profile comparison available"
+
+
 def generate_recommendations_from_profiles(result: Dict[str, Any]) -> List[str]:
     """Generate recommendations based on profile comparison data."""
     recommendations: List[str] = []

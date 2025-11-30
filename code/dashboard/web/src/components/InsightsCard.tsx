@@ -224,3 +224,6 @@ export function InsightsCard({ className, maxInsights = 6, compact = false }: In
   );
 }
 
+
+
+

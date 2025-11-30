@@ -4,28 +4,59 @@
 
 :root {
   --bg-primary: #06060a;
+  --bg-primary-90: rgba(6, 6, 10, 0.9);
+  --bg-primary-50: rgba(6, 6, 10, 0.5);
   --bg-secondary: #0c0c14;
   --bg-tertiary: #12121c;
   --bg-card: rgba(16, 16, 24, 0.9);
+  --bg-card-90: rgba(16, 16, 24, 0.9);
+  --bg-card-50: rgba(16, 16, 24, 0.5);
   --bg-glass: rgba(255, 255, 255, 0.02);
   --border-glass: rgba(255, 255, 255, 0.06);
   --border-highlight: rgba(0, 245, 212, 0.3);
   --accent-primary: #00f5d4;
+  --accent-primary-rgb: 0, 245, 212;
   --accent-secondary: #9d4edd;
+  --accent-secondary-rgb: 157, 78, 221;
   --accent-tertiary: #f72585;
+  --accent-tertiary-rgb: 247, 37, 133;
   --accent-success: #00f5a0;
+  --accent-success-rgb: 0, 245, 160;
   --accent-warning: #ffc43d;
+  --accent-warning-rgb: 255, 196, 61;
   --accent-danger: #ff4757;
+  --accent-danger-rgb: 255, 71, 87;
   --accent-info: #4cc9f0;
+  --accent-info-rgb: 76, 201, 240;
   --text-primary: #ffffff;
+  --text-primary-rgb: 255, 255, 255;
   --text-secondary: rgba(255, 255, 255, 0.75);
+  --text-secondary-rgb: 255, 255, 255;
   --text-muted: rgba(255, 255, 255, 0.45);
+  --text-muted-rgb: 255, 255, 255;
 }
 
 body {
   background: var(--bg-primary);
   color: var(--text-primary);
   font-family: var(--font-sans), 'Space Grotesk', system-ui, sans-serif;
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+.bg-brand-bg {
+  background-color: var(--bg-primary) !important;
+}
+
+.bg-brand-bg\/90 {
+  background-color: var(--bg-primary-90, var(--bg-primary)) !important;
+}
+
+.bg-brand-bg\/50 {
+  background-color: var(--bg-primary-50, var(--bg-primary)) !important;
+}
+
+.bg-brand-card {
+  background-color: var(--bg-card) !important;
 }
 
 /* Background gradients */
@@ -41,14 +72,20 @@ body {
   .card {
     @apply bg-brand-card rounded-xl border border-white/5 backdrop-blur-xl;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    background: var(--bg-card);
+    border-color: var(--border-glass);
+    color: var(--text-primary);
   }
 
   .card-header {
     @apply px-5 py-4 border-b border-white/5 flex items-center justify-between;
+    border-color: var(--border-glass);
+    color: inherit;
   }
 
   .card-body {
     @apply p-5;
+    color: inherit;
   }
 
   .btn {
@@ -127,6 +164,79 @@ body {
   background: rgba(255, 255, 255, 0.2);
 }
 
+/* Light mode overrides driven by ThemeContext */
+:root[data-color-mode='light'] {
+  color-scheme: light;
+}
+
+:root[data-color-mode='light'] body {
+  color: var(--text-primary);
+}
+
+:root[data-color-mode='light'] .text-white {
+  color: var(--text-primary) !important;
+}
+
+:root[data-color-mode='light'] .text-white\/80 {
+  color: rgba(var(--text-primary-rgb), 0.8) !important;
+}
+
+:root[data-color-mode='light'] .text-white\/70 {
+  color: rgba(var(--text-primary-rgb), 0.7) !important;
+}
+
+:root[data-color-mode='light'] .text-white\/60 {
+  color: var(--text-secondary) !important;
+}
+
+:root[data-color-mode='light'] .text-white\/50 {
+  color: var(--text-muted) !important;
+}
+
+:root[data-color-mode='light'] .text-white\/40 {
+  color: rgba(var(--text-muted-rgb), 0.7) !important;
+}
+
+:root[data-color-mode='light'] .text-white\/30 {
+  color: rgba(var(--text-muted-rgb), 0.55) !important;
+}
+
+:root[data-color-mode='light'] .border-white\/5 {
+  border-color: rgba(var(--text-primary-rgb), 0.08) !important;
+}
+
+:root[data-color-mode='light'] .border-white\/10 {
+  border-color: rgba(var(--text-primary-rgb), 0.12) !important;
+}
+
+:root[data-color-mode='light'] .border-white\/20 {
+  border-color: rgba(var(--text-primary-rgb), 0.18) !important;
+}
+
+:root[data-color-mode='light'] .border-white\/30 {
+  border-color: rgba(var(--text-primary-rgb), 0.26) !important;
+}
+
+:root[data-color-mode='light'] .bg-white\/5 {
+  background-color: rgba(var(--text-primary-rgb), 0.03) !important;
+}
+
+:root[data-color-mode='light'] .bg-white\/10 {
+  background-color: rgba(var(--text-primary-rgb), 0.06) !important;
+}
+
+:root[data-color-mode='light'] .bg-white\/20 {
+  background-color: rgba(var(--text-primary-rgb), 0.1) !important;
+}
+
+:root[data-color-mode='light'] .bg-white\/30 {
+  background-color: rgba(var(--text-primary-rgb), 0.16) !important;
+}
+
+:root[data-color-mode='light'] .bg-white\/50 {
+  background-color: rgba(var(--text-primary-rgb), 0.22) !important;
+}
+
 /* Recharts custom styling */
 .recharts-cartesian-grid-horizontal line,
 .recharts-cartesian-grid-vertical line {
@@ -136,4 +246,3 @@ body {
 .recharts-text {
   fill: rgba(255, 255, 255, 0.5);
 }
-

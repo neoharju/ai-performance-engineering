@@ -32,6 +32,7 @@ from datetime import datetime
 import uuid
 import typer
 from urllib.parse import urlparse, parse_qs
+import shlex
 
 
 # Find the code root (repository root)
@@ -68,6 +69,7 @@ from core.ncu_analysis import load_ncu_deepdive
 from core.kernel_efficiency import score_kernels
 from core.warmup_audit import run_warmup_audit
 from core.report_export import generate_html_report
+from core.discovery import get_bench_roots, discover_all_chapters
 
 # Global optimization job store for SSE streaming
 _optimization_jobs: Dict[str, Dict[str, Any]] = {}
@@ -79,6 +81,10 @@ _gpu_history_max_size = 300  # Store last 5 minutes at 1 sample/second
 
 # Global insights cache
 _insights_cache: Dict[str, Any] = {"insights": [], "generated_at": None}
+
+# Profiling job store (nsys/ncu background captures)
+_profile_jobs: Dict[str, Dict[str, Any]] = {}
+_profile_job_lock = threading.Lock()
 
 # =============================================================================
 # LLM IMPORTS - required for AI-powered analysis
@@ -140,13 +146,15 @@ class PerformanceCore(PerformanceCoreBase, http.server.SimpleHTTPRequestHandler)
     _llm_engine: Optional[Any] = None
     _llm_advisor: Optional[Any] = None
     
-    def __init__(self, *args, data_file: Optional[Path] = None, **kwargs):
+    def __init__(self, *args, data_file: Optional[Path] = None, bench_root: Optional[Path] = None, **kwargs):
         # Initialize shared core state without invoking HTTP handler
         try:
-            PerformanceCoreBase.__init__(self, data_file=data_file)  # type: ignore[arg-type]
+            PerformanceCoreBase.__init__(self, data_file=data_file, bench_root=bench_root)  # type: ignore[arg-type]
         except Exception:
             self.data_file = data_file
-            self._analyzer = PerformanceAnalyzer(lambda: load_benchmark_results(self.data_file))
+            self.bench_roots = get_bench_roots(repo_root=CODE_ROOT, bench_root=bench_root)
+            self.bench_root = self.bench_roots[0]
+            self._analyzer = PerformanceAnalyzer(lambda: load_benchmark_results(self.data_file, self.bench_roots))
         # Now initialize HTTP handler
         http.server.SimpleHTTPRequestHandler.__init__(self, *args, **kwargs)
 
@@ -191,11 +199,62 @@ class PerformanceCore(PerformanceCoreBase, http.server.SimpleHTTPRequestHandler)
             return None
     
     def load_benchmark_data(self) -> dict:
-        return load_benchmark_results(self.data_file)
+        return load_benchmark_results(self.data_file, self.bench_roots)
+    
+    def get_bench_root_info(self) -> dict:
+        """Return the current bench root and basic availability summary."""
+        try:
+            availability = self.get_available_benchmarks()
+            total = availability.get("total_benchmarks", 0)
+        except Exception:
+            availability = {}
+            total = 0
+        return {
+            "bench_root": str(self.bench_root),
+            "bench_roots": [str(p) for p in self.bench_roots],
+            "data_file": str(self.data_file) if self.data_file else None,
+            "benchmarks": total,
+            "availability": availability,
+        }
+    
+    def update_bench_root_config(self, params: dict) -> dict:
+        """Update bench root and optional data file without restart."""
+        bench_root_param = params.get("bench_root")
+        data_file_param = params.get("data_file")
+        
+        try:
+            # Resolve bench root (empty -> default repo root)
+            if bench_root_param is None or str(bench_root_param).strip() == "":
+                target_root = CODE_ROOT
+            else:
+                target_root = Path(str(bench_root_param)).expanduser().resolve()
+                if not target_root.is_dir():
+                    return {"success": False, "error": f"Bench root not found: {target_root}"}
+            self.set_bench_root(target_root)
+            
+            # Optionally update data file
+            if data_file_param is not None:
+                if str(data_file_param).strip() == "":
+                    self.data_file = None
+                else:
+                    data_path = Path(str(data_file_param)).expanduser().resolve()
+                    if not data_path.exists():
+                        return {"success": False, "error": f"Data file not found: {data_path}"}
+                    self.data_file = data_path
+            
+            # Refresh analyzer binding to new root/data
+            self._make_analyzer()
+            info = self.get_bench_root_info()
+            info["success"] = True
+            return info
+        except Exception as exc:
+            return {"success": False, "error": str(exc)}
     
     def do_GET(self):
         if self.path == '/api/data':
             self.send_json_response(self.load_benchmark_data())
+        elif self.path == '/api/config/bench-root':
+            self.send_json_response(self.get_bench_root_info())
         elif self.path == '/api/gpu':
             self.send_json_response(self.get_gpu_info())
         elif self.path == '/api/gpu/stream':
@@ -259,6 +318,9 @@ class PerformanceCore(PerformanceCoreBase, http.server.SimpleHTTPRequestHandler)
             self.send_json_response(self.compare_profiles(chapter))
         elif self.path == '/api/deep-profile/recommendations':
             self.send_json_response(self.get_profile_recommendations())
+        elif self.path.startswith('/api/deep-profile/flamegraph/'):
+            chapter = self.path.split('/api/deep-profile/flamegraph/')[1]
+            self.send_json_response(self.get_flamegraph_comparison(chapter))
         # NEW: Live optimization SSE streaming
         elif self.path.startswith('/api/optimize/stream/'):
             job_id = self.path.split('/api/optimize/stream/')[1]
@@ -305,7 +367,24 @@ class PerformanceCore(PerformanceCoreBase, http.server.SimpleHTTPRequestHandler)
             params = self._parse_query()
             size_mb = int((params.get("size_mb") or ["32"])[0])
             strides = [int(s) for s in (params.get("stride") or [])] if params.get("stride") else None
-            self.send_json_response(self.roofline_sweep(size_mb=size_mb, strides=strides))
+            precheck_only = params.get('precheck_only', ['false'])[0].lower() == 'true'
+            dry_run = params.get('dry_run', ['false'])[0].lower() == 'true'
+            timeout_param = params.get('timeout_seconds', [None])[0]
+            timeout_seconds = int(timeout_param) if timeout_param not in (None, '') else None
+            if precheck_only:
+                self.send_json_response({
+                    "precheck_only": True,
+                    "planned": {"size_mb": size_mb, "strides": strides},
+                    "note": "No execution performed; rerun without precheck_only to run roofline sweep.",
+                })
+            elif dry_run:
+                self.send_json_response({
+                    "dry_run": True,
+                    "planned": {"size_mb": size_mb, "strides": strides},
+                    "timeout_seconds": timeout_seconds,
+                })
+            else:
+                self.send_json_response(self.roofline_sweep(size_mb=size_mb, strides=strides, timeout_seconds=timeout_seconds))
         # Microbench endpoints
         elif self.path.startswith('/api/export/csv'):
             detailed = False
@@ -324,56 +403,196 @@ class PerformanceCore(PerformanceCoreBase, http.server.SimpleHTTPRequestHandler)
         elif self.path.startswith('/api/microbench/disk'):
             from core.diagnostics import microbench
             params = self._parse_query()
-            res = microbench.disk_io_test(
-                file_size_mb=int(params.get('file_size_mb', [256])[0]),
-                block_size_kb=int(params.get('block_size_kb', [1024])[0]),
-                tmp_dir=params.get('tmp_dir', [None])[0],
-            )
-            self.send_json_response(res)
+            file_size_mb = int(params.get('file_size_mb', [256])[0])
+            block_size_kb = int(params.get('block_size_kb', [1024])[0])
+            tmp_dir = params.get('tmp_dir', [None])[0]
+            precheck_only = params.get('precheck_only', ['false'])[0].lower() == 'true'
+            dry_run = params.get('dry_run', ['false'])[0].lower() == 'true'
+            timeout_param = params.get('timeout_seconds', [None])[0]
+            timeout_seconds = int(timeout_param) if timeout_param not in (None, '') else None
+            if precheck_only:
+                tmp_path = Path(tmp_dir) if tmp_dir else None
+                self.send_json_response({
+                    "precheck_only": True,
+                    "planned": {"file_size_mb": file_size_mb, "block_size_kb": block_size_kb, "tmp_dir": tmp_dir},
+                    "tmp_dir_exists": tmp_path.exists() if tmp_path else True,
+                    "tmp_dir": str(tmp_path) if tmp_path else None,
+                    "note": "No execution performed; rerun without precheck_only to run disk test.",
+                })
+            elif dry_run:
+                self.send_json_response({
+                    "dry_run": True,
+                    "planned": {"file_size_mb": file_size_mb, "block_size_kb": block_size_kb, "tmp_dir": tmp_dir},
+                    "timeout_seconds": timeout_seconds,
+                })
+            else:
+                res = microbench.disk_io_test(
+                    file_size_mb=file_size_mb,
+                    block_size_kb=block_size_kb,
+                    tmp_dir=tmp_dir,
+                    timeout_seconds=timeout_seconds,
+                )
+                self.send_json_response(res)
         elif self.path.startswith('/api/microbench/pcie'):
             from core.diagnostics import microbench
             params = self._parse_query()
-            res = microbench.pcie_bandwidth_test(
-                size_mb=int(params.get('size_mb', [256])[0]),
-                iters=int(params.get('iters', [10])[0]),
-            )
-            self.send_json_response(res)
+            size_mb = int(params.get('size_mb', [256])[0])
+            iters = int(params.get('iters', [10])[0])
+            precheck_only = params.get('precheck_only', ['false'])[0].lower() == 'true'
+            dry_run = params.get('dry_run', ['false'])[0].lower() == 'true'
+            timeout_param = params.get('timeout_seconds', [None])[0]
+            timeout_seconds = int(timeout_param) if timeout_param not in (None, '') else None
+            if precheck_only:
+                self.send_json_response({
+                    "precheck_only": True,
+                    "planned": {"size_mb": size_mb, "iters": iters},
+                    "note": "No execution performed; rerun without precheck_only to run PCIe test.",
+                })
+            elif dry_run:
+                self.send_json_response({
+                    "dry_run": True,
+                    "planned": {"size_mb": size_mb, "iters": iters},
+                    "timeout_seconds": timeout_seconds,
+                })
+            else:
+                res = microbench.pcie_bandwidth_test(
+                    size_mb=size_mb,
+                    iters=iters,
+                    timeout_seconds=timeout_seconds,
+                )
+                self.send_json_response(res)
         elif self.path.startswith('/api/microbench/mem'):
             from core.diagnostics import microbench
             params = self._parse_query()
-            res = microbench.mem_hierarchy_test(
-                size_mb=int(params.get('size_mb', [256])[0]),
-                stride=int(params.get('stride', [128])[0]),
-            )
-            self.send_json_response(res)
+            size_mb = int(params.get('size_mb', [256])[0])
+            stride = int(params.get('stride', [128])[0])
+            precheck_only = params.get('precheck_only', ['false'])[0].lower() == 'true'
+            dry_run = params.get('dry_run', ['false'])[0].lower() == 'true'
+            timeout_param = params.get('timeout_seconds', [None])[0]
+            timeout_seconds = int(timeout_param) if timeout_param not in (None, '') else None
+            if precheck_only:
+                self.send_json_response({
+                    "precheck_only": True,
+                    "planned": {"size_mb": size_mb, "stride": stride},
+                    "note": "No execution performed; rerun without precheck_only to run mem hierarchy test.",
+                })
+            elif dry_run:
+                self.send_json_response({
+                    "dry_run": True,
+                    "planned": {"size_mb": size_mb, "stride": stride},
+                    "timeout_seconds": timeout_seconds,
+                })
+            else:
+                res = microbench.mem_hierarchy_test(
+                    size_mb=size_mb,
+                    stride=stride,
+                    timeout_seconds=timeout_seconds,
+                )
+                self.send_json_response(res)
         elif self.path.startswith('/api/microbench/roofline'):
             params = self._parse_query()
             size_mb = int(params.get('size_mb', [32])[0])
             strides = [int(s) for s in params.get('stride', [])] if params.get('stride') else None
-            self.send_json_response(self.roofline_sweep(size_mb=size_mb, strides=strides))
+            precheck_only = params.get('precheck_only', ['false'])[0].lower() == 'true'
+            dry_run = params.get('dry_run', ['false'])[0].lower() == 'true'
+            timeout_param = params.get('timeout_seconds', [None])[0]
+            timeout_seconds = int(timeout_param) if timeout_param not in (None, '') else None
+            if precheck_only:
+                self.send_json_response({
+                    "precheck_only": True,
+                    "planned": {"size_mb": size_mb, "strides": strides},
+                    "note": "No execution performed; rerun without precheck_only to run roofline sweep.",
+                })
+            elif dry_run:
+                self.send_json_response({
+                    "dry_run": True,
+                    "planned": {"size_mb": size_mb, "strides": strides},
+                    "timeout_seconds": timeout_seconds,
+                })
+            else:
+                self.send_json_response(self.roofline_sweep(size_mb=size_mb, strides=strides, timeout_seconds=timeout_seconds))
         elif self.path.startswith('/api/microbench/tensor'):
             from core.diagnostics import microbench
             params = self._parse_query()
-            res = microbench.tensor_core_bench(
-                size=int(params.get('size', [4096])[0]),
-                precision=params.get('precision', ['fp16'])[0],
-            )
-            self.send_json_response(res)
+            size = int(params.get('size', [4096])[0])
+            precision = params.get('precision', ['fp16'])[0]
+            precheck_only = params.get('precheck_only', ['false'])[0].lower() == 'true'
+            dry_run = params.get('dry_run', ['false'])[0].lower() == 'true'
+            timeout_param = params.get('timeout_seconds', [None])[0]
+            timeout_seconds = int(timeout_param) if timeout_param not in (None, '') else None
+            if precheck_only:
+                self.send_json_response({
+                    "precheck_only": True,
+                    "planned": {"size": size, "precision": precision},
+                    "note": "No execution performed; rerun without precheck_only to run tensor core bench.",
+                })
+            elif dry_run:
+                self.send_json_response({
+                    "dry_run": True,
+                    "planned": {"size": size, "precision": precision},
+                    "timeout_seconds": timeout_seconds,
+                })
+            else:
+                res = microbench.tensor_core_bench(
+                    size=size,
+                    precision=precision,
+                    timeout_seconds=timeout_seconds,
+                )
+                self.send_json_response(res)
         elif self.path.startswith('/api/microbench/sfu'):
             from core.diagnostics import microbench
             params = self._parse_query()
-            res = microbench.sfu_bench(
-                size=int(params.get('elements', [64 * 1024 * 1024])[0]),
-            )
-            self.send_json_response(res)
+            elements = int(params.get('elements', [64 * 1024 * 1024])[0])
+            precheck_only = params.get('precheck_only', ['false'])[0].lower() == 'true'
+            dry_run = params.get('dry_run', ['false'])[0].lower() == 'true'
+            timeout_param = params.get('timeout_seconds', [None])[0]
+            timeout_seconds = int(timeout_param) if timeout_param not in (None, '') else None
+            if precheck_only:
+                self.send_json_response({
+                    "precheck_only": True,
+                    "planned": {"elements": elements},
+                    "note": "No execution performed; rerun without precheck_only to run SFU bench.",
+                })
+            elif dry_run:
+                self.send_json_response({
+                    "dry_run": True,
+                    "planned": {"elements": elements},
+                    "timeout_seconds": timeout_seconds,
+                })
+            else:
+                res = microbench.sfu_bench(
+                    size=elements,
+                    timeout_seconds=timeout_seconds,
+                )
+                self.send_json_response(res)
         elif self.path.startswith('/api/microbench/loopback'):
             from core.diagnostics import microbench
             params = self._parse_query()
-            res = microbench.network_loopback_test(
-                size_mb=int(params.get('size_mb', [64])[0]),
-                port=int(params.get('port', [50007])[0]),
-            )
-            self.send_json_response(res)
+            size_mb = int(params.get('size_mb', [64])[0])
+            port = int(params.get('port', [50007])[0])
+            precheck_only = params.get('precheck_only', ['false'])[0].lower() == 'true'
+            dry_run = params.get('dry_run', ['false'])[0].lower() == 'true'
+            timeout_param = params.get('timeout_seconds', [None])[0]
+            timeout_seconds = int(timeout_param) if timeout_param not in (None, '') else None
+            if precheck_only:
+                self.send_json_response({
+                    "precheck_only": True,
+                    "planned": {"size_mb": size_mb, "port": port},
+                    "note": "No execution performed; rerun without precheck_only to run loopback test.",
+                })
+            elif dry_run:
+                self.send_json_response({
+                    "dry_run": True,
+                    "planned": {"size_mb": size_mb, "port": port},
+                    "timeout_seconds": timeout_seconds,
+                })
+            else:
+                res = microbench.network_loopback_test(
+                    size_mb=size_mb,
+                    port=port,
+                    timeout_seconds=timeout_seconds,
+                )
+                self.send_json_response(res)
         elif self.path == '/api/nsight/availability':
             from core.profiling.nsight_automation import NsightAutomation
             automation = NsightAutomation(Path("artifacts/mcp-profiles"))
@@ -382,6 +601,20 @@ class PerformanceCore(PerformanceCoreBase, http.server.SimpleHTTPRequestHandler)
                 "ncu_available": automation.ncu_available,
                 "output_dir": str(automation.output_dir),
             })
+        elif self.path.startswith('/api/nsight/job-status'):
+            params = self._parse_query()
+            job_id = (params.get("job_id") or [None])[0]
+            if not job_id:
+                self.send_json_response({"error": "job_id is required"})
+            else:
+                self.send_json_response(self.get_profile_job_status(job_id))
+        elif self.path.startswith('/api/mcp/job-status'):
+            params = self._parse_query()
+            job_id = (params.get("job_id") or [None])[0]
+            if not job_id:
+                self.send_json_response({"error": "job_id is required"})
+            else:
+                self.send_json_response(self.call_mcp_tool({"tool": "aisp_job_status", "params": {"job_id": job_id}}))
         elif self.path == '/api/nsight/compare/nsys':
             profiles_dir = self._parse_query().get('dir', [''])[0]
             from core import profile_insights
@@ -1240,61 +1473,42 @@ class PerformanceCore(PerformanceCoreBase, http.server.SimpleHTTPRequestHandler)
     def do_POST(self):
         """Handle POST requests for starting optimizations."""
         if self.path == '/api/optimize/start':
-            content_length = int(self.headers.get('Content-Length', 0))
-            body = self.rfile.read(content_length).decode('utf-8')
-            try:
-                params = json.loads(body) if body else {}
-            except json.JSONDecodeError:
-                params = {}
+            params = self._read_json_body()
             result = self.start_optimization_job(params)
             self.send_json_response(result)
+        elif self.path == '/api/nsight/profile/nsys':
+            params = self._read_json_body()
+            result = self.start_nsys_capture(params)
+            self.send_json_response(result)
+        elif self.path == '/api/nsight/profile/ncu':
+            params = self._read_json_body()
+            result = self.start_ncu_capture(params)
+            self.send_json_response(result)
+        elif self.path == '/api/config/bench-root':
+            params = self._read_json_body()
+            self.send_json_response(self.update_bench_root_config(params))
         elif self.path == '/api/optimize/stop':
-            content_length = int(self.headers.get('Content-Length', 0))
-            body = self.rfile.read(content_length).decode('utf-8')
-            try:
-                params = json.loads(body) if body else {}
-            except json.JSONDecodeError:
-                params = {}
+            params = self._read_json_body()
             result = self.stop_optimization_job(params.get('job_id'))
             self.send_json_response(result)
         # MCP Tool Execution
         elif self.path == '/api/mcp/call':
-            content_length = int(self.headers.get('Content-Length', 0))
-            body = self.rfile.read(content_length).decode('utf-8')
-            try:
-                params = json.loads(body) if body else {}
-            except json.JSONDecodeError:
-                params = {}
+            params = self._read_json_body()
             result = self.call_mcp_tool(params)
             self.send_json_response(result)
         # NEW: LLM-powered kernel analysis
         elif self.path == '/api/profiler/analyze-kernel':
-            content_length = int(self.headers.get('Content-Length', 0))
-            body = self.rfile.read(content_length).decode('utf-8')
-            try:
-                params = json.loads(body) if body else {}
-            except json.JSONDecodeError:
-                params = {}
+            params = self._read_json_body()
             result = self.analyze_kernel_with_llm(params)
             self.send_json_response(result)
         # NEW: Generate optimization patch from analysis
         elif self.path == '/api/profiler/generate-patch':
-            content_length = int(self.headers.get('Content-Length', 0))
-            body = self.rfile.read(content_length).decode('utf-8')
-            try:
-                params = json.loads(body) if body else {}
-            except json.JSONDecodeError:
-                params = {}
+            params = self._read_json_body()
             result = self.generate_optimization_patch(params)
             self.send_json_response(result)
         # NEW: AI Chat for profiling questions
         elif self.path == '/api/profiler/ask':
-            content_length = int(self.headers.get('Content-Length', 0))
-            body = self.rfile.read(content_length).decode('utf-8')
-            try:
-                params = json.loads(body) if body else {}
-            except json.JSONDecodeError:
-                params = {}
+            params = self._read_json_body()
             result = self.ask_profiler_ai(params)
             self.send_json_response(result)
         # NEW: Parallelism strategy recommendation (POST for complex queries)
@@ -1377,23 +1591,17 @@ class PerformanceCore(PerformanceCoreBase, http.server.SimpleHTTPRequestHandler)
             self.send_json_response(result)
         # Quick benchmark runner
         elif self.path == '/api/benchmark/run':
-            content_length = int(self.headers.get('Content-Length', 0))
-            body = self.rfile.read(content_length).decode('utf-8')
-            try:
-                params = json.loads(body) if body else {}
-            except json.JSONDecodeError:
-                params = {}
+            params = self._read_json_body()
             result = self.run_benchmark(params)
             self.send_json_response(result)
         elif self.path == '/api/run-benchmark':
-            content_length = int(self.headers.get('Content-Length', 0))
-            body = self.rfile.read(content_length).decode('utf-8')
-            try:
-                params = json.loads(body) if body else {}
-            except json.JSONDecodeError:
-                params = {}
+            params = self._read_json_body()
             # Legacy alias used by the static dashboard
             result = self.run_benchmark(params)
+            self.send_json_response(result)
+        elif self.path == '/api/benchmark/verify' or self.path == '/api/verify-benchmark':
+            params = self._read_json_body()
+            result = self.verify_benchmark(params)
             self.send_json_response(result)
         # GPU control POST endpoints
         elif self.path == '/api/gpu/power-limit':
@@ -1593,6 +1801,57 @@ class PerformanceCore(PerformanceCoreBase, http.server.SimpleHTTPRequestHandler)
         """Get REAL roofline data computed from benchmark throughput metrics."""
         return super().get_roofline_data()
     
+    def get_flamegraph_comparison(self, chapter: str) -> dict:
+        """Get flame graph comparison data for baseline vs optimized profiles.
+        
+        Returns structured data for the FlameGraphComparison React component,
+        including CUDA API timing bars, kernel breakdown, and speedup metrics.
+        """
+        from core.profile_insights import generate_flamegraph_comparison
+        
+        # Find the chapter directory
+        chapter_dir = None
+        for dir_path in discover_all_chapters(self.bench_root, bench_roots=self.bench_roots):
+            rel = self._relative_to_bench_root(dir_path)
+            if chapter in rel or rel.endswith(chapter):
+                chapter_dir = dir_path
+                break
+        
+        if not chapter_dir:
+            # Try artifacts directory
+            artifacts_dir = self.bench_root / "artifacts" / chapter
+            if artifacts_dir.exists():
+                chapter_dir = artifacts_dir
+            else:
+                # Try benchmark_profiles directory
+                profiles_dir = self.bench_root / "benchmark_profiles" / chapter
+                if profiles_dir.exists():
+                    chapter_dir = profiles_dir
+        
+        if not chapter_dir or not chapter_dir.exists():
+            return {"error": f"Chapter not found: {chapter}", "chapter": chapter}
+        
+        # Generate comparison
+        result = generate_flamegraph_comparison(chapter_dir)
+        if result is None:
+            # Try to find nsys files in subdirectories
+            for subdir in chapter_dir.iterdir():
+                if subdir.is_dir():
+                    result = generate_flamegraph_comparison(subdir)
+                    if result:
+                        break
+        
+        if result is None:
+            return {
+                "error": "No baseline/optimized nsys profiles found",
+                "chapter": chapter,
+                "searched_path": str(chapter_dir),
+                "hint": "Profile both baseline and optimized with: nsys profile --stats=true -o <name> python <script>.py"
+            }
+        
+        result["chapter"] = chapter
+        return result
+    
     def get_available_benchmarks(self) -> dict:
         """Scan all chapters and labs for available benchmarks."""
         return super().get_available_benchmarks()
@@ -1602,7 +1861,7 @@ class PerformanceCore(PerformanceCoreBase, http.server.SimpleHTTPRequestHandler)
         return super()._scan_directory(directory, dir_type)
     
     def scan_all_chapters_and_labs(self) -> dict:
-        """Comprehensive scan of all chapters and labs with detailed info."""
+        """Comprehensive scan of all benchmark directories with detailed info."""
         result = {
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
             "scan_results": [],
@@ -1616,43 +1875,25 @@ class PerformanceCore(PerformanceCoreBase, http.server.SimpleHTTPRequestHandler)
                 "cuda_benchmarks": 0,
             }
         }
-        
-        # Scan all chapters
-        for ch_dir in sorted(CODE_ROOT.glob("ch[0-9]*")):
-            if ch_dir.is_dir():
-                scan = self._detailed_scan(ch_dir, "chapter")
-                if scan:
-                    result['scan_results'].append(scan)
-                    result['summary']['total_directories'] += 1
-                    result['summary']['total_benchmarks'] += scan['benchmark_count']
-                    result['summary']['python_benchmarks'] += scan['python_count']
-                    result['summary']['cuda_benchmarks'] += scan['cuda_count']
-                    if scan['has_expectations']:
-                        result['summary']['with_expectations'] += 1
-                    if scan['has_profiles']:
-                        result['summary']['with_profiles'] += 1
-                    if scan['llm_analysis_count'] > 0:
-                        result['summary']['with_llm_analysis'] += 1
-        
-        # Scan all labs
-        labs_dir = CODE_ROOT / 'labs'
-        if labs_dir.exists():
-            for lab_dir in sorted(labs_dir.iterdir()):
-                if lab_dir.is_dir() and not lab_dir.name.startswith('.'):
-                    scan = self._detailed_scan(lab_dir, "lab")
-                    if scan:
-                        result['scan_results'].append(scan)
-                        result['summary']['total_directories'] += 1
-                        result['summary']['total_benchmarks'] += scan['benchmark_count']
-                        result['summary']['python_benchmarks'] += scan['python_count']
-                        result['summary']['cuda_benchmarks'] += scan['cuda_count']
-                        if scan['has_expectations']:
-                            result['summary']['with_expectations'] += 1
-                        if scan['has_profiles']:
-                            result['summary']['with_profiles'] += 1
-                        if scan['llm_analysis_count'] > 0:
-                            result['summary']['with_llm_analysis'] += 1
-        
+
+        for dir_path in discover_all_chapters(self.bench_root, bench_roots=self.bench_roots):
+            rel = self._relative_to_bench_root(dir_path)
+            dir_type = "lab" if rel.startswith("labs/") else "chapter"
+            scan = self._detailed_scan(dir_path, dir_type)
+            if not scan:
+                continue
+            result['scan_results'].append(scan)
+            result['summary']['total_directories'] += 1
+            result['summary']['total_benchmarks'] += scan['benchmark_count']
+            result['summary']['python_benchmarks'] += scan['python_count']
+            result['summary']['cuda_benchmarks'] += scan['cuda_count']
+            if scan['has_expectations']:
+                result['summary']['with_expectations'] += 1
+            if scan['has_profiles']:
+                result['summary']['with_profiles'] += 1
+            if scan['llm_analysis_count'] > 0:
+                result['summary']['with_llm_analysis'] += 1
+
         return result
     
     def _detailed_scan(self, directory: Path, dir_type: str) -> Optional[dict]:
@@ -1674,7 +1915,8 @@ class PerformanceCore(PerformanceCoreBase, http.server.SimpleHTTPRequestHandler)
         )
         
         # Check for profiles
-        profile_dir = CODE_ROOT / 'benchmark_profiles' / directory.name
+        rel_path = Path(self._relative_to_bench_root(directory))
+        profile_dir = self.bench_root / 'benchmark_profiles' / rel_path
         has_profiles = profile_dir.exists() and any(profile_dir.iterdir()) if profile_dir.exists() else False
         
         # Count LLM analysis files
@@ -1686,7 +1928,7 @@ class PerformanceCore(PerformanceCoreBase, http.server.SimpleHTTPRequestHandler)
         llm_analysis_count += len(list(directory.glob("*_llm_explanation.md")))
         
         # Check for results in benchmark_test_results.json
-        has_results = self._check_has_results(directory.name)
+        has_results = self._check_has_results(str(rel_path))
         
         benchmarks = []
         for baseline in baseline_py + baseline_cu:
@@ -1707,7 +1949,7 @@ class PerformanceCore(PerformanceCoreBase, http.server.SimpleHTTPRequestHandler)
         
         return {
             "name": directory.name,
-            "path": str(directory.relative_to(CODE_ROOT)),
+            "path": str(rel_path),
             "type": dir_type,
             "benchmark_count": len(baseline_py) + len(baseline_cu),
             "python_count": len(baseline_py),
@@ -1722,46 +1964,43 @@ class PerformanceCore(PerformanceCoreBase, http.server.SimpleHTTPRequestHandler)
     
     def _check_has_results(self, directory_name: str) -> bool:
         """Check if directory has results in benchmark_test_results.json."""
-        results_file = CODE_ROOT / 'benchmark_test_results.json'
-        if results_file.exists():
+        result_files = []
+        if self.data_file:
+            result_files.append(Path(self.data_file))
+        for root in self.bench_roots:
+            candidate = root / 'benchmark_test_results.json'
+            if candidate not in result_files:
+                result_files.append(candidate)
+
+        normalized = directory_name.strip()
+        bare = Path(directory_name).name
+
+        for path in result_files:
+            if not path.exists():
+                continue
             try:
-                with open(results_file) as f:
+                with open(path) as f:
                     data = json.load(f)
                     for result in data.get('results', []):
-                        if result.get('chapter') == directory_name:
+                        chapter_val = str(result.get('chapter', ''))
+                        if chapter_val in (normalized, bare) or chapter_val.endswith(f"/{bare}"):
                             return True
-                        # Also check labs path
-                        if f"labs/{directory_name}" in str(result.get('chapter', '')):
-                            return True
-            except:
-                pass
+            except Exception:
+                continue
         return False
     
     def list_benchmark_targets(self) -> dict:
         """List all available benchmark targets in chapter:example format."""
         targets = []
         
-        # Scan chapters
-        for ch_dir in sorted(CODE_ROOT.glob('ch*')):
-            if ch_dir.is_dir():
-                chapter = ch_dir.name
-                # Find all baseline files
-                for baseline in ch_dir.glob('baseline_*.py'):
-                    name = baseline.stem.replace('baseline_', '')
-                    targets.append(f"{chapter}:{name}")
-                for baseline in ch_dir.glob('baseline_*.cu'):
-                    name = baseline.stem.replace('baseline_', '')
-                    targets.append(f"{chapter}:{name}")
-        
-        # Scan labs
-        labs_dir = CODE_ROOT / 'labs'
-        if labs_dir.exists():
-            for lab_dir in sorted(labs_dir.glob('*')):
-                if lab_dir.is_dir():
-                    lab_name = f"labs/{lab_dir.name}"
-                    for baseline in lab_dir.glob('baseline_*.py'):
-                        name = baseline.stem.replace('baseline_', '')
-                        targets.append(f"{lab_name}:{name}")
+        for dir_path in discover_all_chapters(self.bench_root, bench_roots=self.bench_roots):
+            chapter = self._relative_to_bench_root(dir_path)
+            for baseline in dir_path.glob('baseline_*.py'):
+                name = baseline.stem.replace('baseline_', '')
+                targets.append(f"{chapter}:{name}")
+            for baseline in dir_path.glob('baseline_*.cu'):
+                name = baseline.stem.replace('baseline_', '')
+                targets.append(f"{chapter}:{name}")
         
         return {"targets": sorted(set(targets)), "count": len(set(targets))}
     
@@ -1898,7 +2137,7 @@ class PerformanceCore(PerformanceCoreBase, http.server.SimpleHTTPRequestHandler)
         analysis = []
         
         # 1. Scan benchmark_profiles directory
-        profiles_dir = CODE_ROOT / 'benchmark_profiles'
+        profiles_dir = self.bench_root / 'benchmark_profiles'
         if profiles_dir.exists():
             for md_file in profiles_dir.rglob('llm_analysis*.md'):
                 try:
@@ -1911,49 +2150,40 @@ class PerformanceCore(PerformanceCoreBase, http.server.SimpleHTTPRequestHandler)
                         'chapter': chapter,
                         'name': name,
                         'content': content,
-                        'path': str(md_file.relative_to(CODE_ROOT)),
+                        'path': str(md_file.relative_to(self.bench_root)),
                         'source': 'benchmark_profiles',
                     })
                 except Exception as e:
                     print(f"Error loading {md_file}: {e}")
         
-        # 2. Scan ALL chapters for LLM explanation files
-        for ch_dir in CODE_ROOT.glob("ch[0-9]*"):
-            if ch_dir.is_dir():
-                for md_file in ch_dir.glob('*_llm_explanation.md'):
-                    try:
-                        content = md_file.read_text()
-                        analysis.append({
-                            'chapter': ch_dir.name,
-                            'name': md_file.stem.replace('_llm_explanation', ''),
-                            'content': content,
-                            'path': str(md_file.relative_to(CODE_ROOT)),
-                            'source': 'chapter',
-                            'type': 'explanation'
-                        })
-                    except Exception as e:
-                        print(f"Error loading {md_file}: {e}")
-        
-        # 3. Scan ALL labs for LLM analysis/explanation files
-        labs_dir = CODE_ROOT / 'labs'
-        if labs_dir.exists():
-            for lab_dir in labs_dir.iterdir():
-                if lab_dir.is_dir():
-                    # Look for any LLM-related markdown
-                    for md_file in lab_dir.glob('*llm*.md'):
-                        try:
-                            content = md_file.read_text()
-                            analysis.append({
-                                'chapter': f"labs/{lab_dir.name}",
-                                'name': md_file.stem,
-                                'content': content,
-                                'path': str(md_file.relative_to(CODE_ROOT)),
-                                'source': 'lab',
-                            })
-                        except Exception as e:
-                            print(f"Error loading {md_file}: {e}")
-                    
-                    # Note: TECHNIQUE*.md files are reference docs, not LLM analysis - skip them
+        # 2. Scan ALL benchmark directories for LLM analysis/explanation files
+        for bench_dir in discover_all_chapters(self.bench_root, bench_roots=self.bench_roots):
+            chapter_slug = self._relative_to_bench_root(bench_dir)
+            for md_file in bench_dir.glob('*llm*.md'):
+                try:
+                    content = md_file.read_text()
+                    analysis.append({
+                        'chapter': chapter_slug,
+                        'name': md_file.stem,
+                        'content': content,
+                        'path': str(md_file.relative_to(self.bench_root)),
+                        'source': 'bench_dir',
+                    })
+                except Exception as e:
+                    print(f"Error loading {md_file}: {e}")
+            for md_file in bench_dir.glob('*_llm_explanation.md'):
+                try:
+                    content = md_file.read_text()
+                    analysis.append({
+                        'chapter': chapter_slug,
+                        'name': md_file.stem.replace('_llm_explanation', ''),
+                        'content': content,
+                        'path': str(md_file.relative_to(self.bench_root)),
+                        'source': 'bench_dir',
+                        'type': 'explanation'
+                    })
+                except Exception as e:
+                    print(f"Error loading {md_file}: {e}")
         
         # Note: Root *ANALYSIS*.md files are reports, not LLM-generated - skip them
         
@@ -1962,8 +2192,7 @@ class PerformanceCore(PerformanceCoreBase, http.server.SimpleHTTPRequestHandler)
             "count": len(analysis),
             "sources": {
                 "benchmark_profiles": len([a for a in analysis if a.get('source') == 'benchmark_profiles']),
-                "chapters": len([a for a in analysis if a.get('source') == 'chapter']),
-                "labs": len([a for a in analysis if a.get('source') == 'lab']),
+                "bench_dirs": len([a for a in analysis if a.get('source') in ('bench_dir', 'chapter', 'lab')]),
                 "root": len([a for a in analysis if a.get('source') == 'root']),
             }
         }
@@ -1973,11 +2202,11 @@ class PerformanceCore(PerformanceCoreBase, http.server.SimpleHTTPRequestHandler)
         profiles = []
         
         # Scan benchmark_profiles directory
-        profiles_dir = CODE_ROOT / 'benchmark_profiles'
+        profiles_dir = self.bench_root / 'benchmark_profiles'
         if profiles_dir.exists():
             for chapter_dir in profiles_dir.iterdir():
                 if chapter_dir.is_dir():
-                    chapter = chapter_dir.name
+                    chapter = str(chapter_dir.relative_to(profiles_dir))
                     chapter_profiles = {
                         'chapter': chapter,
                         'nsys_reports': [],
@@ -2542,15 +2771,197 @@ class PerformanceCore(PerformanceCoreBase, http.server.SimpleHTTPRequestHandler)
         
         return results
 
-    def roofline_sweep(self, size_mb: int = 32, strides: Optional[List[int]] = None) -> dict:
+    def roofline_sweep(self, size_mb: int = 32, strides: Optional[List[int]] = None, timeout_seconds: Optional[int] = None) -> dict:
         """Stride sweep for memory roofline."""
         from core.diagnostics import microbench
         rows = []
         strides = strides or [32, 64, 128, 256, 512, 1024, 2048, 4096]
         for stride in strides:
-            res = microbench.mem_hierarchy_test(size_mb=size_mb, stride=stride)
+            res = microbench.mem_hierarchy_test(size_mb=size_mb, stride=stride, timeout_seconds=timeout_seconds)
             rows.append({"stride": stride, "bandwidth_gbps": res.get("bandwidth_gbps")})
-        return {"size_mb": size_mb, "rows": rows}
+        return {"size_mb": size_mb, "rows": rows, "timeout_seconds": timeout_seconds}
+
+    def _read_json_body(self) -> dict:
+        """Safely parse JSON body from the request."""
+        content_length = int(self.headers.get('Content-Length', 0))
+        body = self.rfile.read(content_length).decode('utf-8')
+        try:
+            return json.loads(body) if body else {}
+        except json.JSONDecodeError:
+            return {}
+
+    def _start_profile_job(self, tool: str, runner) -> dict:
+        """Run a profiling job in the background and track it."""
+        job_id = f"{tool}-{uuid.uuid4().hex[:8]}"
+        submitted_at = time.time()
+        record = {
+            "job_id": job_id,
+            "tool": tool,
+            "status": "running",
+            "submitted_at": submitted_at,
+        }
+        with _profile_job_lock:
+            _profile_jobs[job_id] = record
+
+        def _worker():
+            try:
+                result = runner()
+                status = "completed"
+                error = None
+            except Exception as exc:  # pragma: no cover - defensive
+                status = "error"
+                error = {"error": str(exc)}
+                result = None
+            finished_at = time.time()
+            with _profile_job_lock:
+                record.update({
+                    "status": status,
+                    "finished_at": finished_at,
+                    "duration_sec": round(finished_at - submitted_at, 2),
+                    "result": result if result is not None else error,
+                })
+
+        threading.Thread(target=_worker, daemon=True).start()
+        return {
+            "job_id": job_id,
+            "status": "started",
+            "tool": tool,
+            "submitted_at": submitted_at,
+            "note": "Poll /api/nsight/job-status?job_id=... for updates.",
+        }
+
+    def get_profile_job_status(self, job_id: str) -> dict:
+        with _profile_job_lock:
+            record = _profile_jobs.get(job_id)
+        if not record:
+            return {"job_id": job_id, "status": "not_found"}
+        return record
+
+    def start_nsys_capture(self, params: dict) -> dict:
+        from core.profiling.nsight_automation import NsightAutomation
+        command_str = params.get("command") or ""
+        command_list = params.get("command_list") or (shlex.split(command_str) if command_str else [])
+        if not command_list:
+            return {"error": "command is required"}
+
+        preset = params.get("preset", "full")
+        full_timeline = bool(params.get("full_timeline")) or preset == "full"
+        output_dir = Path(params.get("output_dir") or "artifacts/mcp-profiles")
+        output_name = params.get("output_name") or "dashboard_nsys"
+        precheck_only = bool(params.get("precheck_only"))
+        dry_run = bool(params.get("dry_run"))
+        queue_only = bool(params.get("queue_only") or params.get("queue"))
+        timeout_param = params.get("timeout_seconds")
+        timeout_seconds = int(timeout_param) if timeout_param not in (None, "") else None
+
+        automation = NsightAutomation(output_dir)
+        precheck = {
+            "nsys_available": automation.nsys_available,
+            "ncu_available": automation.ncu_available,
+            "output_dir": str(output_dir),
+            "preset": preset,
+            "full_timeline": full_timeline,
+            "command": command_list,
+        }
+        if precheck_only:
+            return {"precheck_only": True, **precheck}
+        if not automation.nsys_available:
+            return {"error": "nsys not available", **precheck}
+        if dry_run:
+            return {
+                "dry_run": True,
+                **precheck,
+                "planned_output": str(output_dir / f"{output_name}.nsys-rep"),
+                "timeout_seconds": timeout_seconds,
+            }
+
+        def _runner():
+            auto = NsightAutomation(output_dir)
+            path = auto.profile_nsys(
+                command=command_list,
+                output_name=output_name,
+                trace_cuda=bool(params.get("trace_cuda", True)),
+                trace_nvtx=bool(params.get("trace_nvtx", True)),
+                trace_osrt=bool(params.get("trace_osrt", True)),
+                full_timeline=full_timeline,
+                trace_forks=bool(params.get("trace_forks", True)),
+                preset=preset,
+                timeout_seconds=timeout_seconds,
+            )
+            return {
+                "success": path is not None,
+                "output": str(path) if path else None,
+                "preset": preset,
+                "full_timeline": full_timeline,
+                "timeout_seconds": timeout_seconds,
+                "timeout_hit": bool(getattr(auto, "last_run", {}).get("timeout_hit", False)),
+                "error": auto.last_error if path is None else None,
+                "run_details": getattr(auto, "last_run", {}),
+            }
+
+        if queue_only:
+            return self._start_profile_job("nsys", _runner)
+        return _runner()
+
+    def start_ncu_capture(self, params: dict) -> dict:
+        from core.profiling.nsight_automation import NsightAutomation
+        command_str = params.get("command") or ""
+        command_list = params.get("command_list") or (shlex.split(command_str) if command_str else [])
+        if not command_list:
+            return {"error": "command is required"}
+
+        workload_type = params.get("workload_type", "memory_bound")
+        kernel_filter = params.get("kernel_filter")
+        output_dir = Path(params.get("output_dir") or "artifacts/mcp-profiles")
+        output_name = params.get("output_name") or "dashboard_ncu"
+        precheck_only = bool(params.get("precheck_only"))
+        dry_run = bool(params.get("dry_run"))
+        queue_only = bool(params.get("queue_only") or params.get("queue"))
+        timeout_param = params.get("timeout_seconds")
+        timeout_seconds = int(timeout_param) if timeout_param not in (None, "") else None
+
+        automation = NsightAutomation(output_dir)
+        precheck = {
+            "nsys_available": automation.nsys_available,
+            "ncu_available": automation.ncu_available,
+            "output_dir": str(output_dir),
+            "workload_type": workload_type,
+            "command": command_list,
+        }
+        if precheck_only:
+            return {"precheck_only": True, **precheck}
+        if not automation.ncu_available:
+            return {"error": "ncu not available", **precheck}
+        if dry_run:
+            return {
+                "dry_run": True,
+                **precheck,
+                "planned_output": str(output_dir / f"{output_name}.ncu-rep"),
+                "timeout_seconds": timeout_seconds,
+            }
+
+        def _runner():
+            auto = NsightAutomation(output_dir)
+            path = auto.profile_ncu(
+                command=command_list,
+                output_name=output_name,
+                workload_type=workload_type,
+                kernel_filter=kernel_filter,
+                timeout_seconds=timeout_seconds,
+            )
+            return {
+                "success": path is not None,
+                "output": str(path) if path else None,
+                "workload_type": workload_type,
+                "timeout_seconds": timeout_seconds,
+                "timeout_hit": bool(getattr(auto, "last_run", {}).get("timeout_hit", False)),
+                "error": auto.last_error if path is None else None,
+                "run_details": getattr(auto, "last_run", {}),
+            }
+
+        if queue_only:
+            return self._start_profile_job("ncu", _runner)
+        return _runner()
 
     def generate_launch_plan_from_query(self, params: Dict[str, List[str]]) -> dict:
         """Generate launch plan JSON from query parameters."""
@@ -5176,7 +5587,7 @@ print(response)
             if str(mcp_path.parent) not in sys.path:
                 sys.path.insert(0, str(mcp_path.parent))
             
-            from mcp.server import TOOLS
+            from mcp.mcp_server import TOOLS
             
             # Organize tools by category
             categories = {
@@ -5247,7 +5658,7 @@ print(response)
             if str(mcp_path.parent) not in sys.path:
                 sys.path.insert(0, str(mcp_path.parent))
             
-            from mcp.server import TOOLS, HANDLERS
+            from mcp.mcp_server import TOOLS, HANDLERS
             
             return {
                 "available": True,
@@ -5279,7 +5690,7 @@ print(response)
             if str(mcp_path.parent) not in sys.path:
                 sys.path.insert(0, str(mcp_path.parent))
             
-            from mcp.server import HANDLERS
+            from mcp.mcp_server import HANDLERS
             
             if tool_name not in HANDLERS:
                 return {
@@ -5961,15 +6372,18 @@ print(response)
     # =========================================================================
     
     def run_benchmark(self, params: dict) -> dict:
-        """Run a specific benchmark and return results."""
+        """Run a specific benchmark and return results (supports precheck/dry_run/timeout)."""
         chapter = params.get('chapter', '')
         name = params.get('name', '')
-        run_baseline = params.get('run_baseline', True)
-        run_optimized = params.get('run_optimized', True)
+        precheck_only = bool(params.get("precheck_only", False))
+        dry_run = bool(params.get("dry_run", False))
+        timeout_param = params.get("timeout_seconds")
+        timeout_seconds = int(timeout_param) if timeout_param not in (None, "") else 300
         
         if not chapter or not name:
             return {"success": False, "error": "Missing chapter or name"}
         
+        target = f"{chapter}:{name}"
         try:
             # Build the command against the new Typer CLI
             cmd = [
@@ -5979,27 +6393,44 @@ print(response)
                 "bench",
                 "run",
                 "--targets",
-                f"{chapter}:{name}",
+                target,
                 "--format",
                 "json",
             ]
-            # The new CLI runs baseline + optimized by default; skip flags are not exposed yet.
-            # Future: add --skip-baseline/--skip-optimized support upstream if needed.
+            if self.bench_root:
+                cmd.extend(["--bench-root", str(self.bench_root)])
+
+            if precheck_only:
+                return {
+                    "precheck_only": True,
+                    "planned_command": " ".join(cmd),
+                    "target": target,
+                    "note": "No execution performed; rerun without precheck_only to run the benchmark.",
+                }
+            if dry_run:
+                return {
+                    "dry_run": True,
+                    "planned_command": " ".join(cmd),
+                    "target": target,
+                    "timeout_seconds": timeout_seconds,
+                    "note": "No execution performed; rerun with dry_run=false to execute.",
+                }
 
             # Run the benchmark with timeout
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=300,  # 5 minute timeout
-                cwd=str(CODE_ROOT)
+                timeout=timeout_seconds if timeout_seconds and timeout_seconds > 0 else None,
+                cwd=str(CODE_ROOT),
             )
             
             if result.returncode != 0:
                 return {
                     "success": False,
                     "error": result.stderr or "Benchmark failed",
-                    "stdout": result.stdout
+                    "stdout": result.stdout,
+                    "timeout_seconds": timeout_seconds,
                 }
             
             # Try to parse JSON output
@@ -6010,18 +6441,102 @@ print(response)
                     "baseline_ms": output.get('baseline_time_ms'),
                     "optimized_ms": output.get('optimized_time_ms'),
                     "speedup": output.get('speedup'),
-                    "output": output
+                    "output": output,
+                    "stdout": result.stdout,
+                    "stderr": result.stderr,
+                    "timeout_seconds": timeout_seconds,
                 }
             except json.JSONDecodeError:
                 # If not JSON, just return success with raw output
                 return {
                     "success": True,
                     "stdout": result.stdout,
-                    "message": "Benchmark completed (non-JSON output)"
+                    "stderr": result.stderr,
+                    "timeout_seconds": timeout_seconds,
+                    "message": "Benchmark completed (non-JSON output)",
                 }
                 
         except subprocess.TimeoutExpired:
-            return {"success": False, "error": "Benchmark timed out after 5 minutes"}
+            return {"success": False, "error": "Benchmark timed out", "target": target, "timeout_seconds": timeout_seconds}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def verify_benchmark(self, params: dict) -> dict:
+        """Verify a benchmark run with optional precheck/dry_run/timeout."""
+        chapter = params.get('chapter', '')
+        name = params.get('name', '')
+        precheck_only = bool(params.get("precheck_only", False))
+        dry_run = bool(params.get("dry_run", False))
+        timeout_param = params.get("timeout_seconds")
+        timeout_seconds = int(timeout_param) if timeout_param not in (None, "") else 300
+
+        if not chapter or not name:
+            return {"success": False, "error": "Missing chapter or name"}
+
+        target = f"{chapter}:{name}"
+        cmd = [
+            sys.executable,
+            "-m",
+            "cli.aisp",
+            "bench",
+            "verify",
+            "--targets",
+            target,
+            "--format",
+            "json",
+        ]
+        if self.bench_root:
+            cmd.extend(["--bench-root", str(self.bench_root)])
+
+        if precheck_only:
+            return {
+                "precheck_only": True,
+                "planned_command": " ".join(cmd),
+                "target": target,
+                "note": "No execution performed; rerun without precheck_only to verify benchmarks.",
+            }
+        if dry_run:
+            return {
+                "dry_run": True,
+                "planned_command": " ".join(cmd),
+                "target": target,
+                "timeout_seconds": timeout_seconds,
+                "note": "No execution performed; rerun with dry_run=false to execute verification.",
+            }
+
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout_seconds if timeout_seconds and timeout_seconds > 0 else None,
+                cwd=str(CODE_ROOT),
+            )
+            if result.returncode != 0:
+                return {
+                    "success": False,
+                    "error": result.stderr or "Verification failed",
+                    "stdout": result.stdout,
+                    "timeout_seconds": timeout_seconds,
+                }
+            try:
+                output = json.loads(result.stdout)
+                return {
+                    "success": True,
+                    "output": output,
+                    "stdout": result.stdout,
+                    "stderr": result.stderr,
+                    "timeout_seconds": timeout_seconds,
+                }
+            except json.JSONDecodeError:
+                return {
+                    "success": True,
+                    "stdout": result.stdout,
+                    "stderr": result.stderr,
+                    "timeout_seconds": timeout_seconds,
+                }
+        except subprocess.TimeoutExpired:
+            return {"success": False, "error": "Verification timed out", "target": target, "timeout_seconds": timeout_seconds}
         except Exception as e:
             return {"success": False, "error": str(e)}
 
@@ -6030,7 +6545,9 @@ print(response)
         import urllib.parse
         name = urllib.parse.unquote(name)
         
-        chapter_dir = CODE_ROOT / chapter
+        chapter_dir = Path(chapter)
+        if not chapter_dir.is_absolute():
+            chapter_dir = (self.bench_root / chapter).resolve()
         if not chapter_dir.exists():
             return {"error": f"Chapter directory not found: {chapter}"}
 
@@ -7433,19 +7950,25 @@ User question: {query}
 DashboardHandler = PerformanceCore  # Backwards compatibility alias
 
 
-def create_handler(data_file: Optional[Path] = None):
+def create_handler(data_file: Optional[Path] = None, bench_root: Optional[Path] = None):
     """Create a handler class with the data file bound."""
     def handler(*args, **kwargs):
-        return PerformanceCore(*args, data_file=data_file, **kwargs)
+        return PerformanceCore(*args, data_file=data_file, bench_root=bench_root, **kwargs)
     return handler
 
 
-def serve_dashboard(port: int = 6970, data_file: Optional[Path] = None, open_browser: bool = True):
+def serve_dashboard(
+    port: int = 6970,
+    data_file: Optional[Path] = None,
+    bench_root: Optional[Path] = None,
+    open_browser: bool = True,
+):
     """Start the dashboard server."""
+    bench_root = bench_root or get_bench_roots(repo_root=CODE_ROOT)[0]
     dashboard_dir = Path(__file__).parent
     os.chdir(dashboard_dir)
     
-    handler = create_handler(data_file)
+    handler = create_handler(data_file, bench_root=bench_root)
     
     with socketserver.ThreadingTCPServer(("", port), handler) as httpd:
         url = f"http://localhost:{port}"
@@ -7456,6 +7979,7 @@ def serve_dashboard(port: int = 6970, data_file: Optional[Path] = None, open_bro
 ║                                                                        ║
 ║   Server running at: {url:<50} ║
 ║   Data source: {str(data_file or 'benchmark_test_results.json')[:50]:<50} ║
+║   Bench root: {str(bench_root)[:50]:<50} ║
 ║                                                                        ║
 ║   📊 Data APIs:                                                        ║
 ║   • GET /api/data              - Benchmark results                     ║
@@ -7498,10 +8022,11 @@ app = typer.Typer(help="GPU Performance Lab Dashboard Server")
 def cli_serve(
     port: int = typer.Option(6970, "--port", "-p", help="Port to run the server on"),
     data: Optional[Path] = typer.Option(None, "--data", "-d", help="Path to benchmark results JSON file"),
+    bench_root: Optional[Path] = typer.Option(None, "--bench-root", "-r", help="Root directory to scan for benchmarks (defaults to repo root)."),
     no_browser: bool = typer.Option(False, "--no-browser", help="Do not open browser automatically"),
 ) -> None:
     """Start the dashboard server."""
-    serve_dashboard(port=port, data_file=data, open_browser=not no_browser)
+    serve_dashboard(port=port, data_file=data, bench_root=bench_root, open_browser=not no_browser)
 
 
 def main() -> None:

@@ -79,7 +79,8 @@ class VectorizedRouterBenchmark(BaseBenchmark):
         self.hidden_size = 1024
         self.num_experts = 32
         self.top_k = 2
-        self.batch_size = 2048  # lower load to fit GB10 latency sweet spot
+        # Match baseline batch_size for fair comparison
+        self.batch_size = 4096
         self.model: Optional[nn.Module] = None
         self.inputs: Optional[torch.Tensor] = None
         self.graph: Optional[torch.cuda.CUDAGraph] = None

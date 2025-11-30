@@ -40,8 +40,10 @@ class OptimizedRoutingBenchmark(BaseBenchmark):
         self.x_small = None
         self.x_medium = None
         self.x_large = None
+        # Match baseline dimensions for fair comparison
         self.batch_size = 16
         self.hidden_dim = 2048
+        self.num_layers = 24
         self.routing_order = ["small"] * 5 + ["medium"] * 3 + ["large"] * 2
         self._schedule_index = 0
         tokens = self.batch_size * self.hidden_dim * len(self.routing_order)

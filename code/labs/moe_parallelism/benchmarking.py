@@ -19,16 +19,58 @@ from core.harness.benchmark_harness import (  # noqa: E402
 )
 from core.harness.benchmark_harness import BenchmarkHarness, BenchmarkMode  # noqa: E402
 
-from .plan import (  # noqa: E402
-    DEFAULT_CLUSTER,
-    DEFAULT_MODEL,
-    get_default_cluster_spec,
-    get_default_model_spec,
-    ParallelismPlan,
-    PlanEvaluator,
-    PlanReport,
-    format_report,
-)
+# Try to import plan module - may not be available in all builds
+_PLAN_AVAILABLE = False
+_PLAN_ERROR: Optional[str] = None
+
+try:
+    from .plan import (  # noqa: E402
+        DEFAULT_CLUSTER,
+        DEFAULT_MODEL,
+        get_default_cluster_spec,
+        get_default_model_spec,
+        ParallelismPlan,
+        PlanEvaluator,
+        PlanReport,
+        format_report,
+    )
+    _PLAN_AVAILABLE = True
+except ModuleNotFoundError as exc:
+    _PLAN_ERROR = f"moe_parallelism plan module unavailable: {exc}"
+    # Define stubs so the module can import
+    DEFAULT_CLUSTER = None
+    DEFAULT_MODEL = None
+    def get_default_cluster_spec(): return None
+    def get_default_model_spec(): return None
+    ParallelismPlan = None  # type: ignore
+    PlanEvaluator = None  # type: ignore
+    PlanReport = None  # type: ignore
+    def format_report(*args, **kwargs): return ""
+
+
+def is_plan_available() -> bool:
+    """Check if the plan module is available."""
+    return _PLAN_AVAILABLE
+
+
+def get_plan_error() -> Optional[str]:
+    """Get the error message if plan is not available."""
+    return _PLAN_ERROR
+
+
+class _SkipPlanBenchmark(BaseBenchmark):
+    """Skip benchmark when plan module is not available."""
+    
+    def get_config(self) -> BenchmarkConfig:
+        return BenchmarkConfig(iterations=1, warmup=5)
+    
+    def benchmark_fn(self) -> None:
+        raise RuntimeError(f"SKIPPED: {_PLAN_ERROR or 'moe_parallelism plan module unavailable'}")
+
+
+def get_skip_benchmark() -> BaseBenchmark:
+    """Return a skip benchmark for use when plan is unavailable."""
+    return _SkipPlanBenchmark()
 
 
 class PlanBenchmark(BaseBenchmark):

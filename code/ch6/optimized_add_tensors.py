@@ -12,6 +12,4 @@ from optimized_add import get_benchmark as _get_benchmark
 def get_benchmark():
     bench = _get_benchmark()
     bench.name = "add_tensors"
-    bench.skip_input_check = True
-    bench.skip_output_check = True
     return bench

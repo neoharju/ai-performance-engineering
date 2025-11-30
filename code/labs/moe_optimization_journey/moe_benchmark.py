@@ -190,6 +190,23 @@ class MoEJourneyBenchmark(BaseBenchmark):
             "use_cuda_graphs": float(self.opts.use_cuda_graphs if self.opts else 0),
             "use_compile": float(self.opts.use_compile if self.opts else 0),
         }
+    
+    def get_input_signature(self) -> Optional[Dict[str, Any]]:
+        """Return input signature for verification.
+        
+        Captures MoE-specific workload parameters to ensure baseline and
+        optimized benchmarks operate on equivalent workloads.
+        """
+        return {
+            "batch_size": self.BATCH_SIZE,
+            "seq_len": self.SEQ_LEN,
+            "hidden_size": self.HIDDEN_SIZE,
+            "intermediate_size": self.INTERMEDIATE_SIZE,
+            "num_experts": self.NUM_EXPERTS,
+            "num_experts_per_tok": self.NUM_EXPERTS_PER_TOK,
+            "vocab_size": self.VOCAB_SIZE,
+            "num_heads": self.NUM_HEADS,
+        }
 
 
 def run_level(level: int) -> None:

@@ -15,7 +15,7 @@ def test_aisp_help_exits_cleanly():
 
 
 def test_mcp_server_import():
-    import mcp.server as mcp_server
+    import mcp.mcp_server as mcp_server
 
     assert isinstance(mcp_server.TOOLS, dict)
     # ensure harness tools are registered

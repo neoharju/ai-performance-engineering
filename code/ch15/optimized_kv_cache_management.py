@@ -35,7 +35,8 @@ class OptimizedKVCacheManagementBenchmark(BaseBenchmark):
         self.out_proj: Optional[nn.Linear] = None
         self.inputs: Optional[list[torch.Tensor]] = None
         self.cache_buffer: Optional[torch.Tensor] = None
-        self.batch_size = 4
+        # Match baseline batch_size for fair comparison
+        self.batch_size = 8
         self.hidden_dim = 256
         self.num_heads = 8
         self.head_dim = self.hidden_dim // self.num_heads

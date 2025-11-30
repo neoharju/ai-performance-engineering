@@ -15,7 +15,6 @@ class OptimizedBankConflictsBenchmark(BaseBenchmark):
     
     def __init__(self):
         super().__init__()
-        self.skip_output_check = True
         self.input: Optional[torch.Tensor] = None
         self.output: Optional[torch.Tensor] = None
         self.N = 8_000_000
@@ -53,6 +52,7 @@ class OptimizedBankConflictsBenchmark(BaseBenchmark):
         self.input = None
         self.output = None
         torch.cuda.empty_cache()
+
     
     def get_config(self) -> BenchmarkConfig:
         """Return benchmark configuration."""

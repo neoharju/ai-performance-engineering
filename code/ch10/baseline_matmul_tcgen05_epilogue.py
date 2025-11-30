@@ -24,7 +24,9 @@ class BaselineMatmulTCGen05EpilogueBenchmark(BaseBenchmark):
     def __init__(self) -> None:
         super().__init__()
         self.device = torch.device("cuda")
-        self.size = 4096
+        # Match other matmul benchmarks (baseline_matmul.py uses n=8192)
+        self.n = 8192
+        self.size = self.n
         self.A: Optional[torch.Tensor] = None
         self.B: Optional[torch.Tensor] = None
         self.bias: Optional[torch.Tensor] = None

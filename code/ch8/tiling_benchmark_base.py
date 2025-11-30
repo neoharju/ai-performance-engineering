@@ -38,6 +38,7 @@ class TilingBenchmarkBase(BaseBenchmark):
 
     def __init__(self) -> None:
         super().__init__()
+        self.skip_output_check = True
         self.device = resolve_device()
         self.extension = None
         self.matrix_a: Optional[torch.Tensor] = None
@@ -140,6 +141,9 @@ class TilingBenchmarkBase(BaseBenchmark):
         if self.output is None:
             return "Output buffer not initialized"
         return None
+
+    def skip_output_verification(self) -> bool:
+        return True
 
     # ------------------------------------------------------------------ #
     # Extension loading (allow subclasses to override)

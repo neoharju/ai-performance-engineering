@@ -59,12 +59,35 @@ class OptimizedPersistentDecodeCUDABenchmark(BaseBenchmark):
         self.register_workload_metadata(tokens_per_iteration=tokens_per_iteration())
 
     def setup(self) -> None:
-        # Explicitly skip to avoid hanging builds; this path requires a prebuilt, stable
-        # persistent_decode_ext. Build offline and set PYTHONPATH/LD_LIBRARY_PATH accordingly.
-        raise RuntimeError("SKIPPED: persistent_decode_ext disabled (build offline to enable)")
+        """Initialize the persistent decode CUDA extension and inputs."""
+        if not torch.cuda.is_available():
+            raise RuntimeError("SKIPPED: CUDA required for persistent decode benchmark")
+        
+        # Try to load the extension - this may fail if not pre-built
+        try:
+            self._ext = _load_extension()
+        except Exception as exc:
+            raise RuntimeError(
+                f"SKIPPED: persistent_decode_ext failed to build ({type(exc).__name__}: {exc}). "
+                "Build offline with: cd labs/persistent_decode && python -c 'from optimized_persistent_decode_cuda import _load_extension; _load_extension()'"
+            ) from exc
+        
+        self.inputs = build_inputs(self.batch, self.seq_len, self.head_dim, self.device)
 
     def benchmark_fn(self) -> None:
-        raise RuntimeError("SKIPPED: persistent_decode_ext disabled (build offline to enable)")
+        """Run the persistent decode kernel."""
+        if self._ext is None or self.inputs is None:
+            raise RuntimeError("SKIPPED: persistent_decode_ext not initialized")
+        
+        # Call the extension's forward pass
+        self._ext.persistent_decode_forward(
+            self.inputs.q,
+            self.inputs.k,
+            self.inputs.v,
+            self.inputs.out,
+            self.blocks,
+        )
+        torch.cuda.synchronize(self.device)
 
     def teardown(self) -> None:
         torch.cuda.empty_cache()

@@ -312,3 +312,6 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("matmul_tcgen05_no_mma_barrier", &matmul_tcgen05_no_mma_barrier);
 }
 
+
+
+

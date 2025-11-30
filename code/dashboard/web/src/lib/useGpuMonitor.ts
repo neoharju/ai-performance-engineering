@@ -129,3 +129,6 @@ export function calculateGpuTrends(history: GpuMetrics[]) {
   };
 }
 
+
+
+

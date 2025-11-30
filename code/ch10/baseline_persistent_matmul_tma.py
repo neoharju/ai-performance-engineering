@@ -69,7 +69,7 @@ if __name__ == "__main__":
     print(f"Baseline matmul completed, output mean={out.mean().item():.3f}")
 
 
-# Minimal harness hook to allow skipping in automated sweeps.
+# Benchmark harness hook for automated sweeps.
 try:
     from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig
 except Exception:
@@ -77,21 +77,57 @@ except Exception:
     BenchmarkConfig = None  # type: ignore
 
 
+class BaselinePersistentMatmulTMABenchmark(BaseBenchmark):
+    """Benchmark for baseline Triton matmul without TMA cluster multicast."""
+
+    def __init__(self, M: int = 1024, N: int = 1024, K: int = 1024, BLOCK: int = 128):
+        super().__init__()
+        self.M = M
+        self.N = N
+        self.K = K
+        self.BLOCK = BLOCK
+        self.a = None
+        self.b = None
+        self.c = None
+
+    def get_config(self) -> BenchmarkConfig:
+        return BenchmarkConfig(iterations=10, warmup=5)
+
+    def setup(self) -> None:
+        """Allocate input/output tensors on GPU."""
+        self.a = torch.randn((self.M, self.K), device="cuda", dtype=torch.float16)
+        self.b = torch.randn((self.K, self.N), device="cuda", dtype=torch.float16)
+        self.c = torch.empty((self.M, self.N), device="cuda", dtype=torch.float16)
+
+    def benchmark_fn(self) -> None:
+        """Run the baseline Triton matmul kernel."""
+        grid = lambda META: (triton.cdiv(self.M, META["BLOCK_M"]) * triton.cdiv(self.N, META["BLOCK_N"]),)
+        baseline_matmul_kernel[grid](
+            self.a, self.b, self.c,
+            self.M, self.N, self.K,
+            self.a.stride(0), self.a.stride(1),
+            self.b.stride(0), self.b.stride(1),
+            self.c.stride(0), self.c.stride(1),
+            self.BLOCK, self.BLOCK, self.BLOCK,
+        )
+
+    def get_custom_metrics(self) -> dict:
+        """Return domain-specific metrics for matmul."""
+        from core.benchmark.metrics import compute_matmul_metrics
+        return compute_matmul_metrics(
+            M=self.M, N=self.N, K=self.K,
+            dtype_bytes=2,  # float16
+        )
+
+
 def get_benchmark():
     if BaseBenchmark is None or BenchmarkConfig is None:
         return None
-    import os
-    class _SkipBenchmark(BaseBenchmark):
-        def setup(self):  # pragma: no cover - skip in quick runs
-            raise RuntimeError("SKIPPED: baseline_persistent_matmul_tma is manual-only in low-memory sweeps")
-        def benchmark_fn(self): pass
-        def get_config(self): return BenchmarkConfig(iterations=5, warmup=5)  # Minimum warmup required
-    return _SkipBenchmark()
-
-    def get_custom_metrics(self) -> Optional[dict]:
-        """Return domain-specific metrics using standardized helper."""
-        from core.benchmark.metrics import compute_pipeline_metrics
-        return compute_pipeline_metrics(
-            num_stages=getattr(self, 'num_stages', 4),
-            stage_times_ms=getattr(self, '_stage_times_ms', [1.0]),
-        )
+    if not torch.cuda.is_available():
+        class _SkipBenchmark(BaseBenchmark):
+            def setup(self):
+                raise RuntimeError("SKIPPED: CUDA required for baseline_persistent_matmul_tma")
+            def benchmark_fn(self): pass
+            def get_config(self): return BenchmarkConfig(iterations=1, warmup=5)
+        return _SkipBenchmark()
+    return BaselinePersistentMatmulTMABenchmark()

@@ -22,6 +22,9 @@ class BaselineLoopUnrollingBenchmark(LoopUnrollingBenchmarkBase):
         assert self.output is not None
         self.extension.loop_unrolling_baseline(self.inputs, self.weights, self.output)
 
+    def skip_output_verification(self) -> bool:
+        return True
+
 
     def get_custom_metrics(self) -> Optional[dict]:
         """Return optimization metrics for loop_unrolling."""

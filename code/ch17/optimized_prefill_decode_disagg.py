@@ -60,13 +60,13 @@ class OptimizedDisaggregatedBenchmark(BaseBenchmark):
 
     def __init__(self) -> None:
         super().__init__()
-        # Tuned to Chapter 17 workloads (kept lightweight for single-GPU smoke runs)
+        # Match baseline dimensions for fair comparison
         self.dtype = torch.bfloat16
-        self.hidden = 2048
+        self.hidden = 1024  # Matches baseline SimpleLLM
         self.heads = 16
-        self.prefill_seq = 2048
-        self.decode_seq = 256
-        self.batch_size = 4
+        self.prefill_seq = 256  # Match baseline
+        self.decode_seq = 16  # Match baseline
+        self.batch_size = 1  # Match baseline
 
         self.prefill_model: Optional[nn.Module] = None
         self.decode_model: Optional[nn.Module] = None

@@ -11,18 +11,23 @@ from ch6.cuda_extensions import load_ilp_extension
 
 
 class OptimizedILPBenchmark(BaseBenchmark):
-    """Independent operations and unrolling - high ILP (uses CUDA extension)."""
+    """Independent operations and unrolling - high ILP (uses CUDA extension).
+    
+    Does the same amount of work as baseline (4 iterations) for fair comparison.
+    The ILP benefit is measured per-operation - both baseline and optimized do
+    the same number of kernel launches, but the optimized kernel has better ILP.
+    """
     
     def __init__(self):
         super().__init__()
-        self.skip_output_check = True
         self.input: Optional[torch.Tensor] = None
         self.output: Optional[torch.Tensor] = None
         self.N = 10_000_000
         self._extension = None
+        self.repeats = 4  # Same as baseline for fair comparison
         self._workload = WorkloadMetadata(
-            requests_per_iteration=1.0,
-            tokens_per_iteration=float(self.N),
+            requests_per_iteration=float(self.repeats),
+            tokens_per_iteration=float(self.N * self.repeats),
         )
     
     def setup(self) -> None:
@@ -41,10 +46,19 @@ class OptimizedILPBenchmark(BaseBenchmark):
         self._synchronize()
     
     def benchmark_fn(self) -> None:
-        """Benchmark: independent operations (high ILP)."""
+        """Benchmark: independent operations (high ILP).
+        
+        Same iteration count as baseline for fair comparison and output verification.
+        """
         assert self._extension is not None and self.output is not None and self.input is not None
         with self._nvtx_range("gemm_ilp_optimized"):
-            self._extension.independent_ops(self.output, self.input)
+            src = self.input
+            dst = self.output
+            for _ in range(self.repeats):
+                self._extension.independent_ops(dst, src)
+                src, dst = dst, src
+            if src is not self.output:
+                self.output.copy_(src)
             self._synchronize()
     
     def teardown(self) -> None:
@@ -52,6 +66,7 @@ class OptimizedILPBenchmark(BaseBenchmark):
         self.input = None
         self.output = None
         torch.cuda.empty_cache()
+
     
     def get_config(self) -> BenchmarkConfig:
         """Return benchmark configuration."""

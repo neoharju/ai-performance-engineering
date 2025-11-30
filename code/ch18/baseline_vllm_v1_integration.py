@@ -196,6 +196,9 @@ class BaselineVLLMV1Benchmark(BaseBenchmark):
     def __init__(self) -> None:
         super().__init__()
         self.integration = None
+        # Workload dimensions for signature matching
+        self.batch_size = 4
+        self.max_tokens = 32
     
     def get_config(self) -> BenchmarkConfig:
         return BenchmarkConfig(iterations=3, warmup=5)
@@ -229,14 +232,31 @@ class BaselineVLLMV1Benchmark(BaseBenchmark):
         return result
 
 
-class _SkipBenchmark(BaseBenchmark):
-    """Skip benchmark - vllm_v1_integration is a CLI demonstration script."""
-    def setup(self) -> None:
-        raise RuntimeError("SKIPPED: vllm_v1_integration is a CLI demonstration script")
-    def benchmark_fn(self) -> None:
-        pass
-    def get_config(self) -> BenchmarkConfig:
-        return BenchmarkConfig(iterations=1, warmup=5)
-
 def get_benchmark() -> BaseBenchmark:
-    return _SkipBenchmark()
+    """Factory function for benchmark discovery.
+    
+    Returns the actual vLLM benchmark if available, or a skip benchmark if vLLM is not installed.
+    """
+    if not VLLM_AVAILABLE:
+        class _SkipBenchmark(BaseBenchmark):
+            """Skip benchmark when vLLM is not installed."""
+            def setup(self) -> None:
+                raise RuntimeError("SKIPPED: vLLM not installed (pip install vllm)")
+            def benchmark_fn(self) -> None:
+                pass
+            def get_config(self) -> BenchmarkConfig:
+                return BenchmarkConfig(iterations=1, warmup=5)
+        return _SkipBenchmark()
+    
+    if not torch.cuda.is_available():
+        class _SkipBenchmark(BaseBenchmark):
+            """Skip benchmark when CUDA is not available."""
+            def setup(self) -> None:
+                raise RuntimeError("SKIPPED: CUDA required for vLLM benchmark")
+            def benchmark_fn(self) -> None:
+                pass
+            def get_config(self) -> BenchmarkConfig:
+                return BenchmarkConfig(iterations=1, warmup=5)
+        return _SkipBenchmark()
+    
+    return BaselineVLLMV1Benchmark()

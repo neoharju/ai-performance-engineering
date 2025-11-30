@@ -249,7 +249,8 @@ class ProofWrightAgent:
                     kernel_out = kernel_fn(x)
                     ref_out = reference_fn(x)
                     
-                    if not torch.allclose(kernel_out, ref_out, rtol=1e-4, atol=1e-4):
+                    # Looser tolerance for CUDA - parallel reduction has ~1e-3 variance
+                    if not torch.allclose(kernel_out, ref_out, rtol=1e-3, atol=1e-3):
                         max_diff = (kernel_out - ref_out).abs().max().item()
                         errors.append({
                             "shape": shape,

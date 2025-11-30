@@ -224,6 +224,7 @@ else:
 
 def _execute_benchmarks(
     targets: Optional[List[str]] = None,
+    bench_root: Optional[Path] = None,
     output_format: str = "both",
     profile_type: str = "none",
     suite_timeout: Optional[int] = 14400,
@@ -264,6 +265,7 @@ def _execute_benchmarks(
 ) -> None:
     """Execute selected benchmarks with optional profiling."""
     parsed_extra_args = _parse_target_extra_args(target_extra_args)
+    active_bench_root = Path(bench_root).resolve() if bench_root else repo_root
 
     try:
         from core.harness.cuda_capabilities import set_force_pipeline
@@ -272,7 +274,8 @@ def _execute_benchmarks(
     except ImportError:
         pass  # cuda_capabilities not available
 
-    artifact_manager = ArtifactManager(base_dir=Path(artifacts_dir) if artifacts_dir else None)
+    artifact_base = Path(artifacts_dir) if artifacts_dir else active_bench_root / "artifacts"
+    artifact_manager = ArtifactManager(base_dir=artifact_base)
     if log_file is None:
         log_file = artifact_manager.get_log_path()
 
@@ -293,7 +296,7 @@ def _execute_benchmarks(
         sys.exit(1)
 
     try:
-        chapter_dirs, chapter_filters = resolve_target_chapters(targets)
+        chapter_dirs, chapter_filters = resolve_target_chapters(targets, bench_root=active_bench_root)
     except (ValueError, FileNotFoundError) as exc:
         logger.error(str(exc))
         sys.exit(1)
@@ -306,7 +309,7 @@ def _execute_benchmarks(
 
     all_results = []
     for chapter_dir in chapter_dirs:
-        chapter_id = chapter_slug(chapter_dir, repo_root)
+        chapter_id = chapter_slug(chapter_dir, active_bench_root, bench_root=active_bench_root)
         example_filters = chapter_filters.get(chapter_id)
         only_examples = sorted(example_filters) if example_filters else None
         result = test_chapter(
@@ -368,9 +371,11 @@ if TYPER_AVAILABLE:
     def run(
         ctx: typer.Context,
         targets: Optional[List[str]] = Option(None, "--targets", "-t", help="Chapter(s) or chapter:example pairs to run. Repeat the flag for multiple targets. Omit or use 'all' for every chapter."),
+        bench_root: Optional[Path] = Option(None, "--bench-root", "-r", help="Root directory to scan for benchmarks (defaults to repo root)."),
         output_format: str = Option("both", "--format", "-f", help="Output format: 'json', 'markdown', or 'both'", callback=_validate_output_format),
         profile_type: str = Option("none", "--profile", "-p", help="Profiling preset: none (default), minimal, deep_dive, or roofline. Non-'none' enables nsys/ncu/PyTorch profiling.", callback=_validate_profile_type),
         suite_timeout: Optional[int] = Option(14400, "--suite-timeout", help="Suite timeout in seconds (default: 14400 = 4 hours, 0 = disabled)"),
+        timeout_seconds: Optional[int] = Option(None, "--timeout-seconds", help="Override suite timeout in seconds (0 disables timeout)"),
         timeout_multiplier: float = Option(1.0, "--timeout-multiplier", help="Multiply all benchmark timeouts by this factor (e.g., 2.0 = double all timeouts)"),
         reproducible: bool = Option(False, "--reproducible", help="Enable reproducible mode: set all seeds to 42 and force deterministic algorithms (uses slower fallbacks; ops without deterministic support may error)."),
         cold_start: bool = Option(False, "--cold-start", help="Reset GPU state between benchmarks for cold start measurements"),
@@ -406,6 +411,8 @@ if TYPER_AVAILABLE:
         skip_input_verify: bool = Option(False, "--skip-input-verify", help="Skip input equivalence verification. WARNING: Without this check, benchmark comparisons may be invalid (different workloads).", is_flag=True),
         skip_output_verify: bool = Option(False, "--skip-output-verify", help="Skip output correctness verification. WARNING: Without this check, optimizations may produce incorrect results.", is_flag=True),
         skip_verify: bool = Option(False, "--skip-verify", help="Skip BOTH input and output verification. Equivalent to --skip-input-verify --skip-output-verify.", is_flag=True),
+        precheck_only: bool = Option(False, "--precheck-only", help="Validate targets and print planned command without running."),
+        dry_run: bool = Option(False, "--dry-run", help="Describe planned execution without running benchmarks."),
     ):
         """Run benchmarks - discover, run, and summarize results."""
         if not LLM_CAPABLE:
@@ -426,6 +433,8 @@ if TYPER_AVAILABLE:
                 typer.echo("LLM analysis and auto-patching are available only via the aisp extension package.", err=True)
                 raise typer.Exit(code=1)
 
+        active_bench_root = Path(bench_root).resolve() if bench_root else repo_root
+
         combined_targets: List[str] = []
         for arg in (list(targets) if targets else []):
             if arg:
@@ -442,11 +451,25 @@ if TYPER_AVAILABLE:
         # Deduplicate to avoid running the same target multiple times when
         # Click/Typer shuffles positional args.
         combined_targets = list(dict.fromkeys(combined_targets))
+        effective_timeout = timeout_seconds if timeout_seconds is not None else suite_timeout
+        if precheck_only or dry_run:
+            plan = {
+                "precheck_only": precheck_only,
+                "dry_run": dry_run,
+                "targets": combined_targets or ["all"],
+                "bench_root": str(active_bench_root),
+                "profile_type": profile_type,
+                "output_format": output_format,
+                "suite_timeout": effective_timeout,
+            }
+            typer.echo(json.dumps(plan, indent=2))
+            raise typer.Exit(code=0)
         _execute_benchmarks(
             targets=combined_targets or None,
+            bench_root=active_bench_root,
             output_format=output_format,
             profile_type=profile_type,
-            suite_timeout=suite_timeout,
+            suite_timeout=effective_timeout,
             timeout_multiplier=timeout_multiplier,
             reproducible=reproducible,
             cold_start=cold_start,
@@ -486,9 +509,25 @@ if TYPER_AVAILABLE:
     @app.command()
     def verify(
         targets: Optional[List[str]] = Option(None, "--targets", "-t", help="Chapter(s) or chapter:example pairs to verify. Repeat the flag for multiple targets. Omit or use 'all' for every chapter."),
+        bench_root: Optional[Path] = Option(None, "--bench-root", "-r", help="Root directory to scan for benchmarks (defaults to repo root)."),
+        timeout_seconds: Optional[int] = Option(None, "--timeout-seconds", help="Override suite timeout in seconds for verification (0 disables timeout)"),
+        precheck_only: bool = Option(False, "--precheck-only", help="Validate targets and print planned command without running."),
+        dry_run: bool = Option(False, "--dry-run", help="Describe planned verification without running."),
     ):
         """Run the lightweight benchmark verification harness."""
-        exit_code = run_verification(list(targets) if targets else None)
+        target_list = list(targets) if targets else None
+        if precheck_only or dry_run:
+            plan = {
+                "precheck_only": precheck_only,
+                "dry_run": dry_run,
+                "targets": target_list or ["all"],
+                "bench_root": str(Path(bench_root).resolve()) if bench_root else str(repo_root),
+                "timeout_seconds": timeout_seconds,
+            }
+            typer.echo(json.dumps(plan, indent=2))
+            raise typer.Exit(code=0)
+
+        exit_code = run_verification(target_list, bench_root=bench_root, timeout_seconds=timeout_seconds)
         raise typer.Exit(code=exit_code)
 
     @app.command("list-targets")
@@ -499,12 +538,14 @@ if TYPER_AVAILABLE:
             "-c",
             help="Limit output to a single chapter (e.g., ch15 or labs/blackwell_matmul).",
         ),
+        bench_root: Optional[Path] = Option(None, "--bench-root", "-r", help="Root directory to scan for benchmarks (defaults to repo root)."),
     ):
         """List available benchmark targets in chapter:example format."""
+        active_bench_root = Path(bench_root).resolve() if bench_root else repo_root
         if chapter:
-            chapter_dirs, _ = resolve_target_chapters([chapter])
+            chapter_dirs, _ = resolve_target_chapters([chapter], bench_root=active_bench_root)
         else:
-            chapter_dirs = discover_all_chapters(repo_root)
+            chapter_dirs = discover_all_chapters(active_bench_root, bench_roots=[active_bench_root])
 
         if not chapter_dirs:
             typer.echo("No chapter directories found.")
@@ -512,7 +553,7 @@ if TYPER_AVAILABLE:
 
         any_targets = False
         for chapter_dir in chapter_dirs:
-            chapter_id = chapter_slug(chapter_dir, repo_root)
+            chapter_id = chapter_slug(chapter_dir, active_bench_root, bench_root=active_bench_root)
             pairs = discover_benchmarks(chapter_dir)
             if not pairs:
                 continue
@@ -524,11 +565,14 @@ if TYPER_AVAILABLE:
             typer.echo("No benchmark targets discovered.")
 
     @app.command("list-chapters")
-    def list_chapters():
+    def list_chapters(
+        bench_root: Optional[Path] = Option(None, "--bench-root", "-r", help="Root directory to scan for benchmarks (defaults to repo root)."),
+    ):
         """List all discoverable chapters and labs."""
-        chapter_dirs = discover_all_chapters(repo_root)
+        active_bench_root = Path(bench_root).resolve() if bench_root else repo_root
+        chapter_dirs = discover_all_chapters(active_bench_root, bench_roots=[active_bench_root])
         for chapter_dir in chapter_dirs:
-            typer.echo(chapter_slug(chapter_dir, repo_root))
+            typer.echo(chapter_slug(chapter_dir, active_bench_root, bench_root=active_bench_root))
 
     @app.command("analyze")
     def analyze(

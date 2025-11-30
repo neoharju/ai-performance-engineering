@@ -20,7 +20,7 @@ if str(repo_root) not in sys.path:
 
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig
 from ch6.baseline_gemm_ilp import BaselineGEMMILPBenchmark
-from ch6.optimized_gemm_tensor_cores import OptimizedGEMMTensorCoresBenchmark
+from ch6.optimized_gemm_ilp import OptimizedILPBenchmark
 
 
 class RooflineAnalyzer:
@@ -105,7 +105,7 @@ class RooflineAnalysisILPBenchmark(BaseBenchmark):
             baseline_result = self.analyzer.analyze_kernel(baseline)
             baseline.teardown()
             
-            optimized = OptimizedGEMMTensorCoresBenchmark()
+            optimized = OptimizedILPBenchmark()
             optimized.setup()
             optimized_result = self.analyzer.analyze_kernel(optimized)
             optimized.teardown()

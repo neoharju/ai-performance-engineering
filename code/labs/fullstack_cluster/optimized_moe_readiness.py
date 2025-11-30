@@ -126,6 +126,11 @@ def main() -> None:
 class OptimizedMoEReadinessBenchmark(BaseBenchmark):
     """Harness entry that launches this module via torchrun with NCCL small-message knobs."""
 
+    def benchmark_fn(self) -> None:
+        if torch.cuda.device_count() < 2:
+            raise RuntimeError("SKIPPED: MoE readiness benchmark requires >=2 GPUs.")
+        return
+
     def get_config(self) -> BenchmarkConfig:
         return BenchmarkConfig(
             launch_via=LaunchVia.TORCHRUN,

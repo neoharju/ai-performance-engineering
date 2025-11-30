@@ -196,3 +196,6 @@ if __name__ == "__main__":
     if tflops/peak > 0.9:
         print("🚀🚀🚀 ACHIEVED 90%+ UTILIZATION!")
 
+
+
+

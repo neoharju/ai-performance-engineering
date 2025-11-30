@@ -18,7 +18,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from core.discovery import discover_benchmarks, normalize_chapter_token
 from core.harness.benchmark_harness import BenchmarkHarness, BenchmarkMode, BenchmarkConfig
-from core.common.moe_parallelism_plan import PlanEvaluator
+from labs.moe_parallelism.plan import PlanEvaluator
 
 
 def _load_pairs(chapter_slug: str) -> List[Tuple[Path, Path, str]]:

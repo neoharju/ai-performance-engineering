@@ -38,3 +38,6 @@ if __name__ == "__main__":
     mean = result.timing.mean_ms if result.timing else 0.0
     print(f"\noptimized_decode_compile: {mean:.3f} ms/iter")
 
+
+
+

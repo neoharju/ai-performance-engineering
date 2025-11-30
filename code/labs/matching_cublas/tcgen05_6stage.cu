@@ -296,3 +296,6 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("matmul_tcgen05_6stage", &matmul_tcgen05_6stage);
 }
 
+
+
+

@@ -35,7 +35,9 @@ class BaselineMatmulTCGen05Benchmark(BaseBenchmark):
         self._skip_reason = reason or "SKIPPED: tcgen05 matmul unavailable"
         self.module = None
         self.device = torch.device("cuda")
-        self.size = 4096
+        # Match other matmul benchmarks (baseline_matmul.py uses n=8192)
+        self.n = 8192
+        self.size = self.n
         self.A: Optional[torch.Tensor] = None
         self.B: Optional[torch.Tensor] = None
 

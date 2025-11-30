@@ -118,6 +118,13 @@ def main() -> None:
 class BaselineMoEReadinessBenchmark(BaseBenchmark):
     """Harness entry that launches this module via torchrun."""
 
+    def benchmark_fn(self) -> None:
+        # On single-GPU hosts, skip rather than failing torchrun.
+        if torch.cuda.device_count() < 2:
+            raise RuntimeError("SKIPPED: MoE readiness benchmark requires >=2 GPUs.")
+        # Real work happens in the torchrun-launched script.
+        return
+
     def get_config(self) -> BenchmarkConfig:
         return BenchmarkConfig(
             launch_via=LaunchVia.TORCHRUN,

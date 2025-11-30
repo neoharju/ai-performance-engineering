@@ -32,6 +32,7 @@ class BaselineFlexAttentionBenchmark(BaseBenchmark):
         self.v = None
         self.num_heads = 16
         self.head_dim = 64
+        self.embed_dim = self.num_heads * self.head_dim  # 1024
         self.seq_len = 1024
         self._last = 0.0
         self.repeat_passes = 8

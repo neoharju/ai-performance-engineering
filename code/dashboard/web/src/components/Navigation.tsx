@@ -62,7 +62,7 @@ export const tabs = [
   { id: 'deepprofile', label: 'Deep Profile', icon: Microscope },
   { id: 'liveopt', label: 'Live Optimizer', icon: Rocket },
   { id: 'analysis', label: 'Analysis', icon: PieChart },
-  { id: 'advanced', label: 'Advanced', icon: Sparkles },
+  { id: 'advanced', label: 'Settings', icon: Sparkles },
   { id: 'multigpu', label: 'Multi-GPU', icon: Network },
   { id: 'distributed', label: 'Distributed', icon: Server },
   { id: 'reports', label: 'Reports', icon: FileText },
@@ -183,25 +183,28 @@ export function Navigation({
   const groupButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   
   // Theme context for dark/light mode toggle
-  const { availableThemes, selectedThemeId, setSelectedThemeId } = useTheme();
-  const isDarkMode = !selectedThemeId?.includes('light');
+  const { availableThemes, selectedThemeId, setSelectedThemeId, setColorMode, resolvedColorMode } = useTheme();
+  const isDarkMode = resolvedColorMode === 'dark';
+  const findThemeForMode = useCallback(
+    (mode: 'dark' | 'light') => {
+      if (!availableThemes?.length) return null;
+      if (mode === 'light') {
+        return availableThemes.find((t) => t.id.toLowerCase().includes('light')) || null;
+      }
+      return availableThemes.find((t) => !t.id.toLowerCase().includes('light')) || availableThemes[0] || null;
+    },
+    [availableThemes]
+  );
   
   const toggleDarkMode = useCallback(() => {
-    if (!availableThemes) return;
-    if (isDarkMode) {
-      // Find a light theme
-      const lightTheme = availableThemes.find(t => t.id.includes('light'));
-      if (lightTheme) {
-        setSelectedThemeId(lightTheme.id);
-      }
-    } else {
-      // Find a dark theme
-      const darkTheme = availableThemes.find(t => t.id === 'dark-purple') || availableThemes.find(t => !t.id.includes('light'));
-      if (darkTheme) {
-        setSelectedThemeId(darkTheme.id);
-      }
+    const targetMode: 'dark' | 'light' = isDarkMode ? 'light' : 'dark';
+    setColorMode(targetMode);
+
+    const nextTheme = findThemeForMode(targetMode);
+    if (nextTheme) {
+      setSelectedThemeId(nextTheme.id);
     }
-  }, [isDarkMode, availableThemes, setSelectedThemeId]);
+  }, [findThemeForMode, isDarkMode, setColorMode, setSelectedThemeId]);
 
   // Fetch LLM status on mount
   useEffect(() => {

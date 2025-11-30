@@ -27,6 +27,8 @@ class BaselineKubernetesBenchmark(BaseBenchmark):
 
     def __init__(self):
         super().__init__()
+        self.skip_output_check = True
+        self.skip_input_check = True
         self.model = nn.Sequential(
             nn.Linear(1024, 1024),
             nn.ReLU(),

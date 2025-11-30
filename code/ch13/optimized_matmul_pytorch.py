@@ -51,9 +51,10 @@ class OptimizedMatmulCUTLASSBenchmark(BaseBenchmark):
         self.C = None
         self.bias = None
         self.compiled_matmul = None
-        self.m = 2048
-        self.n = 2048
-        self.k = 2048
+        # Match baseline dimensions for fair comparison
+        self.m = 4096
+        self.n = 4096
+        self.k = 4096
         tokens = self.m * self.n
         self._workload = WorkloadMetadata(
             requests_per_iteration=1.0,

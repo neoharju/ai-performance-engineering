@@ -61,11 +61,27 @@ def _demo() -> None:
     print("Optimized loop demo:", summary)
 
 
-class _SkipBenchmark(BaseBenchmark):
-    """Skip benchmark - v1_engine_loop is a standalone decoder demo."""
+class OptimizedV1EngineLoopBenchmark(BaseBenchmark):
+    """Benchmark for optimized V1 EngineCore/CoreClient polling loop with KV reclamation."""
+
+    def __init__(self):
+        super().__init__()
+        self._engine_core = None
+        self._core_client = None
+        self._outputs = None
 
     def get_config(self) -> BenchmarkConfig:
-        return BenchmarkConfig(iterations=1, warmup=5)
+        return BenchmarkConfig(iterations=10, warmup=5)
+
+    def setup(self) -> None:
+        """Set up the demo engine stack."""
+        self._engine_core, self._core_client = build_demo_stack()
+
+    def benchmark_fn(self) -> None:
+        """Run the optimized engine loop."""
+        # Reset the demo stack for each iteration
+        self._engine_core, self._core_client = build_demo_stack()
+        self._outputs = list(run_engine_loop(self._engine_core, self._core_client))
 
     def get_custom_metrics(self) -> Optional[dict]:
         """Return domain-specific metrics using standardized helper."""
@@ -78,13 +94,10 @@ class _SkipBenchmark(BaseBenchmark):
             num_rounds=getattr(self, '_num_rounds', 8),
         )
 
-    def benchmark_fn(self) -> None:
-        raise RuntimeError("SKIPPED: v1_engine_loop is a standalone decoder demo")
-
 
 def get_benchmark() -> BaseBenchmark:
     """Factory function for benchmark discovery."""
-    return _SkipBenchmark()
+    return OptimizedV1EngineLoopBenchmark()
 
 
 if __name__ == "__main__":

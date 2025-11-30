@@ -2,7 +2,8 @@
 
 import { useState } from 'react';
 import useSWRMutation from 'swr/mutation';
-import { Timer, Cpu, HardDrive, Network, Zap, RefreshCw, Download } from 'lucide-react';
+import { Timer, Cpu, HardDrive, Network, Zap, RefreshCw, Download, Rocket } from 'lucide-react';
+import { startNsightComputeCapture, startNsightSystemsCapture, fetchNsightJobStatus, fetchMcpJobStatus } from '@/lib/api';
 
 type Result = Record<string, any> | null;
 
@@ -96,6 +97,27 @@ export function MicrobenchTab() {
   const compareNcu = useSWRMutation('compareNcu', fetchJson);
   const [compareDir, setCompareDir] = useState<string>('artifacts/mcp-profiles');
   const [detailedCsv, setDetailedCsv] = useState<boolean>(false);
+  const [precheckOnly, setPrecheckOnly] = useState(false);
+  const [dryRun, setDryRun] = useState(false);
+  const [timeoutSeconds, setTimeoutSeconds] = useState<number | ''>('');
+
+  const [nsysCommand, setNsysCommand] = useState('python -c "print(123)"');
+  const [nsysPreset, setNsysPreset] = useState<'light' | 'full'>('full');
+  const [nsysQueue, setNsysQueue] = useState(false);
+  const [nsysFullTimeline, setNsysFullTimeline] = useState(false);
+  const [nsysResult, setNsysResult] = useState<Result>(null);
+  const [nsysLoading, setNsysLoading] = useState(false);
+
+  const [ncuCommand, setNcuCommand] = useState('python -c "print(456)"');
+  const [ncuWorkload, setNcuWorkload] = useState('memory_bound');
+  const [ncuQueue, setNcuQueue] = useState(false);
+  const [ncuResult, setNcuResult] = useState<Result>(null);
+  const [ncuLoading, setNcuLoading] = useState(false);
+
+  const [jobId, setJobId] = useState('');
+  const [jobStatus, setJobStatus] = useState<Result>(null);
+
+  const flagQuery = `&precheck_only=${precheckOnly}&dry_run=${dryRun}${timeoutSeconds !== '' ? `&timeout_seconds=${timeoutSeconds}` : ''}`;
 
   return (
     <div className="space-y-6">
@@ -109,6 +131,34 @@ export function MicrobenchTab() {
         </div>
         <div className="card-body">
           <p className="text-sm text-white/60">Quick, lightweight diagnostics for disk, PCIe, memory, tensor cores, SFU, and network loopback.</p>
+          <p className="text-xs text-white/60">
+            Use precheck to validate paths/availability without running; dry run to see planned args; set a timeout to avoid runaway tests.
+          </p>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-body flex flex-wrap gap-4 items-center">
+          <label className="flex items-center gap-2 text-sm text-white/70">
+            <input type="checkbox" className="accent-accent-primary" checked={precheckOnly} onChange={(e) => setPrecheckOnly(e.target.checked)} />
+            Precheck only
+          </label>
+          <label className="flex items-center gap-2 text-sm text-white/70">
+            <input type="checkbox" className="accent-accent-secondary" checked={dryRun} onChange={(e) => setDryRun(e.target.checked)} />
+            Dry run (describe only)
+          </label>
+          <label className="flex items-center gap-2 text-sm text-white/70">
+            Timeout (s)
+            <input
+              type="number"
+              min={0}
+              placeholder="120"
+              className="bg-white/10 border border-white/10 px-2 py-1 rounded-lg w-24 text-white"
+              value={timeoutSeconds}
+              onChange={(e) => setTimeoutSeconds(e.target.value === '' ? '' : Number(e.target.value))}
+            />
+          </label>
+          <span className="text-xs text-white/50">Applies to all microbench calls below.</span>
         </div>
       </div>
 
@@ -124,7 +174,7 @@ export function MicrobenchTab() {
             <div className="flex flex-wrap gap-2 items-center">
               <button
                 className="rounded-lg bg-accent-info/20 px-3 py-2 text-sm text-accent-info hover:bg-accent-info/30 transition-colors"
-                onClick={() => disk.trigger({ url: `/api/microbench/disk?file_size_mb=${diskSize}&block_size_kb=${diskBlock}` })}
+                onClick={() => disk.trigger({ url: `/api/microbench/disk?file_size_mb=${diskSize}&block_size_kb=${diskBlock}${flagQuery}` })}
               >
                 Run Disk I/O
               </button>
@@ -176,7 +226,7 @@ export function MicrobenchTab() {
             <div className="flex gap-2 items-center">
               <button
                 className="rounded-lg bg-accent-primary/20 px-3 py-2 text-sm text-accent-primary hover:bg-accent-primary/30 transition-colors"
-                onClick={() => pcie.trigger({ url: `/api/microbench/pcie?size_mb=${pcieSize}&iters=${pcieIters}` })}
+                onClick={() => pcie.trigger({ url: `/api/microbench/pcie?size_mb=${pcieSize}&iters=${pcieIters}${flagQuery}` })}
               >
                 Run PCIe H2D/D2H
               </button>
@@ -202,7 +252,7 @@ export function MicrobenchTab() {
             <div className="flex gap-2 items-center">
               <button
                 className="rounded-lg bg-accent-success/20 px-3 py-2 text-sm text-accent-success hover:bg-accent-success/30 transition-colors"
-                onClick={() => mem.trigger({ url: `/api/microbench/mem?size_mb=${memSize}&stride=${memStride}` })}
+                onClick={() => mem.trigger({ url: `/api/microbench/mem?size_mb=${memSize}&stride=${memStride}${flagQuery}` })}
               >
                 Run Memory Stride
               </button>
@@ -228,7 +278,7 @@ export function MicrobenchTab() {
             <div className="flex gap-2 items-center">
               <button
                 className="rounded-lg bg-accent-warning/20 px-3 py-2 text-sm text-accent-warning hover:bg-accent-warning/30 transition-colors"
-                onClick={() => tensor.trigger({ url: `/api/microbench/tensor?size=${tensorSize}&precision=${encodeURIComponent(tensorPrecision)}` })}
+                onClick={() => tensor.trigger({ url: `/api/microbench/tensor?size=${tensorSize}&precision=${encodeURIComponent(tensorPrecision)}${flagQuery}` })}
               >
                 Run Tensor Core
               </button>
@@ -254,7 +304,7 @@ export function MicrobenchTab() {
             <div className="flex gap-2 items-center">
               <button
                 className="rounded-lg bg-accent-tertiary/20 px-3 py-2 text-sm text-accent-tertiary hover:bg-accent-tertiary/30 transition-colors"
-                onClick={() => sfu.trigger({ url: `/api/microbench/sfu?elements=${sfuElems}` })}
+                onClick={() => sfu.trigger({ url: `/api/microbench/sfu?elements=${sfuElems}${flagQuery}` })}
               >
                 Run SFU
               </button>
@@ -277,7 +327,7 @@ export function MicrobenchTab() {
             <div className="flex gap-2 items-center">
               <button
                 className="rounded-lg bg-accent-info/20 px-3 py-2 text-sm text-accent-info hover:bg-accent-info/30 transition-colors"
-                onClick={() => loop.trigger({ url: `/api/microbench/loopback?size_mb=${loopSize}&port=${loopPort}` })}
+                onClick={() => loop.trigger({ url: `/api/microbench/loopback?size_mb=${loopSize}&port=${loopPort}${flagQuery}` })}
               >
                 Run Loopback
               </button>
@@ -334,6 +384,194 @@ export function MicrobenchTab() {
             <div className="space-y-2">
               <ResultCard title="Nsight Compute Compare" result={(compareNcu.data as Result) || null} loading={compareNcu.isMutating} error={(compareNcu.error as any)?.message || null} />
               <MetricsTable result={compareNcu.data} />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="card bg-white/5 border-white/10">
+              <div className="card-header flex items-center gap-2">
+                <Rocket className="w-4 h-4 text-accent-primary" />
+                <span className="text-sm font-semibold text-white">Start Nsight Systems</span>
+              </div>
+              <div className="card-body space-y-2">
+                <input
+                  className="w-full rounded-lg bg-white/10 border border-white/10 px-3 py-2 text-sm text-white"
+                  value={nsysCommand}
+                  onChange={(e) => setNsysCommand(e.target.value)}
+                  placeholder="Command (e.g., python train.py)"
+                />
+                <div className="flex flex-wrap gap-3 text-xs text-white/70 items-center">
+                  <label className="flex items-center gap-2">
+                    Preset
+                    <select
+                      className="bg-white/10 border border-white/10 rounded-lg px-2 py-1 text-white"
+                      value={nsysPreset}
+                      onChange={(e) => setNsysPreset(e.target.value as 'light' | 'full')}
+                    >
+                      <option value="full">full</option>
+                      <option value="light">light</option>
+                    </select>
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input type="checkbox" className="accent-accent-primary" checked={nsysFullTimeline} onChange={(e) => setNsysFullTimeline(e.target.checked)} />
+                    Full timeline
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input type="checkbox" className="accent-accent-secondary" checked={nsysQueue} onChange={(e) => setNsysQueue(e.target.checked)} />
+                    Queue only
+                  </label>
+                  <label className="flex items-center gap-2">
+                    Timeout (s)
+                    <input
+                      type="number"
+                      className="bg-white/10 border border-white/10 rounded-lg px-2 py-1 w-20 text-white"
+                      value={timeoutSeconds}
+                      onChange={(e) => setTimeoutSeconds(e.target.value === '' ? '' : Number(e.target.value))}
+                    />
+                  </label>
+                </div>
+                <button
+                  className="rounded-lg bg-accent-primary/20 px-3 py-2 text-sm text-accent-primary hover:bg-accent-primary/30 transition-colors"
+                  onClick={async () => {
+                    if (!nsysCommand.trim()) {
+                      setNsysResult({ error: 'Command is required' });
+                      return;
+                    }
+                    setNsysLoading(true);
+                    setNsysResult(null);
+                    try {
+                      const json = await startNsightSystemsCapture({
+                        command: nsysCommand,
+                        preset: nsysPreset,
+                        full_timeline: nsysFullTimeline,
+                        queue_only: nsysQueue,
+                        timeout_seconds: timeoutSeconds === '' ? undefined : Number(timeoutSeconds),
+                      });
+                      setNsysResult(json);
+                      if (json.job_id) setJobId(json.job_id);
+                    } catch (e: any) {
+                      setNsysResult({ error: e.message });
+                    } finally {
+                      setNsysLoading(false);
+                    }
+                  }}
+                >
+                  {nsysLoading ? 'Running...' : 'Run Nsight Systems'}
+                </button>
+                <ResultCard title="Nsight Systems Result" result={nsysResult} loading={nsysLoading} />
+              </div>
+            </div>
+
+            <div className="card bg-white/5 border-white/10">
+              <div className="card-header flex items-center gap-2">
+                <Rocket className="w-4 h-4 text-accent-warning" />
+                <span className="text-sm font-semibold text-white">Start Nsight Compute</span>
+              </div>
+              <div className="card-body space-y-2">
+                <input
+                  className="w-full rounded-lg bg-white/10 border border-white/10 px-3 py-2 text-sm text-white"
+                  value={ncuCommand}
+                  onChange={(e) => setNcuCommand(e.target.value)}
+                  placeholder="Command (e.g., python train.py)"
+                />
+                <div className="flex flex-wrap gap-3 text-xs text-white/70 items-center">
+                  <label className="flex items-center gap-2">
+                    Workload
+                    <select
+                      className="bg-white/10 border border-white/10 rounded-lg px-2 py-1 text-white"
+                      value={ncuWorkload}
+                      onChange={(e) => setNcuWorkload(e.target.value)}
+                    >
+                      <option value="memory_bound">memory_bound</option>
+                      <option value="compute_bound">compute_bound</option>
+                      <option value="tensor_core">tensor_core</option>
+                      <option value="communication">communication</option>
+                      <option value="occupancy">occupancy</option>
+                    </select>
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input type="checkbox" className="accent-accent-secondary" checked={ncuQueue} onChange={(e) => setNcuQueue(e.target.checked)} />
+                    Queue only
+                  </label>
+                  <label className="flex items-center gap-2">
+                    Timeout (s)
+                    <input
+                      type="number"
+                      className="bg-white/10 border border-white/10 rounded-lg px-2 py-1 w-20 text-white"
+                      value={timeoutSeconds}
+                      onChange={(e) => setTimeoutSeconds(e.target.value === '' ? '' : Number(e.target.value))}
+                    />
+                  </label>
+                </div>
+                <button
+                  className="rounded-lg bg-accent-warning/20 px-3 py-2 text-sm text-accent-warning hover:bg-accent-warning/30 transition-colors"
+                  onClick={async () => {
+                    if (!ncuCommand.trim()) {
+                      setNcuResult({ error: 'Command is required' });
+                      return;
+                    }
+                    setNcuLoading(true);
+                    setNcuResult(null);
+                    try {
+                      const json = await startNsightComputeCapture({
+                        command: ncuCommand,
+                        workload_type: ncuWorkload,
+                        queue_only: ncuQueue,
+                        timeout_seconds: timeoutSeconds === '' ? undefined : Number(timeoutSeconds),
+                      });
+                      setNcuResult(json);
+                      if (json.job_id) setJobId(json.job_id);
+                    } catch (e: any) {
+                      setNcuResult({ error: e.message });
+                    } finally {
+                      setNcuLoading(false);
+                    }
+                  }}
+                >
+                  {ncuLoading ? 'Running...' : 'Run Nsight Compute'}
+                </button>
+                <ResultCard title="Nsight Compute Result" result={ncuResult} loading={ncuLoading} />
+              </div>
+            </div>
+          </div>
+
+          <div className="card bg-white/5 border-white/10">
+            <div className="card-body flex flex-wrap items-center gap-3">
+              <input
+                className="rounded-lg bg-white/10 border border-white/10 px-3 py-2 text-sm text-white w-64"
+                value={jobId}
+                onChange={(e) => setJobId(e.target.value)}
+                placeholder="Job ID (queue runs)"
+              />
+              <button
+                className="rounded-lg bg-accent-info/20 px-3 py-2 text-sm text-accent-info hover:bg-accent-info/30 transition-colors"
+                onClick={async () => {
+                  if (!jobId) return;
+                  try {
+                    const json = await fetchNsightJobStatus(jobId);
+                    setJobStatus(json);
+                  } catch (e: any) {
+                    setJobStatus({ error: e.message });
+                  }
+                }}
+              >
+                Check Job Status
+              </button>
+              <button
+                className="rounded-lg bg-accent-secondary/20 px-3 py-2 text-sm text-accent-secondary hover:bg-accent-secondary/30 transition-colors"
+                onClick={async () => {
+                  if (!jobId) return;
+                  try {
+                    const json = await fetchMcpJobStatus(jobId);
+                    setJobStatus(json);
+                  } catch (e: any) {
+                    setJobStatus({ error: e.message });
+                  }
+                }}
+              >
+                Check MCP Job
+              </button>
+              <ResultCard title="Job Status" result={jobStatus} loading={false} />
             </div>
           </div>
         </div>

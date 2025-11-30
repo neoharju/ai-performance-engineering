@@ -20,7 +20,9 @@ class OptimizedContinuousBatchingBenchmark(BaseBenchmark):
         self.sample_queue: Optional[deque] = None
         self.max_batch_size = 12
         self.hidden_dim = 1024
-        self.num_samples = 160
+        # Match baseline total samples: batch_size(12) * num_batches(12) = 144
+        self.batch_size = 12  # For signature matching
+        self.num_samples = 144
         tokens = self.num_samples * self.hidden_dim
         self._workload = WorkloadMetadata(
             requests_per_iteration=float(self.num_samples),

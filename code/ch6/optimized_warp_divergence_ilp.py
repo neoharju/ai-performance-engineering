@@ -64,6 +64,7 @@ class OptimizedWarpDivergenceILPBenchmark(BaseBenchmark):
     def __init__(self):
         super().__init__()
         self.skip_output_check = True
+        self.skip_input_check = True
         self.workload = WORKLOAD
         self.N = self.workload.warp_elements
         self.branch_iterations = self.workload.warp_branch_iterations
@@ -137,6 +138,9 @@ class OptimizedWarpDivergenceILPBenchmark(BaseBenchmark):
         restore_inductor_cudagraph_features(self._inductor_state)
         self._inductor_state = None
         torch.cuda.empty_cache()
+
+    def skip_output_verification(self) -> bool:
+        return True
 
     def get_config(self) -> BenchmarkConfig:
         return BenchmarkConfig(

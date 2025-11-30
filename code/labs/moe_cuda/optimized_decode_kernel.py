@@ -19,6 +19,8 @@ from labs.moe_cuda.decode_kernels import (
     run_baseline_kernel,
     optimized_kernel_supported,
     run_optimized_kernel,
+    is_optimized_available,
+    get_optimized_error,
 )
 
 

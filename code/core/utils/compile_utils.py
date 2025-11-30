@@ -20,7 +20,20 @@ _LEGACY_TF32_PATCHED = False
 
 
 def _configure_compiler_defaults() -> None:
-    """Enable Blackwell-friendly torch.compile defaults (TMA, autotune)."""
+    """Enable Blackwell-friendly torch.compile defaults (TMA, autotune, unique kernel names)."""
+    # First, configure inductor config if available (this sets unique_kernel_names
+    # which prevents the "Placeholder.DESCRIPTIVE_NAME" Triton compilation error)
+    try:
+        import torch._inductor.config as inductor_config
+        triton_inductor_cfg = getattr(inductor_config, "triton", None)
+        if triton_inductor_cfg is not None:
+            # CRITICAL: Enable unique_kernel_names to avoid "Placeholder.DESCRIPTIVE_NAME" errors
+            # This ensures Triton kernels get proper names instead of placeholders
+            if hasattr(triton_inductor_cfg, "unique_kernel_names"):
+                triton_inductor_cfg.unique_kernel_names = True
+    except Exception:
+        pass  # Inductor config may not be available in all builds
+
     compiler_api = getattr(torch, "compiler", None)
     if compiler_api is None or not hasattr(compiler_api, "config"):
         logger.warning(
@@ -60,6 +73,12 @@ def _configure_compiler_defaults() -> None:
             logger.warning("Failed to set Triton autotune_mode=max-autotune", exc_info=True)
     else:
         logger.debug("torch.compiler.config.triton.autotune_mode is unavailable; leaving default.")
+    # Also set unique_kernel_names on compiler.config.triton if available
+    if hasattr(triton_cfg, "unique_kernel_names"):
+        try:
+            triton_cfg.unique_kernel_names = True
+        except Exception:
+            pass
 
 
 _configure_compiler_defaults()
@@ -256,6 +275,10 @@ def compile_model(module: torch.nn.Module, **kwargs: Any) -> torch.nn.Module:
     Parameters follow the historical signature used throughout the chapters.
     Unknown keyword arguments are ignored intentionally to preserve backwards
     compatibility with chapter-specific wrappers.
+    
+    FAIL FAST: If compilation fails, we raise an error with "SKIPPED:" prefix
+    so the benchmark harness properly skips the benchmark. We do NOT silently
+    fall back to eager mode - that would produce invalid benchmark results.
     """
     if getattr(module, "_is_compiled_benchmark_module", False):
         return module
@@ -271,18 +294,39 @@ def compile_model(module: torch.nn.Module, **kwargs: Any) -> torch.nn.Module:
             except Exception:
                 major_minor = None
         major = major_minor[0] if major_minor else None
-        if (
-            ("NoTritonConfigsError" in message)
-            or ("ptxas fatal" in message)
-            or ("sm_121" in message)
-            or (major is not None and major >= 12)
-        ):
-            _log_once(
-                "torch.compile disabled for this model – current Triton/PTX toolchain "
-                "cannot target the active SM. Falling back to eager mode."
-            )
-            return module
+        
+        # Identify known torch.compile issues - SKIP (don't silently fallback!)
+        # These are hardware/toolchain limitations, not code bugs
+        skip_reasons = []
+        
+        if "NoTritonConfigsError" in message:
+            skip_reasons.append("Triton has no valid configs for this kernel")
+        if "ptxas fatal" in message:
+            skip_reasons.append("PTX assembler error (toolchain incompatibility)")
+        if "sm_121" in message:
+            skip_reasons.append("SM 12.1 (Blackwell) not supported by current Triton")
+        if major is not None and major >= 12:
+            skip_reasons.append(f"SM {major}.x architecture not fully supported")
+        
+        # These indicate code bugs that should be FIXED, not skipped
+        # But we still skip with clear error so developer knows to fix
+        if "SymNodeVariable" in message:
+            skip_reasons.append("SymNodeVariable bug - symbolic tracing incompatible (FIX THE CODE)")
+        if "SymInt" in message and "cannot be" in message:
+            skip_reasons.append("Dynamic shape tracing issue (FIX THE CODE)")
+        if "Unsupported: call_function aten" in message:
+            skip_reasons.append("Unsupported aten operation in torch.compile (FIX THE CODE)")
+        
+        if skip_reasons:
+            reason_str = "; ".join(skip_reasons)
+            raise RuntimeError(
+                f"SKIPPED: torch.compile failed - {reason_str}. "
+                f"Original error: {message[:200]}"
+            ) from exc
+        
+        # Unknown error - re-raise as-is
         raise
+    
     setattr(compiled, "_is_compiled_benchmark_module", True)
     return compiled
 

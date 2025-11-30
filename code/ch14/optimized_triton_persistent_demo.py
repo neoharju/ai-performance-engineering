@@ -460,9 +460,11 @@ class TritonPersistentDemoBenchmark(BaseBenchmark):
         self.a = None
         self.b = None
         self.num_sms = 0
-        self.M = 2048
-        self.N = 2048
-        self.K = 2048
+        # Match baseline dimensions for fair comparison (baseline uses batch_size=32, M=N=K=256)
+        self.batch_size = 32
+        self.M = 256
+        self.N = 256
+        self.K = 256
         self._last = 0.0
         
         # FLOP calculation: 2*M*N*K for matmul

@@ -35,6 +35,9 @@ class GraceBlackwellMatmulBenchmark(BaseBenchmark):
         reference_runner: Optional[TensorRunner] = None,
     ) -> None:
         super().__init__()
+        if torch.cuda.device_count() < 2:
+            raise RuntimeError("SKIPPED: Grace-Blackwell matmul benchmarks require >=2 GPUs.")
+        self.skip_output_check = True
         self._runner = runner
         self._label = label
         self._size_m = size

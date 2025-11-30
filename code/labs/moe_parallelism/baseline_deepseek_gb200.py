@@ -9,7 +9,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from core.common.moe_parallelism_plan import ParallelismPlan, SPEC_PRESETS
+from labs.moe_parallelism.plan import ParallelismPlan, SPEC_PRESETS
 from labs.moe_parallelism.benchmarking import PlanBenchmark, run_benchmark
 
 
@@ -43,7 +43,10 @@ class BaselineDeepseekGb200Benchmark(PlanBenchmark):
         super().__init__(plan=build_plan(), cluster=CLUSTER, model=MODEL)
 
 
-def get_benchmark() -> PlanBenchmark:
+def get_benchmark() -> "PlanBenchmark":
+    from labs.moe_parallelism.benchmarking import is_plan_available, get_skip_benchmark
+    if not is_plan_available():
+        return get_skip_benchmark()
     return BaselineDeepseekGb200Benchmark()
 
 

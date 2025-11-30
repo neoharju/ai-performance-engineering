@@ -68,9 +68,13 @@ class BaselineInferenceMonolithicBenchmark(BaseBenchmark):
         self.prompt: Optional[torch.Tensor] = None
         self.kv_cache: Optional[torch.Tensor] = None
         self._history: Dict[str, List[float]] = {"ttft": [], "tpot": []}
+        # Workload dimensions for signature matching
+        self.batch_size = 1
+        self.prefill_seq = 256
+        self.num_tokens = 16
         self._workload = WorkloadMetadata(
             requests_per_iteration=1.0,
-            tokens_per_iteration=256 + 16,
+            tokens_per_iteration=self.prefill_seq + self.num_tokens,
         )
     
     def setup(self) -> None:

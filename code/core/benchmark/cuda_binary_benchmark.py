@@ -72,6 +72,7 @@ class CudaBinaryBenchmark(BaseBenchmark):
         time_regex: Optional[str] = r"([0-9]+(?:\.[0-9]+)?)\s*ms",
         requires_pipeline_api: bool = False,
         require_tma_instructions: bool = False,
+        workload_params: Optional[dict] = None,
     ) -> None:
         super().__init__()
         self.chapter_dir = chapter_dir
@@ -85,6 +86,7 @@ class CudaBinaryBenchmark(BaseBenchmark):
         self.requires_pipeline_api = requires_pipeline_api
         self.require_tma_instructions = require_tma_instructions
         self.use_reported_time = True
+        self._workload_params = workload_params or {}
         
         self.arch: Optional[str] = None
         self.exec_path: Optional[Path] = None
@@ -193,6 +195,24 @@ class CudaBinaryBenchmark(BaseBenchmark):
         if self.time_pattern and (self._last_result.time_ms is None or self._last_result.time_ms <= 0):
             return f"Invalid runtime parsed: {self._last_result.time_ms} ms"
         return None
+    
+    def get_input_signature(self) -> Optional[dict]:
+        """Return input signature for verification.
+        
+        CUDA binaries have workload parameters baked in at compile time.
+        Subclasses should pass workload_params to __init__ or override this method.
+        
+        Common parameters to include:
+        - N, M, K: Matrix/vector sizes
+        - batch_size, seq_len: Sequence dimensions
+        - hidden_dim, num_heads: Model dimensions
+        """
+        if self._workload_params:
+            return self._workload_params
+        # Return empty dict to indicate no explicit workload params
+        # binary_name is excluded from comparison by the harness since it's
+        # expected to differ between baseline and optimized
+        return {}
     
     # Convenience accessors -----------------------------------------------------
     @property

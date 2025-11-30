@@ -224,8 +224,9 @@ class OptimizedVLLMV1Benchmark(BaseBenchmark):
     def __init__(self):
         super().__init__()
         self.integration = None
-        self.batch_size = 8
-        self.max_tokens = 128
+        # Match baseline dimensions for fair comparison
+        self.batch_size = 4
+        self.max_tokens = 32
         self._last_result = {}
         
         self._workload = WorkloadMetadata(

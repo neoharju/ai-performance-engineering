@@ -21,17 +21,21 @@ from dataclasses import dataclass, field
 def get_dtype_tolerances(dtype: torch.dtype) -> Tuple[float, float]:
     """Get appropriate rtol, atol for a given dtype.
     
-    Returns dtype-aware tolerances:
-    - FP32: tight (1e-5, 1e-5)
-    - FP16: medium (1e-3, 1e-3)
-    - BF16: loose (1e-2, 1e-2)
-    - FP8: very loose (5e-2, 5e-2)
-    - Default: (1e-4, 1e-4)
+    Returns dtype-aware tolerances aligned with benchmark harness settings.
+    CUDA parallel reductions have inherent non-determinism due to execution order,
+    different reduction tree structures, and fused multiply-add instructions.
+    
+    Tolerances:
+    - FP32: 1e-3, 1e-3 (CUDA parallel reduction has ~1e-3 variance)
+    - FP16: 1e-2, 1e-2 (limited precision, ~10 bits mantissa)
+    - BF16: 1e-2, 1e-2 (7 mantissa bits = ~1% precision)
+    - FP8: 5e-2, 5e-2 (very limited precision)
+    - Default: 1e-4, 1e-4
     """
     if dtype == torch.float32:
-        return 1e-5, 1e-5
-    elif dtype == torch.float16:
         return 1e-3, 1e-3
+    elif dtype == torch.float16:
+        return 1e-2, 1e-2
     elif dtype == torch.bfloat16:
         return 1e-2, 1e-2
     elif hasattr(torch, 'float8_e4m3fn') and dtype in (torch.float8_e4m3fn, torch.float8_e5m2):

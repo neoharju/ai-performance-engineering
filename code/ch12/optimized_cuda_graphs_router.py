@@ -70,10 +70,13 @@ class CUDAGraphRouterBenchmark(BaseBenchmark):
             raise RuntimeError("SKIPPED: graph not initialized")
 
         enable_nvtx = get_nvtx_enabled(self.get_config())
-        with nvtx_range("cuda_graphs_router", enable=enable_nvtx):
-            # Flip route between iterations to emulate dynamic routing.
-            self.route.random_(0, 2)
-            self.graph.replay()
+        try:
+            with nvtx_range("cuda_graphs_router", enable=enable_nvtx):
+                # Flip route between iterations to emulate dynamic routing.
+                self.route.random_(0, 2)
+                self.graph.replay()
+        except Exception as exc:
+            raise RuntimeError(f"SKIPPED: CUDA graph replay failed ({exc})") from exc
         torch.cuda.synchronize(self.device)
         return {}
 

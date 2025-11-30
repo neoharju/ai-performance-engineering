@@ -21,19 +21,22 @@ __global__ void sequential_ops_kernel(float* output, const float* input, int N) 
 }
 
 // Optimized: Independent operations (high ILP)
+// Computes SAME function as sequential: output = ((input * 2 + 1) * 3) - 5 = input * 6 - 2
+// But uses independent partial computations that expose ILP to the compiler/hardware
 __global__ void independent_ops_kernel(float* output, const float* input, int N) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     
     if (idx < N) {
-        // Independent operations - can execute in parallel
+        // Independent operations that combine to same result as sequential
+        // Sequential computes: ((val * 2 + 1) * 3) - 5 = val * 6 + 3 - 5 = val * 6 - 2
+        // We compute: (val * 3) + (val * 3) - 2 = val * 6 - 2 (same result!)
         float val = input[idx];
-        float val2 = val * 2.0f;   // Independent operation 1
-        float val3 = val + 1.0f;   // Independent operation 2
-        float val4 = val * 3.0f;   // Independent operation 3
-        float val5 = val - 5.0f;   // Independent operation 4
+        float part1 = val * 3.0f;   // Independent: 3x
+        float part2 = val * 3.0f;   // Independent: 3x (same op, different register)
+        float part3 = -2.0f;        // Independent: constant
         
-        // Combine independent results
-        output[idx] = val2 + val3 + val4 + val5;
+        // Combine independent results: 3x + 3x - 2 = 6x - 2
+        output[idx] = part1 + part2 + part3;
     }
 }
 

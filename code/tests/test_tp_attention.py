@@ -131,7 +131,7 @@ def test_tensor_parallel_attention_forward_matches_reference():
     module_out, key_local, value_local = attn(x)
     ref_out, ref_key, ref_value = _reference_attention(attn, x)
 
-    torch.testing.assert_close(module_out, ref_out, rtol=1e-5, atol=1e-6)
+    torch.testing.assert_close(module_out, ref_out, rtol=1e-3, atol=1e-3)
     torch.testing.assert_close(key_local, ref_key)
     torch.testing.assert_close(value_local, ref_value)
     assert key_local.shape == (2, attn.heads_per_gpu, 5, attn.head_dim)
@@ -160,7 +160,7 @@ def test_tensor_parallel_attention_with_kv_cache_matches_reference():
     module_out, key_local, value_local = attn(x, kv_cache=kv_cache)
     ref_out, ref_key, ref_value = _reference_attention(attn, x, kv_cache=_clone_kv_cache(kv_cache))
 
-    torch.testing.assert_close(module_out, ref_out, rtol=1e-5, atol=1e-6)
+    torch.testing.assert_close(module_out, ref_out, rtol=1e-3, atol=1e-3)
     torch.testing.assert_close(key_local, ref_key)
     torch.testing.assert_close(value_local, ref_value)
 

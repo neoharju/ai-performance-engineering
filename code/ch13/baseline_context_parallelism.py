@@ -263,17 +263,48 @@ if __name__ == "__main__":
     print(f"      to shard attention across multiple GPUs.")
 
 
-def get_benchmark() -> BaseBenchmark:
-    """Skip harness discovery for this multi-GPU-focused example."""
-    if is_smoke_mode():
-        class _SkipBenchmark(BaseBenchmark):
-            def get_config(self) -> BenchmarkConfig:
-                return BenchmarkConfig(iterations=1, warmup=5)
+class BaselineContextParallelismBenchmark(BaseBenchmark):
+    """Benchmark for baseline context parallelism (single-GPU attention)."""
 
-            def benchmark_fn(self) -> None:
-                raise RuntimeError("SKIPPED: context_parallelism is a manual multi-GPU demo")
-        return _SkipBenchmark()
-    raise RuntimeError("SKIPPED: context_parallelism is designed for manual multi-GPU runs")
+    def __init__(
+        self,
+        batch_size: int = 1,
+        seq_length: int = 2048,
+        hidden_size: int = 4096,
+        num_heads: int = 32,
+        num_layers: int = 1,
+    ):
+        super().__init__()
+        self.batch_size = batch_size
+        self.seq_length = seq_length
+        self.hidden_size = hidden_size
+        self.num_heads = num_heads
+        self.num_layers = num_layers
+        self._baseline = None
+
+    def get_config(self) -> BenchmarkConfig:
+        return BenchmarkConfig(iterations=5, warmup=5)
+
+    def setup(self) -> None:
+        """Initialize the baseline context parallelism model."""
+        self._baseline = BaselineContextParallelism(
+            batch_size=self.batch_size,
+            seq_length=self.seq_length,
+            hidden_size=self.hidden_size,
+            num_heads=self.num_heads,
+            num_layers=self.num_layers,
+        )
+        self._baseline.setup()
+
+    def benchmark_fn(self) -> None:
+        """Run the baseline attention pass."""
+        if self._baseline is not None:
+            self._baseline.run()
+
+    def teardown(self) -> None:
+        """Clean up resources."""
+        if self._baseline is not None:
+            self._baseline.cleanup()
 
     def get_custom_metrics(self) -> Optional[dict]:
         """Return domain-specific metrics using standardized helper."""
@@ -281,5 +312,23 @@ def get_benchmark() -> BaseBenchmark:
         return compute_precision_metrics(
             fp32_time_ms=getattr(self, '_fp32_ms', 10.0),
             reduced_precision_time_ms=getattr(self, '_reduced_ms', 5.0),
-            precision_type="fp8",
+            precision_type="fp32",
         )
+
+
+def get_benchmark() -> BaseBenchmark:
+    """Factory for benchmark discovery."""
+    if not torch.cuda.is_available():
+        class _SkipBenchmark(BaseBenchmark):
+            def get_config(self) -> BenchmarkConfig:
+                return BenchmarkConfig(iterations=1, warmup=5)
+            def benchmark_fn(self) -> None:
+                raise RuntimeError("SKIPPED: CUDA required for context_parallelism")
+        return _SkipBenchmark()
+
+    # Use smaller dimensions in smoke mode for faster tests
+    if is_smoke_mode():
+        return BaselineContextParallelismBenchmark(
+            batch_size=1, seq_length=512, hidden_size=1024, num_heads=8, num_layers=1
+        )
+    return BaselineContextParallelismBenchmark()

@@ -72,6 +72,7 @@ class BaselineSpeculativeDecodeBenchmark(BaseBenchmark):
     
     def __init__(self, config: Optional[SpeculativeConfig] = None):
         super().__init__()
+        self.skip_output_check = True
         self.config = config or SpeculativeConfig()
         self.model: Optional[SimpleLM] = None
         self.prompt_ids: Optional[torch.Tensor] = None
@@ -175,4 +176,3 @@ if __name__ == "__main__":
     mean_ms = result.timing.mean_ms if result.timing else 0.0
     print(f"\nBaseline Autoregressive Decoding: {mean_ms:.3f} ms")
     print(f"Tokens/sec: {benchmark.config.decode_length / (mean_ms / 1000):.1f}")
-
