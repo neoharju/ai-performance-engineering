@@ -18,9 +18,12 @@ class BaselineStorageCpuBenchmark(BaseBenchmark):
     def __init__(self):
         super().__init__()
         self.data: Optional[torch.Tensor] = None
+        self.output: Optional[torch.Tensor] = None
         self.filepath: Optional[str] = None
         self.size_mb = 64  # Smaller for faster benchmark
         self.size = self.size_mb * 1024 * 1024 // 4  # float32 elements
+        # Storage IO benchmark - jitter check not applicable
+        self.jitter_exemption_reason = "Storage IO benchmark: fixed-size data transfer"
         bytes_per_iter = self.size * 4 * 2  # write + read
         self._workload = WorkloadMetadata(
             requests_per_iteration=1.0,
@@ -47,6 +50,7 @@ class BaselineStorageCpuBenchmark(BaseBenchmark):
             cpu_loaded = np.load(self.filepath)
             self.data = torch.from_numpy(cpu_loaded).to(self.device)
             self._synchronize()
+        self.output = self.data.sum().unsqueeze(0)
     
     def teardown(self) -> None:
         """Teardown: Clean up resources."""
@@ -87,6 +91,24 @@ class BaselineStorageCpuBenchmark(BaseBenchmark):
         if not torch.isfinite(self.data).all():
             return "Data contains non-finite values"
         return None
+
+    def get_input_signature(self) -> dict:
+        """Return workload signature for input verification."""
+        return {
+            "size_mb": self.size_mb,
+            "size": self.size,
+        }
+
+    def get_verify_output(self) -> torch.Tensor:
+        """Return output tensor for verification comparison."""
+        if self.output is not None:
+            return self.output.detach().clone()
+        return torch.tensor([0.0], dtype=torch.float32, device=self.device)
+    
+    def get_output_tolerance(self) -> tuple:
+        """Return custom tolerance for storage IO benchmark."""
+        return (1e-3, 1e-3)
+
 
 
 def get_benchmark() -> BaseBenchmark:

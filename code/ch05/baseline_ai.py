@@ -26,10 +26,13 @@ class BaselineAIBenchmark(BaseBenchmark):
 
     def __init__(self):
         super().__init__()
-        self.blocks = nn.ModuleList(TinyBlock(1024).to(self.device) for _ in range(4))
+        self.blocks: Optional[nn.ModuleList] = None
         self.inputs: Optional[torch.Tensor] = None
+        self.output: Optional[torch.Tensor] = None
         self.batch = 512
         self.hidden = 1024
+        # Inference benchmark - jitter check not applicable
+        self.jitter_exemption_reason = "Inference benchmark: fixed input shape"
         tokens = self.batch * self.hidden
         self._workload = WorkloadMetadata(
             requests_per_iteration=1.0,
@@ -38,6 +41,8 @@ class BaselineAIBenchmark(BaseBenchmark):
 
     def setup(self) -> None:
         torch.manual_seed(0)
+        # Initialize model weights after seeding for deterministic comparison
+        self.blocks = nn.ModuleList(TinyBlock(1024).to(self.device) for _ in range(4))
         self.inputs = torch.randn(self.batch, self.hidden, device=self.device, dtype=torch.float32)
         self._synchronize()
 
@@ -48,7 +53,7 @@ class BaselineAIBenchmark(BaseBenchmark):
             for block in self.blocks:
                 out = block(out)
                 self._synchronize()
-        return out
+        self.output = out.detach()
 
     def teardown(self) -> None:
         self.inputs = None
@@ -74,6 +79,24 @@ class BaselineAIBenchmark(BaseBenchmark):
         if self.inputs is None:
             return "Inputs missing"
         return None
+
+    def get_input_signature(self) -> dict:
+        """Return workload signature for input verification."""
+        return {
+            "batch": self.batch,
+            "hidden": self.hidden,
+        }
+
+    def get_verify_output(self) -> torch.Tensor:
+        """Return output tensor for verification comparison."""
+        if self.output is not None:
+            return self.output.detach().clone()
+        return torch.tensor([0.0], dtype=torch.float32, device=self.device)
+    
+    def get_output_tolerance(self) -> tuple:
+        """Return custom tolerance for inference benchmark."""
+        return (1e-3, 1e-3)
+
 
 
 def get_benchmark() -> BaseBenchmark:

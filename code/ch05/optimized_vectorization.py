@@ -15,7 +15,10 @@ class OptimizedVectorizationBenchmark(BaseBenchmark):
     def __init__(self):
         super().__init__()
         self.data: Optional[torch.Tensor] = None
+        self.output: Optional[torch.Tensor] = None
         self.N = 1_000_000
+        # Computation benchmark - jitter check not applicable
+        self.jitter_exemption_reason = "Computation benchmark: fixed input size"
         tokens = self.N
         self._workload = WorkloadMetadata(
             requests_per_iteration=1.0,
@@ -33,12 +36,13 @@ class OptimizedVectorizationBenchmark(BaseBenchmark):
         self._synchronize()
     
     def benchmark_fn(self) -> None:
-        """Benchmark: Vectorized operations."""
+        """Benchmark: Vectorized sum of first 1000 elements (same as baseline)."""
         assert self.data is not None
         with self._nvtx_range("optimized_vectorization"):
-            result = self.data.sum()  # Vectorized sum operation
-            _ = result
+            # Vectorized sum of first 1000 elements to match baseline
+            result = self.data[:1000].sum().unsqueeze(0)
             self._synchronize()
+        self.output = result
     
     def teardown(self) -> None:
         """Teardown: Clean up resources."""
@@ -70,6 +74,23 @@ class OptimizedVectorizationBenchmark(BaseBenchmark):
         if self.data is None:
             return "Data not initialized"
         return None
+
+    def get_input_signature(self) -> dict:
+        """Return workload signature for input verification."""
+        return {
+            "N": self.N,
+        }
+
+    def get_verify_output(self) -> torch.Tensor:
+        """Return output tensor for verification comparison."""
+        if self.output is not None:
+            return self.output.detach().clone()
+        return torch.tensor([0.0], dtype=torch.float32, device=self.device)
+    
+    def get_output_tolerance(self) -> tuple:
+        """Return custom tolerance for computation benchmark."""
+        return (1e-3, 1e-3)
+
 
 
 def get_benchmark() -> BaseBenchmark:

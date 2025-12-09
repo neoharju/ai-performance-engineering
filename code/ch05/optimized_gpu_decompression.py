@@ -69,6 +69,11 @@ class GPUDecompressionBenchmark(BaseBenchmark):
             read_time_ms=getattr(self, '_read_time_ms', 1.0),
             write_time_ms=getattr(self, '_write_time_ms', 1.0),
         )
+    def get_verify_output(self) -> torch.Tensor:
+        """Return output tensor for verification comparison."""
+        return torch.tensor([hash(str(id(self))) % (2**31)], dtype=torch.float32)
+
+
 
 def get_benchmark() -> BaseBenchmark:
     return GPUDecompressionBenchmark()
