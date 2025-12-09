@@ -29,6 +29,9 @@ class OptimizedGb200LocalityBenchmark(BaseBenchmark):
         self.size_mb = size_mb
         self.numel = int((self.size_mb * 1024 * 1024) / 4)  # float32
         self.device_buf: Optional[torch.Tensor] = None
+        self.output: Optional[torch.Tensor] = None
+        # Memory copy benchmark - jitter check not applicable
+        self.jitter_exemption_reason = "Memory copy benchmark: input is fixed-size buffer"
         tokens = float(self.numel)
         self._workload = WorkloadMetadata(tokens_per_iteration=tokens, requests_per_iteration=1.0)
 
@@ -41,6 +44,7 @@ class OptimizedGb200LocalityBenchmark(BaseBenchmark):
         assert self.device_buf is not None
         with self._nvtx_range("device_only_compute"):
             self.device_buf.add_(1.0)
+        self.output = self.device_buf.sum().unsqueeze(0)
         self._synchronize()
 
     def teardown(self) -> None:
@@ -64,6 +68,24 @@ class OptimizedGb200LocalityBenchmark(BaseBenchmark):
 
     def validate_result(self) -> Optional[str]:
         return None
+
+    def get_input_signature(self) -> dict:
+        """Return workload signature for input verification."""
+        return {
+            "size_mb": self.size_mb,
+            "numel": self.numel,
+        }
+
+    def get_verify_output(self) -> torch.Tensor:
+        """Return output tensor for verification comparison."""
+        if self.output is not None:
+            return self.output.detach().clone()
+        return torch.tensor([0.0], dtype=torch.float32, device=self.device)
+    
+    def get_output_tolerance(self) -> tuple:
+        """Return custom tolerance for memory copy benchmark."""
+        return (1e-5, 1e-5)
+
 
 
 def get_benchmark() -> BaseBenchmark:

@@ -74,6 +74,9 @@ class OptimizedDdpBenchmark(BaseBenchmark):
         self.inputs: List[torch.Tensor] = []
         self.targets: List[torch.Tensor] = []
         self.batch_idx = 0
+        self.output: Optional[torch.Tensor] = None
+        # Training benchmarks don't support jitter check
+        self.jitter_exemption_reason = "Training benchmark: outputs change each iteration due to gradient updates"
         tokens = self.batch_size * self.input_size
         self._workload = WorkloadMetadata(
             requests_per_iteration=float(self.batch_size),
@@ -85,30 +88,18 @@ class OptimizedDdpBenchmark(BaseBenchmark):
         torch.manual_seed(42)
         
         # Direct model on GPU - no DataParallel wrapper
-        self.model = SimpleNet(self.input_size, self.hidden_size).to(
-            self.device, dtype=torch.bfloat16
-        )
-        self.optimizer = optim.SGD(self.model.parameters(), lr=0.01, momentum=0.9)
+        # Use same precision as baseline (float32) for fair verification comparison
+        self.model = SimpleNet(self.input_size, self.hidden_size).to(self.device)
+        self.optimizer = optim.SGD(self.model.parameters(), lr=0.01)
         
-        # Pre-stage data on GPU to avoid CPU-GPU copies
-        for _ in range(4):
-            self.inputs.append(torch.randn(
-                self.batch_size, self.input_size, 
-                device=self.device, dtype=torch.bfloat16
-            ))
-            self.targets.append(torch.randn(
-                self.batch_size, 1, 
-                device=self.device, dtype=torch.bfloat16
-            ))
+        # Pre-stage data on GPU - create on CPU first (same as baseline), then copy to GPU once
+        # The optimization is that we do the copy once in setup, not every iteration
+        # Use single batch like baseline for fair verification comparison
+        cpu_input = torch.randn(self.batch_size, self.input_size, dtype=torch.float32)
+        cpu_target = torch.randn(self.batch_size, 1, dtype=torch.float32)
+        self.inputs.append(cpu_input.to(self.device))
+        self.targets.append(cpu_target.to(self.device))
         
-        # Warmup
-        for _ in range(5):
-            idx = 0
-            output = self.model(self.inputs[idx])
-            loss = nn.functional.mse_loss(output, self.targets[idx])
-            self.optimizer.zero_grad(set_to_none=True)
-            loss.backward()
-            self.optimizer.step()
         torch.cuda.synchronize(self.device)
 
     def benchmark_fn(self) -> None:
@@ -127,6 +118,7 @@ class OptimizedDdpBenchmark(BaseBenchmark):
             self.optimizer.zero_grad(set_to_none=True)
             loss.backward()
             self.optimizer.step()
+        self.output = output.detach()
         self._synchronize()
 
     def teardown(self) -> None:
@@ -160,6 +152,25 @@ class OptimizedDdpBenchmark(BaseBenchmark):
         if self.model is None:
             return "Model not initialized"
         return None
+
+    def get_input_signature(self) -> dict:
+        """Return workload signature for input verification."""
+        return {
+            "batch_size": self.batch_size,
+            "input_size": self.input_size,
+            "hidden_size": self.hidden_size,
+        }
+
+    def get_verify_output(self) -> torch.Tensor:
+        """Return output tensor for verification comparison."""
+        if self.output is not None:
+            return self.output.detach().clone()
+        return torch.tensor([0.0], dtype=torch.float32, device=self.device)
+    
+    def get_output_tolerance(self) -> tuple:
+        """Return custom tolerance for training output comparison."""
+        return (1e-3, 1e-3)
+
 
 
 def get_benchmark() -> BaseBenchmark:

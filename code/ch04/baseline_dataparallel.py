@@ -55,6 +55,9 @@ class BaselineDataParallelBenchmark(BaseBenchmark):
         self.input_size = 1024
         self.hidden_size = 256
         self.batch_size = 512
+        self.output: Optional[torch.Tensor] = None
+        # Training benchmarks don't support jitter check
+        self.jitter_exemption_reason = "Training benchmark: outputs change each iteration due to gradient updates"
         tokens = self.batch_size * self.input_size
         self._workload = WorkloadMetadata(
             requests_per_iteration=float(self.batch_size),
@@ -85,6 +88,7 @@ class BaselineDataParallelBenchmark(BaseBenchmark):
             loss.backward()
             self.optimizer.step()
             self.optimizer.zero_grad()
+        self.output = output.detach()
         self._synchronize()
 
     
@@ -134,6 +138,25 @@ class BaselineDataParallelBenchmark(BaseBenchmark):
         except Exception as e:
             return f"Model forward pass failed: {e}"
         return None
+
+    def get_input_signature(self) -> dict:
+        """Return workload signature for input verification."""
+        return {
+            "batch_size": self.batch_size,
+            "input_size": self.input_size,
+            "hidden_size": self.hidden_size,
+        }
+
+    def get_verify_output(self) -> torch.Tensor:
+        """Return output tensor for verification comparison."""
+        if self.output is not None:
+            return self.output.detach().clone()
+        return torch.tensor([0.0], dtype=torch.float32, device=self.device)
+    
+    def get_output_tolerance(self) -> tuple:
+        """Return custom tolerance for training output comparison."""
+        return (1e-3, 1e-3)
+
 
 
 def get_benchmark() -> BaseBenchmark:

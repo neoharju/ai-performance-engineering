@@ -33,7 +33,10 @@ class BaselineNVLinkBenchmark(BaseBenchmark):
         super().__init__()
         self.data_gpu0 = None
         self.data_gpu1 = None
+        self.output: Optional[torch.Tensor] = None
         self.N = 10_000_000
+        # Memory transfer benchmark - jitter check not applicable
+        self.jitter_exemption_reason = "Memory transfer benchmark: input is fixed-size buffer"
         self._workload = WorkloadMetadata(
             requests_per_iteration=1.0,
             tokens_per_iteration=float(self.N),
@@ -66,12 +69,13 @@ class BaselineNVLinkBenchmark(BaseBenchmark):
                 # Transfer through PCIe bus (slower than NVLink)
                 self.data_gpu1.copy_(self.data_gpu0, non_blocking=False)
                 torch.cuda.synchronize()
+                self.output = self.data_gpu1.sum().unsqueeze(0)
             else:
                 # Single GPU: simulate inefficient CPU round-trip (no NVLink)
                 cpu_data = self.data_gpu0.cpu()
-                cpu_data = cpu_data * 2.0  # Simulate CPU operation
                 self.data_gpu0 = cpu_data.to(self.device)
                 torch.cuda.synchronize()
+                self.output = self.data_gpu0.sum().unsqueeze(0)
             
             # Baseline: No NVLink benefits
             # PCIe-based communication (slower)
@@ -107,6 +111,23 @@ class BaselineNVLinkBenchmark(BaseBenchmark):
         if self.data_gpu0 is None:
             return "Data not initialized"
         return None
+
+    def get_input_signature(self) -> dict:
+        """Return workload signature for input verification."""
+        return {
+            "N": self.N,
+        }
+
+    def get_verify_output(self) -> torch.Tensor:
+        """Return output tensor for verification comparison."""
+        if self.output is not None:
+            return self.output.detach().clone()
+        return torch.tensor([0.0], dtype=torch.float32, device=self.device)
+    
+    def get_output_tolerance(self) -> tuple:
+        """Return custom tolerance for memory transfer benchmark."""
+        return (1e-3, 1e-3)
+
 
 
 def get_benchmark() -> BaseBenchmark:

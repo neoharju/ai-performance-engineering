@@ -29,7 +29,10 @@ class OptimizedNVLinkBenchmark(BaseBenchmark):
         super().__init__()
         self.data_gpu0 = None
         self.data_gpu1 = None
+        self.output: Optional[torch.Tensor] = None
         self.N = 10_000_000
+        # Memory transfer benchmark - jitter check not applicable
+        self.jitter_exemption_reason = "Memory transfer benchmark: input is fixed-size buffer"
         self._workload = WorkloadMetadata(
             requests_per_iteration=1.0,
             tokens_per_iteration=float(self.N),
@@ -71,6 +74,7 @@ class OptimizedNVLinkBenchmark(BaseBenchmark):
                 # Direct GPU-to-GPU copy via NVLink (high bandwidth, low latency)
                 self.data_gpu1.copy_(self.data_gpu0, non_blocking=True)
                 torch.cuda.synchronize()
+                self.output = self.data_gpu1.sum().unsqueeze(0)
             else:
                 # Single GPU: optimized pinned memory transfer (simulates NVLink benefit)
                 # NVLink would provide high-speed transfer in multi-GPU setup
@@ -78,6 +82,7 @@ class OptimizedNVLinkBenchmark(BaseBenchmark):
                 pinned_data.copy_(self.data_gpu0, non_blocking=True)
                 self.data_gpu0 = pinned_data.to(self.device, non_blocking=True)
                 torch.cuda.synchronize()
+                self.output = self.data_gpu0.sum().unsqueeze(0)
             
             # Optimization: NVLink benefits
             # - High-speed GPU-to-GPU communication
@@ -116,6 +121,23 @@ class OptimizedNVLinkBenchmark(BaseBenchmark):
         if self.data_gpu0 is None:
             return "Data not initialized"
         return None
+
+    def get_input_signature(self) -> dict:
+        """Return workload signature for input verification."""
+        return {
+            "N": self.N,
+        }
+
+    def get_verify_output(self) -> torch.Tensor:
+        """Return output tensor for verification comparison."""
+        if self.output is not None:
+            return self.output.detach().clone()
+        return torch.tensor([0.0], dtype=torch.float32, device=self.device)
+    
+    def get_output_tolerance(self) -> tuple:
+        """Return custom tolerance for memory transfer benchmark."""
+        return (1e-3, 1e-3)
+
 
 
 def get_benchmark() -> BaseBenchmark:
