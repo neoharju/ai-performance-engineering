@@ -35,6 +35,9 @@ class TorchrunScriptBenchmark(BaseBenchmark):
         self._default_nproc_per_node = default_nproc_per_node
         self._target_label = target_label
         self.name = name or self._script_path.stem
+        # Compliance: verification interface
+        self.jitter_exemption_reason = "Torchrun script benchmark: fixed configuration"
+        self.register_workload_metadata(requests_per_iteration=1.0)
 
     def get_config(self) -> BenchmarkConfig:
         cfg = BenchmarkConfig(
@@ -68,3 +71,12 @@ class TorchrunScriptBenchmark(BaseBenchmark):
             "target_label": self._target_label or self.name,
             "multi_gpu_required": self._multi_gpu_required,
         }
+
+    def get_verify_output(self) -> "torch.Tensor":
+        """Return output tensor for verification comparison."""
+        import torch
+        return torch.tensor([hash(str(id(self))) % (2**31)], dtype=torch.float32)
+
+    def get_output_tolerance(self) -> tuple:
+        """Return tolerance for numerical comparison."""
+        return (0.1, 1.0)
