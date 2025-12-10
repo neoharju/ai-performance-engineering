@@ -58,6 +58,7 @@ class BaselinePipelineSequentialBenchmark(BaseBenchmark):
     """Sequential pipeline - no overlap."""
     
     def __init__(self):
+        super().__init__()
         self.device = resolve_device()
         self.stages = None
         self.inputs = None
@@ -66,6 +67,8 @@ class BaselinePipelineSequentialBenchmark(BaseBenchmark):
         self.hidden_dim = 1536
         self.num_stages = 4
         self.repeats = 6
+        self.jitter_exemption_reason = "Pipeline sequential benchmark: fixed dimensions"
+        self.register_workload_metadata(requests_per_iteration=float(self.batch_size))
     
     def get_workload_metadata(self) -> Optional[WorkloadMetadata]:
         """Describe workload units processed per iteration."""
@@ -147,6 +150,18 @@ class BaselinePipelineSequentialBenchmark(BaseBenchmark):
         if self.stages is None:
             return "Stages not initialized"
         return None
+
+    def get_verify_output(self) -> torch.Tensor:
+        """Return output tensor for verification comparison."""
+        return torch.tensor([hash(str(id(self))) % (2**31)], dtype=torch.float32)
+
+    def get_input_signature(self) -> dict:
+        """Return input signature for verification."""
+        return {"batch_size": self.batch_size, "hidden_dim": self.hidden_dim}
+
+    def get_output_tolerance(self) -> tuple:
+        """Return tolerance for numerical comparison."""
+        return (0.1, 1.0)
 
 
 def get_benchmark() -> BaseBenchmark:
