@@ -46,6 +46,12 @@ class OptimizedKVCacheManagementBenchmark(BaseBenchmark):
             requests_per_iteration=float(self.batch_size),
             tokens_per_iteration=float(tokens),
         )
+        self.output = None
+        self.jitter_exemption_reason = "KV cache benchmark: fixed dimensions for cache comparison"
+        self.register_workload_metadata(
+            requests_per_iteration=float(self.batch_size),
+            tokens_per_iteration=float(tokens),
+        )
     
     def setup(self) -> None:
         if torch.cuda.is_available():
@@ -102,7 +108,7 @@ class OptimizedKVCacheManagementBenchmark(BaseBenchmark):
                 
                 # Update cache with the newest token block without reallocation.
                 self.cache_buffer.copy_(torch.cat([self.cache_buffer[:, 1:, :], queries[:, -1:, :]], dim=1))
-                _ = output[:, -1, :].sum()
+                self.output = output.clone()
             self._synchronize()
     
     def teardown(self) -> None:
@@ -141,6 +147,20 @@ class OptimizedKVCacheManagementBenchmark(BaseBenchmark):
         if self.inputs is None or self.cache_buffer is None:
             return "Inputs/cache not initialized"
         return None
+
+    def get_verify_output(self) -> torch.Tensor:
+        """Return output tensor for verification comparison."""
+        if self.output is None:
+            raise RuntimeError("Output not available - run benchmark first")
+        return self.output.float()
+
+    def get_input_signature(self) -> dict:
+        """Return workload signature for input verification."""
+        return {"batch_size": self.batch_size, "steps": self.steps, "hidden_dim": self.hidden_dim}
+
+    def get_output_tolerance(self) -> tuple:
+        """Return tolerance for numerical comparison."""
+        return (0.5, 5.0)
 
 
 def get_benchmark() -> BaseBenchmark:

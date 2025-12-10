@@ -62,6 +62,8 @@ class OptimizedPagedAttentionBenchmark(BaseBenchmark):
             requests_per_iteration=float(self.batch_size),
             tokens_per_iteration=float(tokens),
         )
+        self.output = None
+        self.jitter_exemption_reason = "Paged attention benchmark: fixed dimensions for attention comparison"
     
     def setup(self) -> None:
         """Setup: Initialize Flash Attention model."""
@@ -161,6 +163,20 @@ class OptimizedPagedAttentionBenchmark(BaseBenchmark):
         if self.qkv_proj is None or self.inputs is None:
             return "Model not initialized"
         return None
+
+    def get_verify_output(self) -> torch.Tensor:
+        """Return output tensor for verification comparison."""
+        if self.output is None:
+            raise RuntimeError("Output not available - run benchmark first")
+        return self.output
+
+    def get_input_signature(self) -> dict:
+        """Return workload signature for input verification."""
+        return {"batch_size": self.batch_size, "max_seq_len": self.max_seq_len, "hidden_dim": self.hidden_dim}
+
+    def get_output_tolerance(self) -> tuple:
+        """Return tolerance for numerical comparison."""
+        return (0.1, 1.0)
 
 
 def get_benchmark() -> BaseBenchmark:
