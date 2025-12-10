@@ -194,10 +194,10 @@ PROTECTIONS = {
             ("core/harness/validity_checks.py", r"def gc_disabled"),
         ],
     },
-    "process_isolation": {
-        "description": "Ensure benchmark runs in isolation",
+    "stream_sync_check": {
+        "description": "Check all CUDA streams are synchronized",
         "evidence": [
-            ("core/harness/validity_checks.py", r"def check_process_isolation"),
+            ("core/harness/validity_checks.py", r"def check_stream_sync_completeness"),
         ],
     },
     

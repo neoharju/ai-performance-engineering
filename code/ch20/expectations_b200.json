@@ -1,0 +1,32 @@
+{
+  "examples": {
+    "memory_standard": {
+      "example": "memory_standard",
+      "metadata": {
+        "best_optimization": "optimized_memory_standard",
+        "best_optimization_file": "optimized_memory_standard.py",
+        "best_optimization_speedup": 1.367644421689408,
+        "best_optimization_time_ms": 0.1033337603509426,
+        "git_commit": "04ac521b91f5a2838a3d97593ce943f2100676b2",
+        "updated_at": "2025-12-10T01:25:09.652619"
+      },
+      "metrics": {
+        "baseline_p75_ms": 0.1430719941854477,
+        "baseline_throughput.latency_ms": 0.14132384091615677,
+        "baseline_throughput.requests_per_s": 7075.94694226624,
+        "baseline_throughput.tokens_per_s": 185491703523.34412,
+        "baseline_time_ms": 0.14132384091615677,
+        "best_optimized_p75_ms": 0.10412800312042236,
+        "best_optimized_speedup": 1.367644421689408,
+        "best_optimized_throughput.latency_ms": 0.1033337603509426,
+        "best_optimized_throughput.requests_per_s": 9677.379363760647,
+        "best_optimized_throughput.tokens_per_s": 253686693593.36707,
+        "best_optimized_time_ms": 0.1033337603509426,
+        "best_speedup": 1.367644421689408
+      },
+      "type": "python"
+    }
+  },
+  "hardware_key": "b200",
+  "schema_version": 2
+}

@@ -3178,7 +3178,7 @@ class BenchmarkHarness:
         from core.harness.validity_checks import (
             reset_cuda_memory_pool, capture_gpu_state, gc_disabled,
             clear_compile_cache, force_tensor_evaluation, validate_environment,
-            MemoryAllocationTracker
+            MemoryAllocationTracker, audit_streams, check_stream_sync_completeness
         )
         
         # 0. Validate environment and log device enumeration
@@ -3410,6 +3410,20 @@ class BenchmarkHarness:
                     # Fixed iterations mode (original behavior)
                     for _ in range(config.iterations):
                         _run_single_iteration()
+            
+            # Stream audit check - verify all streams are properly synchronized
+            # This detects the Locus/KernelBench stream timing vulnerability
+            if getattr(config, 'audit_stream_sync', True):
+                sync_complete, sync_warnings = check_stream_sync_completeness(self.device)
+                if sync_warnings:
+                    for sw in sync_warnings:
+                        import warnings
+                        warnings.warn(
+                            f"STREAM SYNC WARNING: {sw}. "
+                            "Work on non-default streams may not be properly timed. "
+                            "See Locus/KernelBench 2025 incident for details.",
+                            RuntimeWarning,
+                        )
             
             # Cross-validate CUDA event timing vs wall clock timing
             # Flag anomalies where CUDA events report much less time than wall clock

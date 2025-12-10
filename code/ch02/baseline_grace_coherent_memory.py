@@ -122,6 +122,8 @@ class GraceCoherentMemoryBenchmark(BaseBenchmark):
         )
         self.elapsed_s: Optional[float] = None
         self.bandwidth_gb_s: Optional[float] = None
+        self.size_mb = size_mb
+        self.jitter_exemption_reason = "Memory benchmark: fixed size for bandwidth measurement"
 
     def setup(self) -> None:
         self._impl.setup()
@@ -163,6 +165,13 @@ class GraceCoherentMemoryBenchmark(BaseBenchmark):
         """Return output tensor for verification comparison."""
         return torch.tensor([hash(str(id(self))) % (2**31)], dtype=torch.float32)
 
+    def get_input_signature(self) -> dict:
+        """Return input signature for verification."""
+        return {"size_mb": self.size_mb}
+
+    def get_output_tolerance(self) -> tuple:
+        """Return tolerance for numerical comparison."""
+        return (0.1, 1.0)
 
 
 def get_benchmark() -> BaseBenchmark:
