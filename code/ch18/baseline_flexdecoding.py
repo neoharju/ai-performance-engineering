@@ -128,7 +128,7 @@ class FlexDecodingHarness(BaseBenchmark):
         """Return workload signature for input verification."""
         return {
             "dim": self.config.dim,
-            "num_heads": self.config.num_heads,
+            "heads": self.config.heads,
             "window": self.config.window,
             "max_seq_len": self.config.max_seq_len,
             "decode_tokens": self.decode_tokens,
