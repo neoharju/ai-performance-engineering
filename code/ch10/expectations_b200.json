@@ -396,6 +396,30 @@
       },
       "type": "cuda"
     },
+    "matmul": {
+      "example": "matmul",
+      "metadata": {
+        "best_optimization": "optimized_matmul",
+        "best_optimization_file": "optimized_matmul.py",
+        "best_optimization_speedup": 9.763987888220838,
+        "best_optimization_time_ms": 0.6947040140628815,
+        "git_commit": "64f05d6d3f0094cadd12f1520b1795b0a848ac2e",
+        "updated_at": "2025-12-10T01:08:42.708204"
+      },
+      "metrics": {
+        "baseline_p75_ms": 6.782144069671631,
+        "baseline_throughput.latency_ms": 6.783081579208374,
+        "baseline_throughput.requests_per_s": 147.42561892005227,
+        "baseline_time_ms": 6.783081579208374,
+        "best_optimized_p75_ms": 0.6946880221366882,
+        "best_optimized_speedup": 9.763987888220838,
+        "best_optimized_throughput.latency_ms": 0.6947040140628815,
+        "best_optimized_throughput.requests_per_s": 1439.4619575488512,
+        "best_optimized_time_ms": 0.6947040140628815,
+        "best_speedup": 9.763987888220838
+      },
+      "type": "python"
+    },
     "pipeline_3stage": {
       "example": "pipeline_3stage",
       "metadata": {

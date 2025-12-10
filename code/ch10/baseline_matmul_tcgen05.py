@@ -40,6 +40,9 @@ class BaselineMatmulTCGen05Benchmark(BaseBenchmark):
         self.size = self.n
         self.A: Optional[torch.Tensor] = None
         self.B: Optional[torch.Tensor] = None
+        self.output: Optional[torch.Tensor] = None
+        self.jitter_exemption_reason = "TCGen05 matmul benchmark: fixed dimensions for comparison"
+        self.register_workload_metadata(bytes_per_iteration=float(self.n * self.n * 2 * 3))
 
     def setup(self) -> None:
         if not self._tcgen05_available:
@@ -58,7 +61,7 @@ class BaselineMatmulTCGen05Benchmark(BaseBenchmark):
         assert self.A is not None and self.B is not None and self.module is not None
         with self._nvtx_range("baseline_matmul_tcgen05_custom"):
             with torch.no_grad():
-                _ = self.module.matmul_tcgen05(self.A, self.B)
+                self.output = self.module.matmul_tcgen05(self.A, self.B)
         self._synchronize()
 
     def teardown(self) -> None:
@@ -83,6 +86,20 @@ class BaselineMatmulTCGen05Benchmark(BaseBenchmark):
         if self.A is None or self.B is None:
             return "Matrices not initialized"
         return None
+
+    def get_verify_output(self) -> torch.Tensor:
+        """Return output tensor for verification."""
+        if self.output is None:
+            raise RuntimeError("Output not available - run benchmark first")
+        return self.output.float()
+
+    def get_input_signature(self) -> dict:
+        """Return input signature for verification."""
+        return {"size": self.size}
+
+    def get_output_tolerance(self) -> tuple:
+        """Return tolerance for numerical comparison - wider due to FP16."""
+        return (0.5, 5.0)
 
 
 def get_benchmark() -> BaselineMatmulTCGen05Benchmark:
