@@ -72,6 +72,32 @@
       },
       "type": "python"
     },
+    "batch": {
+      "example": "batch",
+      "metadata": {
+        "best_optimization": "optimized_batch",
+        "best_optimization_file": "optimized_batch.py",
+        "best_optimization_speedup": 60.642614027657366,
+        "best_optimization_time_ms": 0.1257075199484825,
+        "git_commit": "e027a67f14ad6311dfdb4fd26daaa2cb59e7a0b1",
+        "updated_at": "2025-12-10T01:15:11.126450"
+      },
+      "metrics": {
+        "baseline_p75_ms": 8.224096298217773,
+        "baseline_throughput.latency_ms": 7.623232612609863,
+        "baseline_throughput.requests_per_s": 16790.77715512322,
+        "baseline_throughput.tokens_per_s": 137550046.45476943,
+        "baseline_time_ms": 7.623232612609863,
+        "best_optimized_p75_ms": 0.127360001206398,
+        "best_optimized_speedup": 60.642614027657366,
+        "best_optimized_throughput.latency_ms": 0.1257075199484825,
+        "best_optimized_throughput.requests_per_s": 7954.973580019877,
+        "best_optimized_throughput.tokens_per_s": 8341394376.642922,
+        "best_optimized_time_ms": 0.1257075199484825,
+        "best_speedup": 60.642614027657366
+      },
+      "type": "python"
+    },
     "cluster_group": {
       "example": "cluster_group",
       "metadata": {
