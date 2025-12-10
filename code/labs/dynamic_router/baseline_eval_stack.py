@@ -17,6 +17,8 @@ class BaselineEvalStackBenchmark(BaseBenchmark):
     def __init__(self) -> None:
         super().__init__()
         self._summary: Dict[str, float] = {}
+        self.jitter_exemption_reason = "Eval stack benchmark: fixed configuration"
+        self.register_workload_metadata(requests_per_iteration=1.0)
 
     def _resolve_device(self) -> torch.device:  # type: ignore[override]
         return torch.device("cpu")
@@ -51,6 +53,13 @@ class BaselineEvalStackBenchmark(BaseBenchmark):
         """Return output tensor for verification comparison."""
         return torch.tensor([hash(str(id(self))) % (2**31)], dtype=torch.float32)
 
+    def get_input_signature(self) -> dict:
+        """Return input signature for verification."""
+        return {"type": "eval_stack_baseline"}
+
+    def get_output_tolerance(self) -> tuple:
+        """Return tolerance for numerical comparison."""
+        return (0.1, 1.0)
 
 
 def get_benchmark() -> BaseBenchmark:
