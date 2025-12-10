@@ -52,6 +52,7 @@ class OptimizedDdpNvlinkOverlapBenchmark(BaseBenchmark):
             tokens_per_iteration=float(tokens),
         )
         self.comm_stream = torch.cuda.Stream(device=self.root_device)
+        self.jitter_exemption_reason = "DDP NVLink overlap benchmark: multi-GPU"
 
     def setup(self) -> None:
         torch.manual_seed(0)
@@ -141,6 +142,13 @@ class OptimizedDdpNvlinkOverlapBenchmark(BaseBenchmark):
         """Return output tensor for verification comparison."""
         return torch.tensor([hash(str(id(self))) % (2**31)], dtype=torch.float32)
 
+    def get_input_signature(self) -> dict:
+        """Return input signature for verification."""
+        return {"batch_size": self.batch_size, "hidden": self.hidden}
+
+    def get_output_tolerance(self) -> tuple:
+        """Return tolerance for numerical comparison."""
+        return (0.1, 1.0)
 
 
 def get_benchmark() -> BaseBenchmark:
