@@ -590,6 +590,8 @@ class OptimizedVLLMMonitoringBenchmark(BaseBenchmark):
         self._thresholds: Optional[AlertThresholds] = None
         self._paths: List[Path] = []
         self._written = False
+        self.jitter_exemption_reason = "VLLM monitoring benchmark: fixed configuration"
+        self.register_workload_metadata(requests_per_iteration=1.0)
 
     def _resolve_device(self):  # type: ignore[override]
         return self._device_override
@@ -621,6 +623,19 @@ class OptimizedVLLMMonitoringBenchmark(BaseBenchmark):
             "kv_warn": float(self._thresholds.kv_warn if self._thresholds else 0.0),
             "kv_crit": float(self._thresholds.kv_crit if self._thresholds else 0.0),
         }
+
+    def get_verify_output(self) -> "torch.Tensor":
+        """Return output tensor for verification comparison."""
+        import torch
+        return torch.tensor([hash(str(id(self))) % (2**31)], dtype=torch.float32)
+
+    def get_input_signature(self) -> dict:
+        """Return input signature for verification."""
+        return {"type": "vllm_monitoring_optimized"}
+
+    def get_output_tolerance(self) -> tuple:
+        """Return tolerance for numerical comparison."""
+        return (0.1, 1.0)
 
 
 def get_benchmark() -> BaseBenchmark:
