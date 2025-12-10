@@ -24,6 +24,8 @@ class BaselineMatmulBenchmark(BaseBenchmark):
         self.C: torch.Tensor | None = None
         self.n = 8192
         self.tile_k = 128
+        self.jitter_exemption_reason = "Matmul benchmark: fixed dimensions for comparison"
+        self.register_workload_metadata(bytes_per_iteration=float(self.n * self.n * 4 * 3))
 
     def setup(self) -> None:
         """Setup: initialize FP32 matrices and scratch buffer."""
@@ -81,9 +83,15 @@ class BaselineMatmulBenchmark(BaseBenchmark):
             return "Matrices not initialized"
         return None
 
-    def get_output_for_verification(self) -> Optional[torch.Tensor]:
-        """Expose the output tensor so optimized path can be compared."""
+    def get_verify_output(self) -> torch.Tensor:
+        """Return output tensor for verification."""
+        if self.C is None:
+            raise RuntimeError("Output not available - run benchmark first")
         return self.C
+
+    def get_input_signature(self) -> dict:
+        """Return input signature for verification."""
+        return {"n": self.n, "tile_k": self.tile_k}
 
     def get_output_tolerance(self) -> tuple[float, float]:
         # Allow looser tolerance because optimized path uses lower precision.

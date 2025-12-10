@@ -46,6 +46,32 @@
       },
       "type": "cuda"
     },
+    "attention": {
+      "example": "attention",
+      "metadata": {
+        "best_optimization": "optimized_attention",
+        "best_optimization_file": "optimized_attention.py",
+        "best_optimization_speedup": 3.299628387783203,
+        "best_optimization_time_ms": 0.10798656046390534,
+        "git_commit": "64858bc6eb5b84d42679e2eef38358a5dece67a9",
+        "updated_at": "2025-12-10T01:06:19.736597"
+      },
+      "metrics": {
+        "baseline_p75_ms": 0.35839998722076416,
+        "baseline_throughput.latency_ms": 0.35631552040576936,
+        "baseline_throughput.requests_per_s": 44904.02209193505,
+        "baseline_throughput.tokens_per_s": 22990859.311070744,
+        "baseline_time_ms": 0.35631552040576936,
+        "best_optimized_p75_ms": 0.10998400300741196,
+        "best_optimized_speedup": 3.299628387783203,
+        "best_optimized_throughput.latency_ms": 0.10798656046390534,
+        "best_optimized_throughput.requests_per_s": 148166.58602019298,
+        "best_optimized_throughput.tokens_per_s": 75861292.0423388,
+        "best_optimized_time_ms": 0.10798656046390534,
+        "best_speedup": 3.299628387783203
+      },
+      "type": "python"
+    },
     "cluster_group": {
       "example": "cluster_group",
       "metadata": {

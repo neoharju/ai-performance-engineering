@@ -138,7 +138,7 @@ class BaselineBatchBenchmark(BaseBenchmark):
         """Return tolerance for numerical comparison."""
         return (0.1, 1.0)
 
-    def get_output_for_verification(self) -> Optional[torch.Tensor]:
+    def get_verify_output(self) -> Optional[torch.Tensor]:
         """Return output tensor for verification against optimized version."""
         return self.output
     

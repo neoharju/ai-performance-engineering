@@ -42,6 +42,8 @@ class OptimizedTensorCoreBenchmark(BaseBenchmark):
         self.n = 8192  # Match baseline workload signature
         self.tile_k = 128  # Match baseline for equivalent workload
         self.dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+        self.jitter_exemption_reason = "Matmul benchmark: fixed dimensions for comparison"
+        self.register_workload_metadata(bytes_per_iteration=float(self.n * self.n * 2 * 3))
     
     def setup(self) -> None:
         """Setup: initialize matrices with same workload as baseline."""
@@ -116,9 +118,15 @@ class OptimizedTensorCoreBenchmark(BaseBenchmark):
             return "Matrix B contains non-finite values"
         return None
 
-    def get_output_for_verification(self) -> Optional[torch.Tensor]:
-        """Expose output so we can compare vs baseline."""
-        return self.C
+    def get_verify_output(self) -> torch.Tensor:
+        """Return output tensor for verification."""
+        if self.C is None:
+            raise RuntimeError("Output not available - run benchmark first")
+        return self.C.float()
+
+    def get_input_signature(self) -> dict:
+        """Return input signature for verification."""
+        return {"n": self.n, "tile_k": self.tile_k}
 
     def get_output_tolerance(self) -> tuple[float, float]:
         # Optimized path uses BF16; allow relaxed tolerance vs FP32 baseline.

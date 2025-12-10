@@ -33,6 +33,11 @@ class OptimizedBatchBenchmark(BaseBenchmark):
             requests_per_iteration=1.0,
             tokens_per_iteration=float(tokens),
         )
+        self.jitter_exemption_reason = "Batch benchmark: fixed dimensions for comparison"
+        self.register_workload_metadata(
+            requests_per_iteration=1.0,
+            tokens_per_iteration=float(tokens),
+        )
     
     def setup(self) -> None:
         """Setup: Initialize model with optimized batch size."""
@@ -94,9 +99,15 @@ class OptimizedBatchBenchmark(BaseBenchmark):
             return "Input not initialized"
         return None
 
-    def get_output_for_verification(self) -> Optional[torch.Tensor]:
-        """Return output tensor for verification against baseline version."""
+    def get_verify_output(self) -> torch.Tensor:
+        """Return output tensor for verification."""
+        if self.output is None:
+            raise RuntimeError("Output not available - run benchmark first")
         return self.output
+
+    def get_input_signature(self) -> dict:
+        """Return input signature for verification."""
+        return {"total_batch_size": self.total_batch_size, "hidden_dim": self.hidden_dim}
     
     def get_output_tolerance(self) -> tuple[float, float]:
         """Return (rtol, atol) for output verification.
