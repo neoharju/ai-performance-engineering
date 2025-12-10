@@ -48,6 +48,9 @@ class OptimizedMatmulTCGen05PipelinedBenchmark(BaseBenchmark):
         self.B: Optional[torch.Tensor] = None
         self._placeholder_kernel = False
         self._warned_placeholder = False
+        self.output: Optional[torch.Tensor] = None
+        self.jitter_exemption_reason = "TCGen05 pipelined benchmark: fixed dimensions for comparison"
+        self.register_workload_metadata(bytes_per_iteration=float(self.n * self.n * 2 * 3))
 
     def setup(self) -> None:
         if not self._tcgen05_available:
@@ -85,6 +88,27 @@ class OptimizedMatmulTCGen05PipelinedBenchmark(BaseBenchmark):
             "optimization": "pipelined tcgen05 (2-stage async overlap)",
             "pipelined_kernel_available": True,
         }
+
+    def validate_result(self) -> Optional[str]:
+        if not self._tcgen05_available:
+            return self._skip_reason
+        if self.A is None or self.B is None:
+            return "Matrices not initialized"
+        return None
+
+    def get_verify_output(self) -> torch.Tensor:
+        """Return output tensor for verification."""
+        if self.output is None:
+            raise RuntimeError("Output not available - run benchmark first")
+        return self.output.float()
+
+    def get_input_signature(self) -> dict:
+        """Return input signature for verification."""
+        return {"size": self.size}
+
+    def get_output_tolerance(self) -> tuple:
+        """Return tolerance for numerical comparison - wider due to FP16."""
+        return (0.5, 5.0)
 
 
 def get_benchmark() -> OptimizedMatmulTCGen05PipelinedBenchmark:
