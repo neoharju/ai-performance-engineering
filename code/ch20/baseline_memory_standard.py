@@ -45,8 +45,8 @@ class BaselineMemoryStandardBenchmark(BaseBenchmark):
             self.result = self.data * 2.0 + 1.0
             if self.result is not None:
                 self.result += 0.1
-            self.output = self.result
             self._synchronize()
+        self.output = self.result
     
     def teardown(self) -> None:
         self.data = None

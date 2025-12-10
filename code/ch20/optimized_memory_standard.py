@@ -50,6 +50,7 @@ class OptimizedMemoryHBM3eBenchmark(BaseBenchmark):
             torch.mul(self.data, 2.0, out=self.result)
             self.result.add_(1.1)  # Combines +1.0 and +0.1 into single op
             self._synchronize()
+        self.output = self.result
     
     def teardown(self) -> None:
         self.data = None
