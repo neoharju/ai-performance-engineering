@@ -894,76 +894,33 @@ class BaseBenchmark:
             return True
         return False
 
-    def get_input_signature(self) -> Optional[Dict[str, Any]]:
-        """Return a signature describing this benchmark's input workload.
+    def get_input_signature(self) -> Dict[str, Any]:
+        """MANDATORY: Return a signature describing this benchmark's input workload.
         
         Used by the harness to verify that baseline and optimized benchmarks
         operate on equivalent workloads. Without this verification, performance
         comparisons are meaningless.
         
-        The signature should capture all parameters that affect workload size:
+        The signature MUST capture all parameters that affect workload size:
         - Tensor shapes (batch_size, seq_len, hidden_size, etc.)
         - Model parameters (num_layers, num_heads, etc.)
         - Any other configuration that affects computational work
         
-        Default implementation infers from common attributes (both instance
-        and class-level). Override for custom workload descriptions.
+        NO AUTO-INFERENCE. NO FALLBACKS. EVERYTHING EXPLICIT.
+        
+        Every benchmark MUST override this method and return a non-empty dict.
         
         Returns:
-            Dict describing the input workload, or None if inference fails
+            Dict describing the input workload (MUST be non-empty)
+            
+        Raises:
+            NotImplementedError: If not overridden by subclass
         """
-        signature: Dict[str, Any] = {}
-        
-        # Common workload attributes to capture (lowercase instance attrs)
-        workload_attrs = [
-            # Tensor dimensions
-            "batch_size", "B", "seq_len", "seq_length", "sequence_length",
-            "hidden_size", "hidden_dim", "d_model", "embed_dim",
-            "num_heads", "n_heads", "nheads",
-            "num_layers", "n_layers", "nlayers",
-            "vocab_size", "num_classes",
-            # Matrix dimensions
-            "M", "N", "K", "m", "n", "k",
-            # Image dimensions
-            "height", "width", "channels", "H", "W", "C",
-            # Other common params
-            "num_tokens", "num_samples", "num_elements",
-            "input_size", "output_size",
-            # MoE-specific
-            "num_experts", "num_experts_per_tok", "intermediate_size",
-        ]
-        
-        # Also check class-level UPPERCASE constants (common pattern)
-        class_attrs = [
-            "BATCH_SIZE", "SEQ_LEN", "SEQ_LENGTH", "SEQUENCE_LENGTH",
-            "HIDDEN_SIZE", "HIDDEN_DIM", "D_MODEL", "EMBED_DIM",
-            "NUM_HEADS", "N_HEADS", "NHEADS",
-            "NUM_LAYERS", "N_LAYERS", "NLAYERS",
-            "VOCAB_SIZE", "NUM_CLASSES",
-            "NUM_EXPERTS", "NUM_EXPERTS_PER_TOK", "INTERMEDIATE_SIZE",
-            "WIDTH", "HEIGHT", "CHANNELS",
-        ]
-        
-        for attr in workload_attrs:
-            if hasattr(self, attr):
-                value = getattr(self, attr)
-                if isinstance(value, (int, float)) and not isinstance(value, bool):
-                    signature[attr] = value
-        
-        # Check class-level constants
-        for attr in class_attrs:
-            if hasattr(type(self), attr):
-                value = getattr(type(self), attr)
-                if isinstance(value, (int, float)) and not isinstance(value, bool):
-                    # Use lowercase key for consistency
-                    signature[attr.lower()] = value
-        
-        # Note: We intentionally do NOT capture tensor shapes/dtypes here.
-        # Tensors are typically created in setup() which runs after signature comparison.
-        # The workload attributes above (batch_size, seq_len, etc.) are sufficient
-        # to verify that benchmarks have equivalent workloads.
-        
-        return signature if signature else None
+        raise NotImplementedError(
+            f"{self.__class__.__name__} must implement get_input_signature() explicitly. "
+            "NO AUTO-INFERENCE. NO FALLBACKS. Return a dict with workload parameters "
+            "(e.g., {'batch_size': 32, 'seq_len': 512})."
+        )
 
     def _verify_kernel(
         self,

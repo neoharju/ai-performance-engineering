@@ -1677,6 +1677,110 @@ if TYPER_AVAILABLE:
 
         raise typer.Exit(code=exit_code)
 
+    @app.command("audit")
+    def audit(
+        chapter: Optional[str] = Option(None, "--chapter", "-c", help="Specific chapter to audit (e.g., ch10)"),
+        lab: Optional[str] = Option(None, "--lab", "-l", help="Specific lab to audit (e.g., decode_optimization)"),
+        all_targets: bool = Option(False, "--all", "-a", help="Audit all chapters and labs"),
+        verbose: bool = Option(False, "--verbose", "-v", help="Show detailed output"),
+        json_output: bool = Option(False, "--json", help="Output as JSON"),
+    ):
+        """Audit benchmark verification compliance.
+        
+        Uses Python introspection to correctly detect inherited methods
+        (unlike grep-based approaches). This gives accurate coverage stats.
+        
+        Example:
+            aisp bench audit --all          # Audit everything
+            aisp bench audit -c ch10        # Audit specific chapter
+            aisp bench audit -l decode_optimization  # Audit specific lab
+        """
+        import json as json_lib
+        from core.scripts.audit_verification_compliance import (
+            audit_directory, print_summary, load_benchmark_class, check_compliance
+        )
+        
+        code_dir = Path(__file__).parent.parent.parent
+        
+        total_compliant = 0
+        total_needs_work = 0
+        total_errors = 0
+        all_results = {}
+        
+        # Audit chapters
+        if chapter:
+            chapters = [chapter]
+        elif all_targets or not lab:
+            chapters = [f"ch{i:02d}" for i in range(1, 21)]
+        else:
+            chapters = []
+        
+        for ch in chapters:
+            chapter_dir = code_dir / ch
+            if not chapter_dir.exists():
+                continue
+            
+            results = audit_directory(chapter_dir)
+            if results:
+                if json_output:
+                    all_results[ch] = results
+                else:
+                    c, n, e = print_summary(results, f"{ch.upper()}")
+                    total_compliant += c
+                    total_needs_work += n
+                    total_errors += e
+        
+        # Audit labs
+        if lab:
+            labs = [lab]
+        elif all_targets or not chapter:
+            labs_dir = code_dir / "labs"
+            if labs_dir.exists():
+                labs = [d.name for d in labs_dir.iterdir() if d.is_dir()]
+            else:
+                labs = []
+        else:
+            labs = []
+        
+        for lb in sorted(labs):
+            lab_dir = code_dir / "labs" / lb
+            if not lab_dir.exists():
+                continue
+            
+            results = audit_directory(lab_dir)
+            if results:
+                if json_output:
+                    all_results[f"lab:{lb}"] = results
+                else:
+                    c, n, e = print_summary(results, f"LAB: {lb}")
+                    total_compliant += c
+                    total_needs_work += n
+                    total_errors += e
+        
+        # Output
+        if json_output:
+            typer.echo(json_lib.dumps({
+                "results": all_results,
+                "summary": {
+                    "compliant": total_compliant,
+                    "needs_work": total_needs_work,
+                    "errors": total_errors,
+                    "total": total_compliant + total_needs_work + total_errors,
+                    "coverage_pct": round(100 * total_compliant / max(1, total_compliant + total_needs_work), 1),
+                }
+            }, indent=2))
+        else:
+            typer.echo(f"\n{'='*60}")
+            typer.echo("GRAND TOTAL")
+            typer.echo(f"{'='*60}")
+            typer.echo(f"✅ Compliant: {total_compliant}")
+            typer.echo(f"⚠️  Needs work: {total_needs_work}")
+            typer.echo(f"❌ Errors: {total_errors}")
+            typer.echo(f"Total: {total_compliant + total_needs_work + total_errors}")
+            
+            coverage = (total_compliant / max(1, total_compliant + total_needs_work)) * 100
+            typer.echo(f"\n📊 Coverage: {coverage:.1f}%")
+
 
 def main():
     """Entry point for CLI."""

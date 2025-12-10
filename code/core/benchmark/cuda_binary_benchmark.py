@@ -337,23 +337,34 @@ class CudaBinaryBenchmark(BaseBenchmark):
             return f"Invalid runtime parsed: {self._last_result.time_ms} ms"
         return None
     
-    def get_input_signature(self) -> Optional[dict]:
-        """Return input signature for verification.
+    def get_input_signature(self) -> dict:
+        """MANDATORY: Return input signature for verification.
         
         CUDA binaries have workload parameters baked in at compile time.
-        Subclasses should pass workload_params to __init__ or override this method.
+        Subclasses MUST either:
+        1. Pass workload_params to __init__, OR
+        2. Override this method to return explicit parameters
+        
+        NO AUTO-INFERENCE. NO FALLBACKS. EVERYTHING EXPLICIT.
         
         Common parameters to include:
         - N, M, K: Matrix/vector sizes
         - batch_size, seq_len: Sequence dimensions
         - hidden_dim, num_heads: Model dimensions
+        
+        Returns:
+            Dict with workload parameters (MUST be non-empty)
+            
+        Raises:
+            NotImplementedError: If workload_params not provided and method not overridden
         """
         if self._workload_params:
             return self._workload_params
-        # Return empty dict to indicate no explicit workload params
-        # binary_name is excluded from comparison by the harness since it's
-        # expected to differ between baseline and optimized
-        return {}
+        raise NotImplementedError(
+            f"{self.__class__.__name__} must provide workload_params to __init__ or override "
+            "get_input_signature(). NO AUTO-INFERENCE. NO FALLBACKS. "
+            "Return a dict with workload parameters (e.g., {'M': 4096, 'N': 4096, 'K': 4096})."
+        )
     
     def get_verify_output(self) -> "torch.Tensor":
         """Return checksum tensor from last verify run.

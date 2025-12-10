@@ -217,13 +217,16 @@ class TestVerificationEnforcement:
         # Set to GATE phase (strictest)
         monkeypatch.setenv("VERIFY_ENFORCEMENT_PHASE", "gate")
         
-        # Create a benchmark with required methods
+        # Create a benchmark with ALL required verification methods (strict mode)
         class CompliantBenchmark:
             def setup(self): pass
             def benchmark_fn(self): pass
             def teardown(self): pass
             def get_input_signature(self): return {"shapes": {"x": (10,)}}
             def validate_result(self): return None
+            def get_verify_output(self):
+                """Required in strict mode - return output tensor(s) for verification."""
+                return {"output": torch.tensor([1.0])}
         
         benchmark = CompliantBenchmark()
         compliant, errors, warnings = BenchmarkContract.check_verification_compliance(benchmark)

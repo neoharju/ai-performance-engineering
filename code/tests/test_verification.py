@@ -1052,12 +1052,15 @@ class TestPropertyBasedVerifyRunner:
             output1 = torch.randn(tensor_size, tensor_size)
             output2 = output1.clone()
             
+            # ToleranceSpec requires rtol and atol arguments
+            tol = ToleranceSpec(rtol=1e-5, atol=1e-8)
+            
             # Comparison should be symmetric
             result1 = runner._compare_outputs(
-                {"output": output1}, {"output": output2}, ToleranceSpec()
+                {"output": output1}, {"output": output2}, tol
             )
             result2 = runner._compare_outputs(
-                {"output": output2}, {"output": output1}, ToleranceSpec()
+                {"output": output2}, {"output": output1}, tol
             )
             
             assert result1.passed == result2.passed
@@ -1081,17 +1084,22 @@ class TestPropertyBasedVerifyRunner:
             # Should pass with error less than rtol
             assert result.passed is True
     
-    @given(st.floats(min_value=0.001, max_value=1.0, allow_nan=False, allow_infinity=False))
+    @given(st.floats(min_value=0.001, max_value=0.5, allow_nan=False, allow_infinity=False))
     @settings(max_examples=10)
     def test_output_comparison_fails_beyond_tolerance(self, rtol):
-        """Test that output comparison fails beyond tolerance."""
+        """Test that output comparison fails beyond tolerance.
+        
+        Note: rtol capped at 0.5 because rtol=1.0 (100%) allows very large differences
+        mathematically, which is technically correct but unintuitive.
+        """
         import tempfile
         with tempfile.TemporaryDirectory() as tmp_dir:
             runner = VerifyRunner(cache_dir=Path(tmp_dir) / "cache")
             
-            # Create outputs with relative difference exceeding rtol
+            # Create outputs with relative difference clearly exceeding rtol
             output1 = torch.tensor([1.0, 2.0, 3.0])
-            output2 = output1 * (1.0 + rtol * 2.0)  # 2x the tolerance
+            # Use 3x the tolerance to ensure we're clearly beyond
+            output2 = output1 * (1.0 + rtol * 3.0)
             
             tol = ToleranceSpec(rtol=rtol, atol=1e-8)
             result = runner._compare_outputs({"output": output1}, {"output": output2}, tol)
