@@ -44,6 +44,7 @@ class OptimizedPagedAttnBenchmark(BaseBenchmark):
     def __init__(self) -> None:
         super().__init__()
         self.qkv: Optional[torch.Tensor] = None
+        self.output = None
         self._workload = WorkloadMetadata(tokens_per_iteration=0.0)
         self.jitter_exemption_reason = "Paged attention vLLM benchmark: fixed dimensions"
 
@@ -74,7 +75,7 @@ class OptimizedPagedAttnBenchmark(BaseBenchmark):
         # Force flash SDPA to highlight the fused path.
         with _flash_sdpa_context():
             with nvtx_range("paged_attn_vllm", enable=enable_nvtx):
-                _ = F.scaled_dot_product_attention(q, k, v)
+                self.output = F.scaled_dot_product_attention(q, k, v)
         torch.cuda.synchronize(self.device)
         return {}
 
@@ -95,7 +96,9 @@ class OptimizedPagedAttnBenchmark(BaseBenchmark):
 
     def get_verify_output(self) -> torch.Tensor:
         """Return output tensor for verification comparison."""
-        raise RuntimeError("Nested harness benchmark - needs refactoring")
+        if self.output is None:
+            raise RuntimeError("benchmark_fn() must be called before verification")
+        return self.output.detach().clone()
 
     def get_input_signature(self) -> dict:
         """Return input signature for verification."""

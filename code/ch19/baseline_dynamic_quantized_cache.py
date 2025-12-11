@@ -47,7 +47,9 @@ class _DynamicQuantizedCacheBenchmark(BaseBenchmark):
 
     def get_verify_output(self) -> torch.Tensor:
         """Return output tensor for verification comparison."""
-        raise RuntimeError("Nested harness benchmark - needs refactoring")
+        if self.tensor is None:
+            raise RuntimeError("benchmark_fn() must be called before verification")
+        return self.tensor.detach().clone()
 
     def get_input_signature(self) -> dict:
         """Return input signature for verification."""

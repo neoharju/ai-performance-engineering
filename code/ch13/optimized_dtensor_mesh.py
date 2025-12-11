@@ -26,6 +26,7 @@ class DTensorMeshBenchmark(BaseBenchmark):
         self._workload = WorkloadMetadata(bytes_per_iteration=0.0)
         self.mesh = None
         self.tensor: Optional[torch.Tensor] = None
+        self.output: Optional[torch.Tensor] = None
         self.jitter_exemption_reason = "DTensor mesh benchmark: fixed configuration"
 
     def setup(self) -> None:
@@ -48,7 +49,7 @@ class DTensorMeshBenchmark(BaseBenchmark):
 
         enable_nvtx = get_nvtx_enabled(self.get_config())
         with nvtx_range("dtensor_mesh", enable=enable_nvtx):
-            _ = (self.tensor * 2).redistribute(self.mesh, placements=self.tensor.placements)
+            self.output = (self.tensor * 2).redistribute(self.mesh, placements=self.tensor.placements)
         torch.cuda.synchronize(self.device)
         return {}
 
@@ -67,7 +68,10 @@ class DTensorMeshBenchmark(BaseBenchmark):
 
     def get_verify_output(self) -> torch.Tensor:
         """Return output tensor for verification comparison."""
-        raise RuntimeError("Distributed simulation - no tensor output")
+        if self.output is None:
+            raise RuntimeError("benchmark_fn() must be called before verification")
+        # DTensor needs to be converted to local tensor for comparison
+        return self.output.to_local().detach().clone()
 
     def get_input_signature(self) -> dict:
         """Return input signature for verification."""

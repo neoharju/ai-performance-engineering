@@ -68,7 +68,7 @@ class BaselineMoeOverlapBenchmark(BaseBenchmark):
         enable_nvtx = get_nvtx_enabled(self.get_config())
         with nvtx_range("moe_overlap_baseline", enable=enable_nvtx):
             with torch.no_grad():
-                _ = self.model(self.inputs)
+                self.output = self.model(self.inputs)
         torch.cuda.synchronize(self.device)
         return {}
 

@@ -441,7 +441,7 @@ class OptimizedCUDAGraphBucketingBenchmark(BaseBenchmark):
             with torch.no_grad():
                 for batch, seq in test_shapes:
                     x = torch.randn(batch, seq, 256, device=self.device, dtype=torch.bfloat16)
-                    _ = self._graph_bucketing.forward(x)
+                    self.output = self._graph_bucketing.forward(x)
             
             self._graph_stats = self._graph_bucketing.get_stats()
             torch.cuda.synchronize()

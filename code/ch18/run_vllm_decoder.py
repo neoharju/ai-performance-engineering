@@ -288,6 +288,7 @@ class VLLMMoEInferenceBenchmark(BaseBenchmark):
             requests_per_iteration=float(self.config.batch_size),
             tokens_per_iteration=float(self.config.tokens_per_iteration),
         )
+        self.output = None
         self._history: Dict[str, List[float]] = {
             "ttft": [],
             "tpot": [],
@@ -785,7 +786,13 @@ class VLLMMoEInferenceBenchmark(BaseBenchmark):
 
     def get_verify_output(self) -> torch.Tensor:
         """Return output tensor for verification comparison."""
-        raise RuntimeError("Decoder runner - no tensor output")
+        # Convert timing metrics to tensor for verification
+        import torch
+        if not self._history.get("ttft"):
+            raise RuntimeError("benchmark_fn() must be called before verification")
+        ttft = self._history.get("ttft", [0.0])
+        tpot = self._history.get("tpot", [0.0])
+        return torch.tensor([sum(ttft)/len(ttft) if ttft else 0.0, sum(tpot)/len(tpot) if tpot else 0.0], dtype=torch.float32)
 
     def get_input_signature(self) -> dict:
         """Return input signature for verification."""

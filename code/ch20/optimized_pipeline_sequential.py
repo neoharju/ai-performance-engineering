@@ -50,6 +50,7 @@ class OptimizedPipelineOverlapBenchmark(BaseBenchmark):
         super().__init__()
         self.stages: Optional[nn.ModuleList] = None
         self.inputs: Optional[torch.Tensor] = None
+        self.output = None
         self.batch_size = 512
         self.hidden_dim = 1536
         self.num_stages = 4
@@ -92,6 +93,8 @@ class OptimizedPipelineOverlapBenchmark(BaseBenchmark):
                     for stage in self.stages:
                         x = stage(x)
                     # Single sync at end - no per-stage CPU round-trips
+                # Capture output for verification
+                self.output = x.detach()
             self._synchronize()
 
     def teardown(self) -> None:
@@ -127,7 +130,9 @@ class OptimizedPipelineOverlapBenchmark(BaseBenchmark):
 
     def get_verify_output(self) -> torch.Tensor:
         """Return output tensor for verification comparison."""
-        raise RuntimeError("Nested harness benchmark - needs refactoring")
+        if self.output is None:
+            raise RuntimeError("benchmark_fn() must be called before verification")
+        return self.output.float().clone()
 
     def get_input_signature(self) -> dict:
         """Return input signature for verification."""

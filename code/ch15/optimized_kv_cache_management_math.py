@@ -38,6 +38,7 @@ class OptimizedKVCacheManagementMathBenchmark(BaseBenchmark):
         self.out_proj: Optional[nn.Linear] = None
         self.inputs: Optional[list[torch.Tensor]] = None
         self.cache_buffer: Optional[torch.Tensor] = None
+        self.output: Optional[torch.Tensor] = None
         self.batch_size = 8
         self.hidden_dim = 256
         self.num_heads = 8
@@ -92,11 +93,11 @@ class OptimizedKVCacheManagementMathBenchmark(BaseBenchmark):
                 with _math_sdp_context():
                     attn = F.scaled_dot_product_attention(q, k, v, is_causal=True)
                 attn = attn.transpose(1, 2).contiguous().view(self.batch_size, -1, self.hidden_dim)
-                output = self.out_proj(attn)
+                self.output = self.out_proj(attn)
                 
                 # Update cache with the newest token block without reallocation.
                 self.cache_buffer.copy_(torch.cat([self.cache_buffer[:, 1:, :], queries[:, -1:, :]], dim=1))
-                _ = output[:, -1, :].sum()
+                _ = self.output[:, -1, :].sum()
             self._synchronize()
     
     def teardown(self) -> None:
@@ -138,7 +139,9 @@ class OptimizedKVCacheManagementMathBenchmark(BaseBenchmark):
 
     def get_verify_output(self) -> torch.Tensor:
         """Return output tensor for verification comparison."""
-        raise RuntimeError("Math calculation benchmark - no tensor output")
+        if self.output is None:
+            raise RuntimeError("benchmark_fn() must be called before verification")
+        return self.output.detach().clone()
 
     def get_input_signature(self) -> dict:
         """Return input signature for verification."""

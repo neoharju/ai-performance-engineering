@@ -15,8 +15,6 @@ class SimpleModel(nn.Module):
     
     def __init__(self, hidden_dim: int = 1024):
         super().__init__()
-        self.output = None
-        self._verify_input = None
         self.fc1 = nn.Linear(hidden_dim, hidden_dim * 2)
         self.fc2 = nn.Linear(hidden_dim * 2, hidden_dim)
         self.relu = nn.ReLU()

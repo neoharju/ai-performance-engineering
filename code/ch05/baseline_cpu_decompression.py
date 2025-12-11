@@ -25,6 +25,7 @@ class CPUDecompressionBenchmark(BaseBenchmark):
     def __init__(self) -> None:
         super().__init__()
         self.compressed: Optional[bytes] = None
+        self.output: Optional[torch.Tensor] = None
         self._workload = WorkloadMetadata(bytes_per_iteration=0.0)
         self.jitter_exemption_reason = "Decompression benchmark: fixed data size"
 
@@ -39,8 +40,11 @@ class CPUDecompressionBenchmark(BaseBenchmark):
         enable_nvtx = get_nvtx_enabled(self.get_config())
         start = self._record_start()
         with nvtx_range("cpu_decompress", enable=enable_nvtx):
-            _ = zlib.decompress(self.compressed)
+            decompressed = zlib.decompress(self.compressed)
         latency_ms = self._record_stop(start)
+        # Convert decompressed bytes to tensor for verification
+        import numpy as np
+        self.output = torch.from_numpy(np.frombuffer(decompressed, dtype=np.float32).copy())
         return {"latency_ms": latency_ms, "compressed_bytes": len(self.compressed)}
 
     def get_workload_metadata(self) -> Optional[WorkloadMetadata]:
@@ -58,7 +62,9 @@ class CPUDecompressionBenchmark(BaseBenchmark):
         )
     def get_verify_output(self) -> torch.Tensor:
         """Return output tensor for verification comparison."""
-        raise RuntimeError("CPU-only benchmark - no tensor output")
+        if self.output is None:
+            raise RuntimeError("benchmark_fn() must be called before verification")
+        return self.output.clone()
 
     def get_input_signature(self) -> dict:
         """Return input signature for verification."""

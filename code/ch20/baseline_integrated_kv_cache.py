@@ -176,6 +176,8 @@ class BaselineIntegratedKVCacheBenchmark(BaseBenchmark):
                         hidden = layer(hidden, self.kv_cache, request_id, layer_idx, pos)
                 
                 self.kv_cache.free(request_id)
+        # Capture last hidden state for verification
+        self.output = hidden.detach().clone() if hidden is not None else None
 
     
     def teardown(self) -> None:

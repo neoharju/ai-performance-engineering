@@ -15,6 +15,7 @@ class SimpleLLM(nn.Module):
     
     def __init__(self, hidden_dim=1024, num_layers=12):
         super().__init__()
+        self.output = None
         self.hidden_dim = hidden_dim
         self.layers = nn.ModuleList(
             nn.Linear(hidden_dim, hidden_dim)
@@ -57,14 +58,14 @@ class OptimizedInferenceDisaggregatedBenchmark(BaseBenchmark):
         
         with torch.no_grad():
             for _ in range(5):
-                _ = self.decode_model.decode(self.kv_cache, num_tokens=self.num_tokens)
+                self.output = self.decode_model.decode(self.kv_cache, num_tokens=self.num_tokens)
         self._synchronize()
     
     def benchmark_fn(self) -> None:
         assert self.decode_model is not None and self.kv_cache is not None
         with self._nvtx_range("inference_monolithic_optimized"):
             with torch.no_grad():
-                _ = self.decode_model.decode(self.kv_cache, num_tokens=self.num_tokens)
+                self.output = self.decode_model.decode(self.kv_cache, num_tokens=self.num_tokens)
             self._synchronize()
     
     def teardown(self) -> None:
@@ -105,7 +106,9 @@ class OptimizedInferenceDisaggregatedBenchmark(BaseBenchmark):
 
     def get_verify_output(self) -> torch.Tensor:
         """Return output tensor for verification comparison."""
-        raise RuntimeError("Simulation benchmark - no tensor output")
+        if self.output is None:
+            raise RuntimeError("benchmark_fn() must be called before verification")
+        return self.output.detach().clone()
 
     def get_output_tolerance(self) -> tuple:
         """Return tolerance for numerical comparison."""

@@ -246,7 +246,10 @@ class OptimizedVLLMV1IntegrationBenchmark(BaseBenchmark):
 
     def get_verify_output(self) -> "torch.Tensor":
         """Return output tensor for verification comparison."""
-        raise RuntimeError("Config generation benchmark - no tensor output")
+        raise RuntimeError(
+            "VERIFICATION_SKIP: Config generation benchmark. "
+            "Writes config files to disk, no GPU computation to verify."
+        )
 
     def get_output_tolerance(self) -> tuple:
         """Return tolerance for numerical comparison."""

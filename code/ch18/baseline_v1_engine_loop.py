@@ -59,6 +59,7 @@ class BaselineV1EngineLoopBenchmark(BaseBenchmark):
         super().__init__()
         self.engine_core = None
         self.core_client = None
+        self.output = None
         self.jitter_exemption_reason = "V1 engine loop benchmark: fixed configuration"
         self.register_workload_metadata(requests_per_iteration=1.0)
     
@@ -82,9 +83,15 @@ class BaselineV1EngineLoopBenchmark(BaseBenchmark):
 
     def benchmark_fn(self) -> Optional[dict]:
         """Run the baseline engine loop and measure it."""
+        import torch
         # Reset the engine state for each iteration
         self.engine_core, self.core_client = build_demo_stack()
         outputs = list(baseline_engine_loop(self.engine_core, self.core_client))
+        # Store metrics as output tensor for verification
+        self.output = torch.tensor([
+            float(self.engine_core.calls),
+            float(len(outputs)),
+        ], dtype=torch.float32)
         return {
             "steps": self.engine_core.calls,
             "tokens_generated": len(outputs),
@@ -92,8 +99,9 @@ class BaselineV1EngineLoopBenchmark(BaseBenchmark):
 
     def get_verify_output(self) -> "torch.Tensor":
         """Return output tensor for verification comparison."""
-        import torch
-        raise RuntimeError("Nested harness benchmark - needs refactoring")
+        if self.output is None:
+            raise RuntimeError("benchmark_fn() must be called before verification")
+        return self.output.detach().clone()
 
     def get_input_signature(self) -> dict:
         """Return input signature for verification."""

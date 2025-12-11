@@ -123,6 +123,10 @@ class OptimizedSlidingWindowBenchmark(BaseBenchmark):
             output = self.model(self.x)
             self._last = float(output.sum())
             self._synchronize()
+        # Capture output AFTER benchmark for verification
+        if self._verify_input is not None and self.model is not None:
+            with torch.no_grad():
+                self.output = self.model(self._verify_input).float().clone()
 
     def teardown(self) -> None:
         """Teardown: Clean up resources."""

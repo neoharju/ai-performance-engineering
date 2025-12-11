@@ -50,6 +50,7 @@ class BaselineSpeculativeDecoding:
         self.tokens_to_generate = num_sequences * num_draft_tokens
         
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.last_output = None  # For verification
         
         logger.info(f"Baseline Sequential Autoregressive Decoding")
         logger.info(f"  Tokens to generate: {self.tokens_to_generate}")
@@ -114,6 +115,9 @@ class BaselineSpeculativeDecoding:
         torch.cuda.synchronize()
         elapsed = time.perf_counter() - start
         
+        # Capture output for verification
+        self.last_output = current_ids.detach()
+        
         # Calculate metrics
         tokens_generated = current_ids.shape[1] - self.input_ids.shape[1]
         tokens_per_sec = tokens_generated * self.batch_size / elapsed
@@ -151,6 +155,7 @@ def run_benchmark(
     num_draft_tokens: int = 8,
     num_sequences: int = 10,
     profile: str = "none",
+    return_benchmark: bool = False,
     **kwargs
 ) -> Dict[str, Any]:
     """Run baseline speculative decoding benchmark."""
@@ -178,6 +183,14 @@ def run_benchmark(
     )
     
     metrics = benchmark.run()
+    
+    if return_benchmark:
+        # Return benchmark object for output extraction (don't cleanup yet)
+        return benchmark, {
+            "mean_time_ms": result.timing.mean_ms,
+            **metrics,
+        }
+    
     benchmark.cleanup()
     
     return {
@@ -192,12 +205,22 @@ class BaselineSpeculativeDecodingBenchmark(BaseBenchmark):
     def __init__(self):
         super().__init__()
         self._metrics: Dict[str, Any] = {}
+        self._inner_benchmark = None
+        self.output = None
         self.jitter_exemption_reason = "Speculative decoding benchmark: fixed dimensions"
         self.register_workload_metadata(requests_per_iteration=1.0)
 
     def benchmark_fn(self) -> None:
-        self._metrics = run_benchmark()
+        self._inner_benchmark, self._metrics = run_benchmark(return_benchmark=True)
+        self.output = self._inner_benchmark.last_output
         self._synchronize()
+    
+    def teardown(self) -> None:
+        if self._inner_benchmark is not None:
+            self._inner_benchmark.cleanup()
+            self._inner_benchmark = None
+        self.output = None
+        torch.cuda.empty_cache()
 
     def get_config(self) -> BenchmarkConfig:
         # Single iteration; run_benchmark internally uses its own harness timing.
@@ -219,7 +242,9 @@ class BaselineSpeculativeDecodingBenchmark(BaseBenchmark):
 
     def get_verify_output(self) -> torch.Tensor:
         """Return output tensor for verification comparison."""
-        raise RuntimeError("Nested harness benchmark - needs refactoring")
+        if self.output is None:
+            raise RuntimeError("benchmark_fn() must be called before verification")
+        return self.output.float().clone()
 
     def get_output_tolerance(self) -> tuple:
         """Return tolerance for numerical comparison."""

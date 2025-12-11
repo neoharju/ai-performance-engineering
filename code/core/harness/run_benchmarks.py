@@ -2183,13 +2183,17 @@ def _test_chapter_impl(
         config_kwargs["pm_sampling_interval"] = pm_sampling_interval
     elif _defaults_obj is not None:
         config_kwargs["pm_sampling_interval"] = getattr(_defaults_obj, "pm_sampling_interval", None)
+    if args.graph_capture_ratio_threshold is not None:
+        config_kwargs["graph_capture_cheat_ratio_threshold"] = args.graph_capture_ratio_threshold
+    if args.graph_capture_memory_threshold_mb is not None:
+        config_kwargs["graph_capture_memory_threshold_mb"] = args.graph_capture_memory_threshold_mb
     base_config = BenchmarkConfig(**config_kwargs)
     logger.info("base_config launch_via=%s", base_config.launch_via)
     if profiling_output_dir:
         base_config.profiling_output_dir = str(profiling_output_dir)
 
     # Fields that should not be overridden by individual benchmarks
-    protected_fields: Set[str] = {"enable_memory_tracking"}  # Always track memory for analysis
+    protected_fields: Set[str] = {"enable_memory_tracking", "detect_setup_precomputation"}  # Always track memory and setup precompute detection
     if enable_profiling:
         protected_fields.update({"enable_profiling", "enable_nsys", "enable_ncu", "enable_nvtx", "profile_type"})
 
@@ -4294,16 +4298,12 @@ def _run_full_verification_suite(
     
     runner = _get_verify_runner()
     if runner is None:
-        # Fall back to legacy verification
-        logger.warning("Full verification suite not available - using legacy verification")
-        legacy_result = _verify_inputs_match(
-            baseline_benchmark, optimized_benchmark, baseline_path, optimized_path
-        )
-        result['verification_type'] = 'legacy'
-        result['passed'] = legacy_result.get('equivalent', False)
-        result['details'] = legacy_result
-        if not result['passed']:
-            result['reason'] = '; '.join(legacy_result.get('mismatches', ['Unknown mismatch']))
+        logger.error("Full verification suite not available - blocking performance execution")
+        result['verification_type'] = 'unavailable'
+        result['passed'] = False
+        result['reason'] = "Full verification suite unavailable; perf is blocked until verification is installed"
+        result['block_perf'] = True
+        result['quarantine_reason'] = 'verification_unavailable'
         return result
     
     # Check enforcement phase
@@ -5499,6 +5499,18 @@ def main():
         type=int,
         default=None,
         help='Nsight Compute pm-sampling-interval (cycles between samples). Optional; leave unset to skip the flag.'
+    )
+    parser.add_argument(
+        '--graph-capture-ratio-threshold',
+        type=float,
+        default=None,
+        help='Max allowed capture/replay time ratio before flagging graph capture cheat (default from BenchmarkDefaults).'
+    )
+    parser.add_argument(
+        '--graph-capture-memory-threshold-mb',
+        type=float,
+        default=None,
+        help='Memory allocated during graph capture above this threshold (MB) is considered suspicious (default from BenchmarkDefaults).'
     )
     
     args = parser.parse_args()

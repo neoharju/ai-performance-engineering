@@ -131,8 +131,20 @@ class BaselineCUDAGraphBucketingBenchmark(BaseBenchmark):
         return BenchmarkConfig(iterations=1, warmup=5, enable_profiling=False)
 
     def get_verify_output(self) -> torch.Tensor:
-        """Return output tensor for verification comparison."""
-        raise RuntimeError("Nested harness benchmark - needs refactoring")
+        """Return output tensor for verification comparison.
+        
+        CPU-only simulation: convert stats to tensor for verification.
+        This ensures the simulation produces consistent results.
+        """
+        if self._last is None:
+            raise RuntimeError("benchmark_fn() must be called before verification")
+        stats = self._last.stats
+        # Convert simulation stats to a tensor for verification
+        return torch.tensor([
+            float(stats.captures),
+            float(stats.prewarm_captures),
+            float(stats.replays),
+        ], dtype=torch.float32)
 
     def get_input_signature(self) -> dict:
         """Return input signature for verification."""

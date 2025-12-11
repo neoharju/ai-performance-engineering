@@ -44,6 +44,7 @@ class OptimizedSpeculativeDecodingBenchmark(BaseBenchmark):
     def __init__(self):
         super().__init__()
         self.target_model = None
+        self.output = None
         # Match baseline dimensions for fair comparison
         self.batch_size = 4
         self.vocab_size = 32000  # Must match baseline for input verification
@@ -132,6 +133,9 @@ class OptimizedSpeculativeDecodingBenchmark(BaseBenchmark):
                     
                     # In real spec decode, we'd compare predictions with draft tokens
                     # and accept/reject. Here we just verify the batch operation works.
+                    
+                    # Capture output for verification
+                    self.output = predictions.detach()
         
         self._synchronize()
     
@@ -156,7 +160,9 @@ class OptimizedSpeculativeDecodingBenchmark(BaseBenchmark):
 
     def get_verify_output(self) -> torch.Tensor:
         """Return output tensor for verification comparison."""
-        raise RuntimeError("Nested harness benchmark - needs refactoring")
+        if self.output is None:
+            raise RuntimeError("benchmark_fn() must be called before verification")
+        return self.output.float().clone()
 
     def get_output_tolerance(self) -> tuple:
         """Return tolerance for numerical comparison."""

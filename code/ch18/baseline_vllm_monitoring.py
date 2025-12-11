@@ -258,7 +258,8 @@ class BaselineVLLMMonitoringBenchmark(BaseBenchmark):
         self._thresholds: Optional[AlertThresholds] = None
         self._paths: List[Path] = []
         self._written = False
-        self.jitter_exemption_reason = "VLLM monitoring benchmark: fixed configuration"
+        # Config generation: writes YAML files, no GPU computation to verify
+        self.verification_not_applicable_reason = "Config generation benchmark - writes YAML/Prometheus config, no GPU computation"
         self.register_workload_metadata(requests_per_iteration=1.0)
 
     def _resolve_device(self):  # type: ignore[override]
@@ -291,8 +292,11 @@ class BaselineVLLMMonitoringBenchmark(BaseBenchmark):
         }
 
     def get_verify_output(self) -> "torch.Tensor":
-        """Return output tensor for verification comparison."""
-        raise RuntimeError("Config generation benchmark - no tensor output")
+        """Config generation benchmarks write files, not tensors - skip verification."""
+        raise RuntimeError(
+            "VERIFICATION_SKIP: Config generation benchmark. "
+            "Writes YAML/Prometheus config files to disk, no GPU computation to verify."
+        )
 
     def get_input_signature(self) -> dict:
         """Return input signature for verification."""

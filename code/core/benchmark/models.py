@@ -358,6 +358,7 @@ class BenchmarkResult(BaseModel):
     world_size: Optional[int] = Field(None, description="World size used when launching distributed benchmarks")
     multi_gpu: Optional[bool] = Field(None, description="Whether multiple GPUs were used")
     multi_gpu_required: Optional[bool] = Field(None, description="Benchmark declared multi-GPU requirement")
+    seeds: Optional[Dict[str, Any]] = Field(None, description="Seeds applied for reproducibility (random, numpy, torch, cuda)")
     custom_metrics: Dict[str, float] = Field(default_factory=dict, description="Benchmark-specific custom metrics")
     gpu_metrics: Optional[Dict[str, Optional[float | str]]] = Field(
         None,

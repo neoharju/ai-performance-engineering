@@ -56,6 +56,7 @@ class BaselineExpertParallelismBenchmark(BaseBenchmark):
     def __init__(self) -> None:
         super().__init__()
         self.model: Optional[ToyGatedMoE] = None
+        self.output = None
         self.inputs: Optional[torch.Tensor] = None
         self._history: Dict[str, float] = {}
         self._workload = WorkloadMetadata(
@@ -75,13 +76,15 @@ class BaselineExpertParallelismBenchmark(BaseBenchmark):
 
     def benchmark_fn(self) -> Optional[dict]:
         if self.model is None or self.inputs is None:
-            raise RuntimeError("SKIPPED: MoE model not initialized")
+            if self.output is None:
+            raise RuntimeError("benchmark_fn() must be called before verification")
+        return self.output.detach().clone()
 
         enable_nvtx = get_nvtx_enabled(self.get_config())
         start = self._record_start()
         with nvtx_range("moe_baseline_forward", enable=enable_nvtx):
             with torch.no_grad():
-                _ = self.model(self.inputs)
+                self.output = self.model(self.inputs)
         torch.cuda.synchronize(self.device)
         latency_ms = self._record_stop(start)
         self._history["latency_ms"] = latency_ms
@@ -105,7 +108,9 @@ class BaselineExpertParallelismBenchmark(BaseBenchmark):
 
     def get_verify_output(self) -> torch.Tensor:
         """Return output tensor for verification comparison."""
-        raise RuntimeError("Distributed simulation - no tensor output")
+        if self.output is None:
+            raise RuntimeError("benchmark_fn() must be called before verification")
+        return self.output.detach().clone()
 
     def get_input_signature(self) -> dict:
         """Return input signature for verification."""

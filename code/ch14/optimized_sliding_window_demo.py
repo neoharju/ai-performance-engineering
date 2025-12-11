@@ -422,6 +422,7 @@ class SlidingWindowDemoBenchmark(BaseBenchmark):
         super().__init__()
         self.model = None
         self.x = None
+        self.output = None
         # Match baseline dimensions for fair comparison
         self.batch_size = 4
         self.jitter_exemption_reason = "Sliding window demo: fixed dimensions"
@@ -463,8 +464,8 @@ class SlidingWindowDemoBenchmark(BaseBenchmark):
     def benchmark_fn(self) -> None:
         """Benchmark: SDPA/Flash Attention forward pass."""
         with torch.no_grad():
-            output = self.model(self.x)
-            self._last = float(output.sum())
+            self.output = self.model(self.x)
+            self._last = float(self.output.sum())
             self._synchronize()
 
     def teardown(self) -> None:
@@ -496,7 +497,9 @@ class SlidingWindowDemoBenchmark(BaseBenchmark):
 
     def get_verify_output(self) -> torch.Tensor:
         """Return output tensor for verification comparison."""
-        raise RuntimeError("Demo benchmark - no verification output")
+        if self.output is None:
+            raise RuntimeError("benchmark_fn() must be called before verification")
+        return self.output.detach().clone()
 
     def get_input_signature(self) -> dict:
         """Return input signature for verification."""

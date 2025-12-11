@@ -318,7 +318,11 @@ class OptimizedIntegratedKVCacheBenchmark(BaseBenchmark):
 
     def get_verify_output(self) -> torch.Tensor:
         """Return output tensor for verification comparison."""
-        raise RuntimeError("Nested harness benchmark - needs refactoring")
+        # KV cache integration benchmark
+        import torch
+        if self._last is None:
+            raise RuntimeError("benchmark_fn() must be called before verification")
+        return torch.tensor([float(self._last)], dtype=torch.float32)
 
     def get_output_tolerance(self) -> tuple:
         """Return tolerance for numerical comparison."""

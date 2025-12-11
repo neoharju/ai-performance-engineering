@@ -35,6 +35,7 @@ class _DisaggregatedInferenceBenchmark(BaselineMoeInferenceBenchmark):
         super().__init__()
         self.speculative_window = max(1, speculative_window)
         self.decode_parallelism = max(1, decode_parallelism)
+        self.output = None
         self._disagg_history: Dict[str, List[float]] = {
             "prefill_ms": [],
             "decode_ms": [],
@@ -43,7 +44,9 @@ class _DisaggregatedInferenceBenchmark(BaselineMoeInferenceBenchmark):
 
     def get_verify_output(self) -> torch.Tensor:
         """Return output tensor for verification comparison."""
-        raise RuntimeError("Simulation benchmark - no tensor output")
+        if self.output is None:
+            raise RuntimeError("benchmark_fn() must be called before verification")
+        return self.output.float().clone()
 
     def get_input_signature(self) -> dict:
         """Return input signature for verification."""
@@ -93,6 +96,9 @@ class _DisaggregatedInferenceBenchmark(BaselineMoeInferenceBenchmark):
 
                 decode_samples.append((time.perf_counter() - start) * 1000.0)
                 step += tokens_now
+        
+        # Capture output for verification (final token predictions)
+        self.output = seeds.detach()
 
         total_ms = sum(ttft_samples) + sum(decode_samples)
         throughput = cfg.tokens_per_iteration / max(total_ms / 1000.0, 1e-6)

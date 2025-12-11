@@ -51,6 +51,7 @@ class OptimizedMXFP8MoEBenchmark(BaseBenchmark):
 
     def __init__(self) -> None:
         super().__init__()
+        self.output = None
         self.num_tokens = 4096
         self.hidden_dim = 4096
         self.ffn_dim = 14336
@@ -264,7 +265,7 @@ class OptimizedMXFP8MoEBenchmark(BaseBenchmark):
             if self.use_cuda_graphs and self._graph is not None and self._graph_out is not None:
                 self._graph.replay()
             else:
-                _ = self._forward_grouped()
+                self.output = self._forward_grouped()
         self._synchronize()
 
     def teardown(self) -> None:
@@ -310,7 +311,9 @@ class OptimizedMXFP8MoEBenchmark(BaseBenchmark):
 
     def get_verify_output(self) -> torch.Tensor:
         """Return output tensor for verification comparison."""
-        raise RuntimeError("Nested harness benchmark - needs refactoring")
+        if self.output is None:
+            raise RuntimeError("benchmark_fn() must be called before verification")
+        return self.output.detach().clone()
 
     def get_input_signature(self) -> dict:
         """Return input signature for verification."""

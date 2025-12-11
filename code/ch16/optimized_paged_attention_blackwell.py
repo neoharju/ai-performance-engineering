@@ -41,6 +41,7 @@ class PagedAttentionBlackwellBenchmark(BaseBenchmark):
         self.qkv_proj: Optional[nn.Linear] = None
         self.out_proj: Optional[nn.Linear] = None
         self.inputs: Optional[torch.Tensor] = None
+        self.output: Optional[torch.Tensor] = None
         self.batch_size = 4
         self.seq_length = 4096
         self.hidden_dim = 1024
@@ -114,7 +115,7 @@ class PagedAttentionBlackwellBenchmark(BaseBenchmark):
     def benchmark_fn(self) -> None:
         """Benchmark: Flash Attention with FP8 KV cache benefits."""
         with torch.no_grad():
-            _ = self._forward_flash()
+            self.output = self._forward_flash()
         torch.cuda.synchronize()
     
     def teardown(self) -> None:
@@ -134,7 +135,9 @@ class PagedAttentionBlackwellBenchmark(BaseBenchmark):
 
     def get_verify_output(self) -> torch.Tensor:
         """Return output tensor for verification comparison."""
-        raise RuntimeError("Simulation benchmark - needs refactoring")
+        if self.output is None:
+            raise RuntimeError("benchmark_fn() must be called before verification")
+        return self.output.detach().clone()
 
     def get_input_signature(self) -> dict:
         """Return input signature for verification."""

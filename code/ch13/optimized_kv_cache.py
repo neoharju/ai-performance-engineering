@@ -185,6 +185,10 @@ class OptimizedKVCacheOptimizedBenchmark(BaseBenchmark):
                 
                 self.kv_cache.free(request_id)
         self._synchronize()
+        # Capture output AFTER benchmark for verification
+        if self._verify_input is not None and self.model is not None:
+            with torch.no_grad():
+                self.output = self.model(self._verify_input).float().clone()
 
     def teardown(self) -> None:
         self.model = None

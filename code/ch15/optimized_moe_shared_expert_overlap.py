@@ -143,7 +143,7 @@ class OptimizedMoeOverlapBenchmark(BaseBenchmark):
         dist_group = dist.group.WORLD if dist.is_initialized() else None
         with nvtx_range("moe_overlap_optimized", enable=enable_nvtx):
             with torch.no_grad():
-                _ = self.model(self.inputs, dist_group=dist_group)
+                self.output = self.model(self.inputs, dist_group=dist_group)
         torch.cuda.synchronize(self.device)
         return {}
 

@@ -534,7 +534,7 @@ class BenchmarkConfig:
     clear_compile_cache: bool = field(default_factory=lambda: _get_default_value("clear_compile_cache", False))
     """Clear torch.compile cache before benchmark to ensure consistent compilation state."""
     
-    detect_setup_precomputation: bool = field(default_factory=lambda: _get_default_value("detect_setup_precomputation", False))
+    detect_setup_precomputation: bool = field(default_factory=lambda: _get_default_value("detect_setup_precomputation", True))
     """Hash inputs before/after setup() to detect pre-computation during setup."""
     
     monitor_gpu_state: bool = field(default_factory=lambda: _get_default_value("monitor_gpu_state", True))
@@ -548,6 +548,13 @@ class BenchmarkConfig:
 
     # Legacy timeout field (deprecated, use measurement_timeout_seconds)
     timeout_seconds: int = field(default_factory=lambda: _get_default_value("timeout_seconds", 180))
+
+    # Graph capture cheat detection thresholds
+    graph_capture_cheat_ratio_threshold: float = field(default_factory=lambda: _get_default_value("graph_capture_cheat_ratio_threshold", 10.0))
+    """Max allowed capture/replay ratio before flagging a cheat (higher is more lenient)."""
+    
+    graph_capture_memory_threshold_mb: float = field(default_factory=lambda: _get_default_value("graph_capture_memory_threshold_mb", 100.0))
+    """Memory allocated during capture above this threshold is considered suspicious."""
     
     # Profiler-specific timeouts
     nsys_timeout_seconds: int = field(default_factory=lambda: _get_default_value("nsys_timeout_seconds", 120))
@@ -1396,6 +1403,7 @@ class BenchmarkHarness:
             benchmark_name=benchmark_name,
             device=str(self.device),
             mode=self.mode.value,
+            seeds=copy.deepcopy(getattr(self, "_seed_info", None)),
             schemaVersion="1.0",
         )
         self._annotate_launch_metadata(result, config, world_size=self._world_size_hint(config))
@@ -1922,6 +1930,7 @@ class BenchmarkHarness:
         proton_metrics: Dict[str, float] = {}
         times_ms: List[float] = []
         inference_timing_data: Optional[Dict[str, List[float]]] = None
+        seed_metadata = copy.deepcopy(getattr(self, "_seed_info", None))
         
         # Get benchmark name and module info for error messages
         module_override = getattr(benchmark, "_module_file_override", None)
@@ -2124,6 +2133,10 @@ class BenchmarkHarness:
                         
                         # Extract errors
                         errors.extend(benchmark_result.errors)
+                        
+                        # Extract seeds (propagate actual subprocess seed info)
+                        if getattr(benchmark_result, "seeds", None) is not None:
+                            seed_metadata = benchmark_result.seeds
                         
                         # Extract profiling artifacts
                         if benchmark_result.artifacts:
@@ -2463,13 +2476,47 @@ class BenchmarkHarness:
                     # Apply per-target CLI overrides (e.g., backend selection) before setup.
                     self._apply_target_overrides(benchmark, config)
 
+                    setup_already_run = False
+                    # Force setup pre-computation detection for all runs (no opt-out)
+                    from core.harness.validity_checks import check_setup_precomputation
+                    def _collect_outputs_for_hash():
+                        outputs = {}
+                        if hasattr(benchmark, "output"):
+                            outputs["output"] = getattr(benchmark, "output")
+                        getter = getattr(benchmark, "get_verify_output", None)
+                        if callable(getter):
+                            try:
+                                outputs["verify_output"] = getter()
+                            except Exception:
+                                pass
+                        return outputs
+                    start_stage('setup')
+                    precompute_ok, precompute_err = check_setup_precomputation(_collect_outputs_for_hash, benchmark.setup)
+                    finish_stage('setup')
+                    setup_already_run = True
+                    if not precompute_ok:
+                        msg = precompute_err or "Setup pre-computation detected"
+                        errors.append(msg)
+                        timeout_result_storage[0] = self._create_timeout_result(
+                            stage="setup",
+                            duration=0.0,
+                            limit=config.get_effective_timeout('setup'),
+                            errors=errors,
+                            benchmark_name=benchmark_name,
+                            config=config,
+                            watchdog=stage_watchdog,
+                        )
+                        return
+
                     # Setup - this may include CUDA extension compilation OR torch.compile()
                     # IMPORTANT: Setup can hang, so we need actual timeout enforcement
                     import time
                     setup_start_time = time.time()
                     setup_timeout = config.get_effective_timeout('setup')
                     
-                    if setup_timeout is not None:
+                    if setup_already_run:
+                        setup_time = time.time() - setup_start_time
+                    elif setup_timeout is not None:
                         # Setup has explicit timeout - enforce it with threading timeout
                         setup_complete = threading.Event()
                         setup_error: List[Optional[Exception]] = [None]
@@ -2497,6 +2544,20 @@ class BenchmarkHarness:
                                 f"Setup exceeded timeout of {setup_timeout}s (ran for {setup_time:.1f}s)"
                             )
                             errors.append(str(timeout_error))
+                            # Best-effort cleanup to avoid lingering CUDA work from timed-out setup
+                            try:
+                                benchmark.teardown()
+                                teardown_called.set()
+                            except Exception:
+                                pass
+                            try:
+                                if torch.cuda.is_available():
+                                    torch.cuda.synchronize(self.device)
+                            except Exception:
+                                pass
+                            setup_thread.join(timeout=1.0)
+                            if setup_thread.is_alive():
+                                errors.append("Setup thread still running after timeout; GPU work may still be executing.")
                             # Create timeout result
                             timeout_result_storage[0] = self._create_timeout_result(
                                 stage="setup",
@@ -2556,6 +2617,20 @@ class BenchmarkHarness:
                                 f"Warmup exceeded timeout of {warmup_timeout}s (ran for {warmup_time:.1f}s)"
                             )
                             errors.append(str(timeout_error))
+                            # Best-effort cleanup to avoid lingering CUDA work from timed-out warmup
+                            try:
+                                benchmark.teardown()
+                                teardown_called.set()
+                            except Exception:
+                                pass
+                            try:
+                                if torch.cuda.is_available():
+                                    torch.cuda.synchronize(self.device)
+                            except Exception:
+                                pass
+                            warmup_thread.join(timeout=1.0)
+                            if warmup_thread.is_alive():
+                                errors.append("Warmup thread still running after timeout; GPU work may still be executing.")
                             # Create timeout result
                             timeout_result_storage[0] = self._create_timeout_result(
                                 stage="warmup",
@@ -2872,6 +2947,7 @@ class BenchmarkHarness:
         
         # Compute statistics
         result = self._compute_stats(times_ms, config)
+        result.seeds = copy.deepcopy(seed_metadata)
 
         # Attach benchmark-specific metrics and throughput (parity with subprocess path)
         custom_metrics = self._resolve_custom_metrics(benchmark)
@@ -3154,7 +3230,8 @@ class BenchmarkHarness:
         from core.harness.validity_checks import (
             reset_cuda_memory_pool, capture_gpu_state, gc_disabled,
             clear_compile_cache, force_tensor_evaluation, validate_environment,
-            MemoryAllocationTracker, audit_streams, check_stream_sync_completeness
+            MemoryAllocationTracker, audit_streams, check_stream_sync_completeness,
+            get_active_streams, GraphCaptureCheatDetector
         )
         
         # 0. Validate environment and log device enumeration
@@ -3241,6 +3318,7 @@ class BenchmarkHarness:
             use_cuda_graph = getattr(config, 'enable_cuda_graph', False)
             cuda_graph = None
             cuda_graph_captured = False
+            graph_cheat_detector = GraphCaptureCheatDetector(self.device) if use_cuda_graph else None
             
             def _run_single_iteration():
                 """Helper to run a single benchmark iteration and return timing."""
@@ -3268,6 +3346,8 @@ class BenchmarkHarness:
                 # If enabled and already captured, replay the graph instead of running fn()
                 if use_cuda_graph and cuda_graph_captured and cuda_graph is not None:
                     # Replay captured graph (much faster than re-running fn())
+                    if graph_cheat_detector is not None:
+                        graph_cheat_detector.start_replay()
                     cuda_graph.replay()
                 else:
                     # Execute function under test with NVTX
@@ -3293,6 +3373,11 @@ class BenchmarkHarness:
                 wall_clock_times_ms.append(wall_elapsed_ms)
                 
                 elapsed_ms = start_event.elapsed_time(end_event)
+                if use_cuda_graph and cuda_graph_captured and cuda_graph is not None and graph_cheat_detector is not None:
+                    try:
+                        graph_cheat_detector.end_replay(elapsed_ms)
+                    except Exception:
+                        pass
                 if use_reported_time:
                     reported = getattr(benchmark_obj, "last_time_ms", None)
                     if reported is not None:
@@ -3308,6 +3393,21 @@ class BenchmarkHarness:
                 
                 iteration_count += 1
                 total_duration_ms += elapsed_ms
+                
+                # Force evaluation of lazy tensors after timing to prevent skipped compute
+                if getattr(config, 'force_tensor_evaluation', True) and result is not None:
+                    try:
+                        tensors_to_force: Dict[str, Any] = {}
+                        if isinstance(result, torch.Tensor):
+                            tensors_to_force["result"] = result
+                        elif isinstance(result, dict):
+                            for k, v in result.items():
+                                if isinstance(v, torch.Tensor):
+                                    tensors_to_force[k] = v
+                        if tensors_to_force:
+                            force_tensor_evaluation(tensors_to_force)
+                    except Exception:
+                        pass
                 return elapsed_ms, result
             
             def _capture_cuda_graph():
@@ -3333,8 +3433,12 @@ class BenchmarkHarness:
                     torch.cuda.synchronize(self.device)
                     
                     # Capture the graph
+                    if graph_cheat_detector is not None:
+                        graph_cheat_detector.start_capture()
                     with torch.cuda.graph(cuda_graph, stream=stream):
                         fn()
+                    if graph_cheat_detector is not None:
+                        graph_cheat_detector.end_capture()
                     
                     cuda_graph_captured = True
                 except Exception as e:
@@ -3352,54 +3456,96 @@ class BenchmarkHarness:
                     cuda_graph = None
                     cuda_graph_captured = False
             
+            audit_streams_enabled = getattr(config, 'audit_stream_sync', True)
+            pre_streams: List[int] = []
+            stream_auditor = None
+            stream_context = audit_streams(self.device) if audit_streams_enabled else nullcontext()
+            if audit_streams_enabled:
+                pre_streams = get_active_streams(self.device)
+
             # Wrap timing loop with GC context to prevent GC interference
             with gc_context:
-                # CUDA Graph capture (if enabled)
-                # Capture before starting timed iterations for graph replay mode
-                if use_cuda_graph:
-                    _capture_cuda_graph()
-                
-                if use_adaptive:
-                    # Adaptive iterations mode (Triton best practice)
-                    # Run initial batch to estimate per-iteration time
-                    initial_batch_size = min(5, target_iterations)  # At least 5 or requested iterations
+                with stream_context as stream_auditor:
+                    # CUDA Graph capture (if enabled)
+                    # Capture before starting timed iterations for graph replay mode
+                    if use_cuda_graph:
+                        _capture_cuda_graph()
                     
-                    for _ in range(initial_batch_size):
-                        _run_single_iteration()
-                    
-                    # If we haven't reached target duration, calculate needed iterations
-                    if total_duration_ms < min_total_duration_ms:
-                        avg_time = total_duration_ms / initial_batch_size if initial_batch_size > 0 else 1.0
-                        remaining_duration = min_total_duration_ms - total_duration_ms
-                        additional_iterations = int(remaining_duration / avg_time) + 1
+                    if use_adaptive:
+                        # Adaptive iterations mode (Triton best practice)
+                        # Run initial batch to estimate per-iteration time
+                        initial_batch_size = min(5, target_iterations)  # At least 5 or requested iterations
                         
-                        # Cap at max_adaptive_iterations
-                        additional_iterations = min(additional_iterations, max_adaptive_iterations - initial_batch_size)
-                        
-                        # Run additional iterations
-                        for _ in range(max(0, additional_iterations)):
+                        for _ in range(initial_batch_size):
                             _run_single_iteration()
-                            # Check if we've exceeded target duration
-                            if total_duration_ms >= min_total_duration_ms:
-                                break
-                else:
-                    # Fixed iterations mode (original behavior)
-                    for _ in range(config.iterations):
-                        _run_single_iteration()
+                        
+                        # If we haven't reached target duration, calculate needed iterations
+                        if total_duration_ms < min_total_duration_ms:
+                            avg_time = total_duration_ms / initial_batch_size if initial_batch_size > 0 else 1.0
+                            remaining_duration = min_total_duration_ms - total_duration_ms
+                            additional_iterations = int(remaining_duration / avg_time) + 1
+                            
+                            # Cap at max_adaptive_iterations
+                            additional_iterations = min(additional_iterations, max_adaptive_iterations - initial_batch_size)
+                            
+                            # Run additional iterations
+                            for _ in range(max(0, additional_iterations)):
+                                _run_single_iteration()
+                                # Check if we've exceeded target duration
+                                if total_duration_ms >= min_total_duration_ms:
+                                    break
+                    else:
+                        # Fixed iterations mode (original behavior)
+                        for _ in range(config.iterations):
+                            _run_single_iteration()
             
             # Stream audit check - verify all streams are properly synchronized
             # This detects the Locus/KernelBench stream timing vulnerability
-            if getattr(config, 'audit_stream_sync', True):
-                sync_complete, sync_warnings = check_stream_sync_completeness(self.device)
-                if sync_warnings:
-                    for sw in sync_warnings:
-                        import warnings
-                        warnings.warn(
-                            f"STREAM SYNC WARNING: {sw}. "
-                            "Work on non-default streams may not be properly timed. "
-                            "See Locus/KernelBench 2025 incident for details.",
-                            RuntimeWarning,
-                        )
+            if audit_streams_enabled:
+                post_streams = get_active_streams(self.device)
+                sync_complete, sync_warning = check_stream_sync_completeness(pre_streams, post_streams)
+                audit_ok = True
+                audit_warnings: List[str] = []
+                if stream_auditor is not None:
+                    audit_ok, audit_warnings = stream_auditor.check_issues()
+                    if audit_ok and not audit_warnings and LOGGER_AVAILABLE:
+                        try:
+                            info = stream_auditor.get_info()
+                            logger.debug(
+                                f"Stream audit passed (custom_streams={info.custom_streams_detected}, unsync_warning={info.unsync_warning})"
+                            )
+                        except Exception:
+                            logger.debug("Stream audit passed")
+                issues: List[str] = []
+                if not sync_complete:
+                    issues.append("Stream synchronization incomplete")
+                if sync_warning:
+                    issues.append(sync_warning)
+                if not audit_ok or audit_warnings:
+                    issues.extend(audit_warnings)
+                if issues:
+                    raise RuntimeError(
+                        "STREAM TIMING VIOLATION: " +
+                        " | ".join(issues) +
+                        " | All streams must be synchronized to avoid under-timing (see Locus/KernelBench 2025)."
+                    )
+            
+            # Graph capture cheat detection: fail fast if capture vs replay looks suspicious
+            if graph_cheat_detector is not None:
+                ratio_thresh = getattr(config, 'graph_capture_cheat_ratio_threshold', 10.0)
+                mem_thresh = getattr(config, 'graph_capture_memory_threshold_mb', 100.0)
+                is_cheating, cheat_reason = graph_cheat_detector.check_for_cheat(
+                    capture_replay_ratio_threshold=ratio_thresh,
+                    memory_threshold_mb=mem_thresh,
+                )
+                if is_cheating:
+                    raise RuntimeError(f"Graph capture cheat detected: {cheat_reason}")
+                elif LOGGER_AVAILABLE:
+                    try:
+                        stats = graph_cheat_detector.get_stats()
+                        logger.debug(f"Graph capture check passed (ratio<= {ratio_thresh}, mem<= {mem_thresh}MB): {stats}")
+                    except Exception:
+                        logger.debug("Graph capture check passed")
             
             # Cross-validate CUDA event timing vs wall clock timing
             # Flag anomalies where CUDA events report much less time than wall clock
@@ -3444,6 +3590,20 @@ class BenchmarkHarness:
                         ttft_times_ms.extend(result["ttft_times_ms"])
                     if "tpot_times_ms" in result and isinstance(result["tpot_times_ms"], list):
                         tpot_times_ms.extend(result["tpot_times_ms"])
+                
+                if getattr(config, 'force_tensor_evaluation', True) and result is not None:
+                    try:
+                        tensors_to_force: Dict[str, Any] = {}
+                        if isinstance(result, torch.Tensor):
+                            tensors_to_force["result"] = result
+                        elif isinstance(result, dict):
+                            for k, v in result.items():
+                                if isinstance(v, torch.Tensor):
+                                    tensors_to_force[k] = v
+                        if tensors_to_force:
+                            force_tensor_evaluation(tensors_to_force)
+                    except Exception:
+                        pass
         
         # Build inference timing data if collected
         if ttft_times_ms or tpot_times_ms:
@@ -3687,6 +3847,7 @@ class BenchmarkHarness:
             timeout_duration_seconds=None,
             timeout_limit_seconds=None,
             gpu_metrics=gpu_metrics,
+            seeds=copy.deepcopy(getattr(self, "_seed_info", None)),
             schemaVersion="1.0",
         )
         self._annotate_launch_metadata(result, config)

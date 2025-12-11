@@ -27,6 +27,7 @@ class VectorizationBenchmark(BaseBenchmark):
 
     def __init__(self):
         super().__init__()
+        self.output = None
         self.tensor: Optional[torch.Tensor] = None
         self.repeats = 32
         self.N = 8_192_000
@@ -48,6 +49,7 @@ class VectorizationBenchmark(BaseBenchmark):
             t = self.tensor
             for _ in range(self.repeats):
                 t = (t * 1.0001) + 0.0001
+            self.output = t.detach()
             torch.cuda.synchronize(self.device)
 
     def teardown(self) -> None:
@@ -76,7 +78,9 @@ class VectorizationBenchmark(BaseBenchmark):
 
     def get_verify_output(self) -> torch.Tensor:
         """Return output tensor for verification comparison."""
-        raise RuntimeError("Nested harness benchmark - needs refactoring")
+        if self.output is None:
+            raise RuntimeError("benchmark_fn() must be called before verification")
+        return self.output.detach().clone()
 
     def get_input_signature(self) -> dict:
         """Return input signature for verification."""

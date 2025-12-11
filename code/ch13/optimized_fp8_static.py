@@ -72,6 +72,7 @@ class StaticFP8Linear(nn.Module):
     def __init__(self, in_features: int, out_features: int, bias: bool = True,
                  device: Optional[torch.device] = None, dtype: torch.dtype = torch.float32):
         super().__init__()
+        self.output = None
         self.in_features = in_features
         self.out_features = out_features
         
@@ -267,8 +268,8 @@ class StaticFP8Benchmark(BaseBenchmark):
     def benchmark_fn(self) -> None:
         """Benchmark: Static FP8 forward pass."""
         with torch.no_grad():
-            output = self.static_linear(self.x)
-            self._last = float(output.sum())
+            self.output = self.static_linear(self.x)
+            self._last = float(self.output.sum())
             self._synchronize()
 
     def teardown(self) -> None:
@@ -299,7 +300,9 @@ class StaticFP8Benchmark(BaseBenchmark):
 
     def get_verify_output(self) -> torch.Tensor:
         """Return output tensor for verification comparison."""
-        raise RuntimeError("FP8 calibration - metrics only")
+        if self.output is None:
+            raise RuntimeError("benchmark_fn() must be called before verification")
+        return self.output.detach().clone()
 
     def get_input_signature(self) -> dict:
         """Return input signature for verification."""

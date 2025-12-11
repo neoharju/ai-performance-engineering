@@ -67,6 +67,7 @@ class BaselineInferenceMonolithicBenchmark(BaseBenchmark):
         self.model: Optional[SimpleLLM] = None
         self.prompt: Optional[torch.Tensor] = None
         self.kv_cache: Optional[torch.Tensor] = None
+        self.output: Optional[torch.Tensor] = None
         self._history: Dict[str, List[float]] = {"ttft": [], "tpot": []}
         # Workload dimensions for signature matching
         self.batch_size = 1
@@ -117,6 +118,8 @@ class BaselineInferenceMonolithicBenchmark(BaseBenchmark):
                 
                 self._history["ttft"].append(ttft_ms)
                 self._history["tpot"].extend(tpot_times_ms)
+                # Capture output for verification
+                self.output = token_output.detach()
                 return {
                     "ttft_times_ms": [ttft_ms],
                     "tpot_times_ms": tpot_times_ms,
@@ -159,7 +162,9 @@ class BaselineInferenceMonolithicBenchmark(BaseBenchmark):
 
     def get_verify_output(self) -> torch.Tensor:
         """Return output tensor for verification comparison."""
-        raise RuntimeError("Simulation benchmark - no tensor output")
+        if self.output is None:
+            raise RuntimeError("benchmark_fn() must be called before verification")
+        return self.output.detach().clone()
 
     def get_output_tolerance(self) -> tuple:
         """Return tolerance for numerical comparison."""

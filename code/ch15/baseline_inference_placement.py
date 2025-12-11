@@ -27,12 +27,15 @@ class _PlacementBenchmark(BaseBenchmark):
         self.prefix = prefix
         self.simulator = PlacementSimulator()
         self._summary: Dict[str, float] = {}
-        self.jitter_exemption_reason = "Placement benchmark: simulation parameters"
+        self.output = None  # Simulation metrics as tensor
         self.register_workload_metadata(requests_per_iteration=1.0)
 
     def get_verify_output(self) -> torch.Tensor:
-        """Return output tensor for verification comparison."""
-        raise RuntimeError("Simulation benchmark - no tensor output")
+        """Return simulation metrics as tensor for verification."""
+        import torch
+        if self.output is None:
+            raise RuntimeError("benchmark_fn() must be called before verification")
+        return self.output.clone()
 
     def get_input_signature(self) -> dict:
         """Return input signature for verification."""
@@ -69,6 +72,12 @@ class _PlacementBenchmark(BaseBenchmark):
             f"{self.prefix}.decode_collective_ms": run.decode_collective_ms,
             f"{self.prefix}.remote_expert_ms": run.remote_expert_ms,
         }
+        # Capture simulation metrics as tensor for verification
+        import torch
+        self.output = torch.tensor([
+            ttft_p50, ttft_p95, decode_p50, decode_p95, tput_tokens_s,
+            float(run.cross_node_kv_moves), float(run.cross_node_collectives),
+        ], dtype=torch.float32)
 
     def get_config(self) -> Optional[BenchmarkConfig]:
         return BenchmarkConfig(

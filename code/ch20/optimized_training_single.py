@@ -23,8 +23,6 @@ class SimpleModel(nn.Module):
     
     def __init__(self, hidden_dim: int = 1024):
         super().__init__()
-        self.output = None
-        self._verify_input = None
         self.fc1 = nn.Linear(hidden_dim, hidden_dim * 2)
         self.fc2 = nn.Linear(hidden_dim * 2, hidden_dim)
         self.relu = nn.ReLU()
@@ -46,6 +44,8 @@ class OptimizedTrainingDistributedBenchmark(BaseBenchmark):
         self.optimizer: Optional[torch.optim.Optimizer] = None
         self.criterion: Optional[nn.Module] = None
         self.scaler: Optional[torch.cuda.amp.GradScaler] = None
+        self.output: Optional[torch.Tensor] = None
+        self._verify_input: Optional[torch.Tensor] = None
         self.batch_size = 32
         self.hidden_dim = 8192
         self.train_steps = 6
@@ -80,6 +80,8 @@ class OptimizedTrainingDistributedBenchmark(BaseBenchmark):
         
         self.inputs = torch.randn(self.batch_size, self.hidden_dim, device=self.device, dtype=torch.bfloat16)
         self.targets = torch.randn(self.batch_size, self.hidden_dim, device=self.device, dtype=torch.bfloat16)
+        # Fixed input for verification - used to test trained model at END of benchmark_fn
+        self._verify_input = self.inputs[0:1].clone()
         try:
             self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=0.01, fused=True)
         except TypeError:
@@ -110,6 +112,9 @@ class OptimizedTrainingDistributedBenchmark(BaseBenchmark):
             loss.backward()
             self.optimizer.step()
             self._synchronize()
+        # Capture output AFTER training for verification
+        with torch.no_grad():
+            self.output = self.model(self._verify_input).float().clone()
     
     def teardown(self) -> None:
         self.model = None

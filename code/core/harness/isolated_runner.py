@@ -101,6 +101,13 @@ def run_benchmark(input_data: Dict[str, Any]) -> Dict[str, Any]:
     iterations = config_dict.get("iterations", 10)
     warmup = config_dict.get("warmup", 3)
     enable_memory_tracking = config_dict.get("enable_memory_tracking", True)
+    seed = config_dict.get("seed")
+    seed_info = {
+        "random_seed": None,
+        "numpy_seed": None,
+        "torch_seed": None,
+        "cuda_seed": None,
+    }
     
     benchmark_name = class_name
     
@@ -108,11 +115,35 @@ def run_benchmark(input_data: Dict[str, Any]) -> Dict[str, Any]:
         # Reset CUDA state BEFORE loading the module
         reset_cuda_state()
         
+        # Apply deterministic seeds if provided (align with harness behavior)
+        if seed is not None:
+            try:
+                import random
+                random.seed(seed)
+                seed_info["random_seed"] = seed
+            except Exception:
+                pass
+            try:
+                import numpy as np
+                np.random.seed(seed)
+                seed_info["numpy_seed"] = seed
+            except Exception:
+                pass
+            try:
+                import torch
+                torch.manual_seed(seed)
+                seed_info["torch_seed"] = seed
+                if torch.cuda.is_available():
+                    torch.cuda.manual_seed_all(seed)
+                    seed_info["cuda_seed"] = seed
+            except Exception:
+                pass
+        
         # Load module
         spec = importlib.util.spec_from_file_location("benchmark_module", str(module_path))
         if spec is None or spec.loader is None:
             errors.append(f"Failed to load module spec from {module_path}")
-            return _make_error_response(errors)
+            return _make_error_response(errors, seed_info=seed_info)
         
         module = importlib.util.module_from_spec(spec)
         sys.modules["benchmark_module"] = module
@@ -122,13 +153,13 @@ def run_benchmark(input_data: Dict[str, Any]) -> Dict[str, Any]:
         if class_name == "get_benchmark":
             if not hasattr(module, "get_benchmark"):
                 errors.append(f"Module {module_path} has no get_benchmark() function")
-                return _make_error_response(errors)
+                return _make_error_response(errors, seed_info=seed_info)
             benchmark = module.get_benchmark()
             benchmark_name = getattr(benchmark, 'name', None) or benchmark.__class__.__name__
         else:
             if not hasattr(module, class_name):
                 errors.append(f"Module {module_path} has no class {class_name}")
-                return _make_error_response(errors)
+                return _make_error_response(errors, seed_info=seed_info)
             benchmark_class = getattr(module, class_name)
             benchmark = benchmark_class()
             benchmark_name = class_name
@@ -245,10 +276,11 @@ def run_benchmark(input_data: Dict[str, Any]) -> Dict[str, Any]:
         inference_timing_data=inference_timing_data,
         verify_output_data=verify_output_data,
         errors=errors,
+        seed_info=seed_info,
     )
 
 
-def _make_error_response(errors: List[str]) -> Dict[str, Any]:
+def _make_error_response(errors: List[str], seed_info: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Create error response in harness-expected format."""
     # Build a minimal BenchmarkResult with errors
     from core.benchmark.models import BenchmarkResult, TimingStats
@@ -265,6 +297,7 @@ def _make_error_response(errors: List[str]) -> Dict[str, Any]:
             raw_times_ms=[],
         ),
         errors=errors,
+        seeds=seed_info,
     )
     
     return {
@@ -285,6 +318,7 @@ def _make_success_response(
     inference_timing_data: Optional[Dict[str, List[float]]],
     verify_output_data: Optional[Dict[str, Any]],
     errors: List[str],
+    seed_info: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Create success response in harness-expected format."""
     from core.benchmark.models import BenchmarkResult, TimingStats, MemoryStats, InferenceTimingStats
@@ -332,6 +366,7 @@ def _make_success_response(
         benchmark_name=benchmark_name,
         device=device_str,
         errors=errors,
+        seeds=seed_info,
     )
     
     return {

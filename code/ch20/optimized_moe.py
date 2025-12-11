@@ -82,6 +82,10 @@ class OptimizedMoeBenchmark(BaseBenchmark):
             with torch.no_grad():
                 _ = self.model(self.inputs)
             self._synchronize()
+        # Capture output AFTER benchmark for verification
+        if self._verify_input is not None and self.model is not None:
+            with torch.no_grad():
+                self.output = self.model(self._verify_input).float().clone()
 
     def teardown(self) -> None:
         self.model = None

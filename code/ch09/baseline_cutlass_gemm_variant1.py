@@ -44,9 +44,7 @@ class BaselineCutlassGemmVariant1Benchmark(CudaBinaryBenchmark):
             elapsed_ms=getattr(self, '_last_elapsed_ms', 1.0),
             precision="fp32",
         )
-    def get_verify_output(self) -> torch.Tensor:
-        """Return output tensor for verification comparison."""
-        raise RuntimeError("CUDA binary benchmark - no tensor output available")
+    # get_verify_output inherited from CudaBinaryBenchmark - uses checksum from -DVERIFY=1 build
 
     def get_input_signature(self) -> dict:
         """Return input signature for verification."""

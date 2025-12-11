@@ -115,6 +115,7 @@ class OptimizedTritonPersistentBenchmark(BaseBenchmark):
 
     def __init__(self):
         super().__init__()
+        self.output = None
         self.a = None
         self.b = None
         # Match baseline dimensions for fair comparison (baseline uses batch_size=32, M=N=K=256)
@@ -151,7 +152,7 @@ class OptimizedTritonPersistentBenchmark(BaseBenchmark):
 
     def benchmark_fn(self) -> None:
         """Benchmark: Persistent GEMM."""
-        output = matmul_persistent(self.a, self.b, self.num_sms)
+        self.output = matmul_persistent(self.a, self.b, self.num_sms)
         self._last = float(output.sum())
         self._synchronize()
 
@@ -189,7 +190,9 @@ class OptimizedTritonPersistentBenchmark(BaseBenchmark):
 
     def get_verify_output(self) -> torch.Tensor:
         """Return output tensor for verification comparison."""
-        raise RuntimeError("Triton benchmark - needs refactoring")
+        if self.output is None:
+            raise RuntimeError("benchmark_fn() must be called before verification")
+        return self.output.detach().clone()
 
     def get_input_signature(self) -> dict:
         """Return input signature for verification."""

@@ -78,8 +78,8 @@ class OptimizedAllTechniquesBenchmark(BaseBenchmark):
         with self._nvtx_range("multiple_techniques_optimized"):
             with torch.no_grad():
                 # Optimization: Single forward pass (no redundant compute)
-                out = self.model(self.x)
-                _ = out.sum()  # Force materialization
+                self.output = self.model(self.x)
+                _ = self.output.sum()  # Force materialization
             self._synchronize()
     
     def teardown(self) -> None:

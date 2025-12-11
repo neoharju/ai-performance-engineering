@@ -111,6 +111,10 @@ class BaselineNVFP4TrainingBenchmark(BaseBenchmark):
             for idx in range(self.micro_batches):
                 self._train_step(idx)
         torch.cuda.synchronize(self.device)
+        # Capture output AFTER benchmark for verification
+        if self._verify_input is not None and self.model is not None:
+            with torch.no_grad():
+                self.output = self.model(self._verify_input).float().clone()
 
     def teardown(self) -> None:
         self.model = None

@@ -57,6 +57,7 @@ class BaselineMXFP8MoEBenchmark(BaseBenchmark):
 
     def __init__(self) -> None:
         super().__init__()
+        self.output = None
         self.num_tokens = 4096
         self.hidden_dim = 4096
         self.ffn_dim = 14336
@@ -123,7 +124,7 @@ class BaselineMXFP8MoEBenchmark(BaseBenchmark):
     def benchmark_fn(self) -> None:
         enable_nvtx = get_nvtx_enabled(self.get_config())
         with nvtx_range("mxfp8_moe_baseline", enable=enable_nvtx):
-            _ = self._run_naive()
+            self.output = self._run_naive()
         self._synchronize()
 
     def teardown(self) -> None:
@@ -158,7 +159,9 @@ class BaselineMXFP8MoEBenchmark(BaseBenchmark):
 
     def get_verify_output(self) -> torch.Tensor:
         """Return output tensor for verification comparison."""
-        raise RuntimeError("Nested harness benchmark - needs refactoring")
+        if self.output is None:
+            raise RuntimeError("benchmark_fn() must be called before verification")
+        return self.output.detach().clone()
 
     def get_input_signature(self) -> dict:
         """Return input signature for verification."""

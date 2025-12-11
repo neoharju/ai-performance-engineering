@@ -304,7 +304,15 @@ class OptimizedSpeculativeDecodingMultiDraftBenchmark(BaseBenchmark):
     def get_verify_output(self) -> "torch.Tensor":
         """Return output tensor for verification comparison."""
         import torch
-        raise RuntimeError("Nested harness benchmark - needs refactoring")
+        # Convert speculative decoding metrics to tensor
+        import torch
+        if not self._metrics:
+            raise RuntimeError("benchmark_fn() must be called before verification")
+        # Return key metrics as tensor
+        return torch.tensor([
+            self._metrics.get("accepted_tokens", 0.0),
+            self._metrics.get("total_tokens", 0.0),
+        ], dtype=torch.float32)
 
     def get_output_tolerance(self) -> tuple:
         """Return tolerance for numerical comparison."""

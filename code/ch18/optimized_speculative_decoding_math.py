@@ -45,6 +45,7 @@ class OptimizedSpeculativeDecodingMathBenchmark(BaseBenchmark):
         self.embedding: Optional[nn.Module] = None
         self.input_ids: Optional[torch.Tensor] = None
         self.memory: Optional[torch.Tensor] = None
+        self.output: Optional[torch.Tensor] = None
         self.max_length = 20
         self.speculative_length = 4
         # Match baseline for input verification
@@ -117,6 +118,8 @@ class OptimizedSpeculativeDecodingMathBenchmark(BaseBenchmark):
                     current_ids = torch.cat([current_ids, draft_tokens], dim=1)
                     if current_ids.size(1) >= self.input_ids.size(1) + self.max_length:
                         break
+                # Capture output for verification
+                self.output = current_ids.detach()
         self._synchronize()
 
     def teardown(self) -> None:
@@ -150,7 +153,9 @@ class OptimizedSpeculativeDecodingMathBenchmark(BaseBenchmark):
 
     def get_verify_output(self) -> torch.Tensor:
         """Return output tensor for verification comparison."""
-        raise RuntimeError("Math calculation benchmark - no tensor output")
+        if self.output is None:
+            raise RuntimeError("benchmark_fn() must be called before verification")
+        return self.output.float().clone()
 
     def get_output_tolerance(self) -> tuple:
         """Return tolerance for numerical comparison."""

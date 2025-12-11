@@ -62,6 +62,7 @@ class BaselinePipelineSequentialBenchmark(BaseBenchmark):
         self.device = resolve_device()
         self.stages = None
         self.inputs = None
+        self.output = None
         # Larger workload so overlap benefits are measurable against sequential baseline.
         self.batch_size = 512
         self.hidden_dim = 1536
@@ -129,6 +130,8 @@ class BaselinePipelineSequentialBenchmark(BaseBenchmark):
                     torch.cuda.synchronize()
                     x = host_buffer.to(self.device, non_blocking=False).half()
                     torch.cuda.synchronize()
+            # Capture output for verification
+            self.output = x.detach()
 
     
     def teardown(self) -> None:
@@ -153,7 +156,9 @@ class BaselinePipelineSequentialBenchmark(BaseBenchmark):
 
     def get_verify_output(self) -> torch.Tensor:
         """Return output tensor for verification comparison."""
-        raise RuntimeError("Nested harness benchmark - needs refactoring")
+        if self.output is None:
+            raise RuntimeError("benchmark_fn() must be called before verification")
+        return self.output.float().clone()
 
     def get_input_signature(self) -> dict:
         """Return input signature for verification."""

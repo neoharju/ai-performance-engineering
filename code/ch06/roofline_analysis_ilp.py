@@ -88,6 +88,7 @@ class RooflineAnalysisILPBenchmark(BaseBenchmark):
         super().__init__()
         self.analyzer: Optional[RooflineAnalyzer] = None
         self.results: Optional[Dict] = None
+        self.output: Optional[torch.Tensor] = None
     
     def setup(self) -> None:
         """Setup: Initialize roofline analyzer."""
@@ -115,6 +116,14 @@ class RooflineAnalysisILPBenchmark(BaseBenchmark):
                 "optimized": optimized_result,
                 "ridge_point": self.analyzer.ridge_point,
             }
+            # Convert key metrics to tensor for verification
+            self.output = torch.tensor([
+                baseline_result.get("achieved_tflops", 0.0),
+                baseline_result.get("efficiency", 0.0),
+                optimized_result.get("achieved_tflops", 0.0),
+                optimized_result.get("efficiency", 0.0),
+                self.analyzer.ridge_point,
+            ], dtype=torch.float32)
 
     def teardown(self) -> None:
         """Teardown: Clean up resources."""
@@ -186,7 +195,9 @@ class RooflineAnalysisILPBenchmark(BaseBenchmark):
 
     def get_verify_output(self) -> torch.Tensor:
         """Return output tensor for verification comparison."""
-        raise RuntimeError("Roofline analysis - metrics only")
+        if self.output is None:
+            raise RuntimeError("benchmark_fn() must be called before verification")
+        return self.output.clone()
 
 
 

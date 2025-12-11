@@ -276,7 +276,12 @@ class VLLMDecodeGraphsBenchmark(BaseBenchmark):
 
     def get_verify_output(self) -> torch.Tensor:
         """Return output tensor for verification comparison."""
-        raise RuntimeError("Nested harness benchmark - needs refactoring")
+        # Convert driver metrics to tensor for verification
+        import torch
+        if self._last_metrics is None:
+            raise RuntimeError("benchmark_fn() must be called before verification")
+        m = self._last_metrics
+        return torch.tensor([m.get("total_tokens", 0.0), m.get("elapsed_ms", 0.0)], dtype=torch.float32)
 
     def get_input_signature(self) -> dict:
         """Return input signature for verification."""

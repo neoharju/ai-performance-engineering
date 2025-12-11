@@ -106,6 +106,7 @@ class SlidingWindowCausalAttention(nn.Module):
         dropout: float = 0.0,
     ):
         super().__init__()
+        self.output = None
         self.embed_dim = embed_dim
         self.num_heads = num_heads
         self.head_dim = embed_dim // num_heads
@@ -291,7 +292,7 @@ class FlexAttentionSparseBenchmark(BaseBenchmark):
     def benchmark_fn(self) -> None:
         """Benchmark: FlexAttention sliding window forward pass."""
         with torch.no_grad():
-            output = self.attn(self.x)
+            self.output = self.attn(self.x)
             self._last = float(output.sum())
             self._synchronize()
 
@@ -324,7 +325,9 @@ class FlexAttentionSparseBenchmark(BaseBenchmark):
 
     def get_verify_output(self) -> torch.Tensor:
         """Return output tensor for verification comparison."""
-        raise RuntimeError("FlexAttention demo - needs refactoring")
+        if self.output is None:
+            raise RuntimeError("benchmark_fn() must be called before verification")
+        return self.output.detach().clone()
 
     def get_input_signature(self) -> dict:
         """Return input signature for verification."""

@@ -29,8 +29,6 @@ class AutotuneModel(nn.Module):
 
     def __init__(self, hidden_dim: int = 1024):
         super().__init__()
-        self.output = None
-        self._verify_input = None
         self.fc1 = nn.Linear(hidden_dim, hidden_dim * 2)
         self.fc2 = nn.Linear(hidden_dim * 2, hidden_dim)
         self.act = nn.GELU()
@@ -93,6 +91,10 @@ class OptimizedAutotuningBenchmark(BaseBenchmark):
             with torch.no_grad(), sdpa_ctx:
                 _ = self.model(self.inputs)
             self._synchronize()
+        # Capture output AFTER benchmark for verification
+        if self._verify_input is not None and self.model is not None:
+            with torch.no_grad():
+                self.output = self.model(self._verify_input).float().clone()
 
     def teardown(self) -> None:
         self.model = None

@@ -107,7 +107,10 @@ class BenchmarkDefaults:
     # Reproducibility defaults
     # Default to nondeterministic for performance; users can opt-in if needed.
     deterministic: bool = False
-    seed: Optional[int] = 1337
+    seed: Optional[int] = 42
+    detect_setup_precomputation: bool = True
+    graph_capture_cheat_ratio_threshold: float = 10.0
+    graph_capture_memory_threshold_mb: float = 100.0
     
     # Timeout defaults (in seconds)
     # Increased setup timeout for CUDA JIT compilation (can take 60+ seconds)
