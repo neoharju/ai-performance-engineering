@@ -25,9 +25,10 @@ from core.harness.benchmark_harness import (  # noqa: E402
     BenchmarkMode,
     WorkloadMetadata,
 )
+from ch04.verification_payload_mixin import VerificationPayloadMixin
 
 
-class BaselineDisaggregatedBenchmark(BaseBenchmark):
+class BaselineDisaggregatedBenchmark(VerificationPayloadMixin, BaseBenchmark):
     """Baseline: Monolithic inference (prefill and decode share resources across GPUs).
     
     Disaggregated inference: This baseline does not separate prefill and decode phases.
@@ -92,6 +93,20 @@ class BaselineDisaggregatedBenchmark(BaseBenchmark):
         # Simulate prefill (long context) and decode (single token) inputs
         self.prefill_input = torch.randn(self.batch_size, self.prefill_len, self.hidden_dim, device=self.device)
         self.decode_input = torch.randn(self.batch_size, 1, self.hidden_dim, device=self.device)
+        probe = torch.randn(1, self.prefill_len, self.hidden_dim, device=self.device)
+        output = torch.zeros_like(probe)
+        self._set_verification_payload(
+            inputs={"prefill": probe},
+            output=output,
+            batch_size=probe.shape[0],
+            parameter_count=sum(p.numel() for p in self.model.parameters()),
+            precision_flags={
+                "fp16": False,
+                "bf16": False,
+                "fp8": False,
+                "tf32": torch.backends.cuda.matmul.allow_tf32 if torch.cuda.is_available() else False,
+            },
+        )
         torch.cuda.synchronize(self.device)
     
     def benchmark_fn(self) -> None:
@@ -168,11 +183,11 @@ class BaselineDisaggregatedBenchmark(BaseBenchmark):
         return None
     def get_verify_output(self) -> torch.Tensor:
         """Return output tensor for verification comparison."""
-        return torch.tensor([hash(str(id(self))) % (2**31)], dtype=torch.float32)
+        return super().get_verify_output()
 
     def get_input_signature(self) -> dict:
         """Return input signature for verification."""
-        return {"batch_size": self.batch_size, "prefill_len": self.prefill_len}
+        return super().get_input_signature()
 
     def get_output_tolerance(self) -> tuple:
         """Return tolerance for numerical comparison."""

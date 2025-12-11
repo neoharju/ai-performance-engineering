@@ -423,6 +423,26 @@ class TestLocationProtections:
         # Detector should track capture timing
         stats = detector.get_stats()
         assert stats is not None
+
+    def test_graph_capture_thresholds_respected(self):
+        """Graph capture cheat thresholds should gate detection."""
+        from core.harness.validity_checks import GraphCaptureCheatDetector, GraphCaptureState
+        
+        detector = GraphCaptureCheatDetector()
+        # Manually craft capture/replay stats to exceed ratio threshold
+        detector.capture_state = GraphCaptureState(
+            capturing=False,
+            capture_start_time=0.0,
+            capture_end_time=1.0,  # 1s capture = 1000ms
+            memory_allocated_during_capture=50.0,
+        )
+        detector.replay_times = [10.0]  # ms
+        # Tight threshold should flag cheat
+        is_cheat, reason = detector.check_for_cheat(capture_replay_ratio_threshold=5.0, memory_threshold_mb=200.0)
+        assert is_cheat and reason
+        # Lenient thresholds should pass
+        is_cheat, reason = detector.check_for_cheat(capture_replay_ratio_threshold=200.0, memory_threshold_mb=200.0)
+        assert is_cheat is False
     
     def test_lazy_evaluation_force_evaluation(self):
         """Test that lazy tensors are forced to evaluate.
@@ -1837,4 +1857,3 @@ class TestProtectionSummary:
         
         # Should cover all 94 protections in README.md
         assert total_tests >= 94, f"Expected 94+ tests for 94 protections, got {total_tests}"
-

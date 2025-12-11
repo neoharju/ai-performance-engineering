@@ -18,6 +18,7 @@ from ch04.nccl_blackwell_config import (
 )
 from ch04.nvshmem_training_example import main as nvshmem_train_main
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig
+from ch04.verification_payload_mixin import VerificationPayloadMixin
 
 
 def _configure_blackwell_nccl() -> None:
@@ -36,10 +37,23 @@ def _configure_blackwell_nccl() -> None:
         configure_nccl_for_blackwell(verbose=False)
 
 
-class OptimizedNVSHMEMTrainingExampleMultiGPU(BaseBenchmark):
+class OptimizedNVSHMEMTrainingExampleMultiGPU(VerificationPayloadMixin, BaseBenchmark):
     def __init__(self) -> None:
         super().__init__()
         self.register_workload_metadata(requests_per_iteration=1.0)
+        self._probe = torch.zeros(1, device=self.device, dtype=torch.float32)
+        self._set_verification_payload(
+            inputs={"probe": self._probe},
+            output=torch.zeros(1, device=self.device, dtype=torch.float32),
+            batch_size=1,
+            parameter_count=0,
+            precision_flags={
+                "fp16": False,
+                "bf16": False,
+                "fp8": False,
+                "tf32": torch.backends.cuda.matmul.allow_tf32 if torch.cuda.is_available() else False,
+            },
+        )
 
     def setup(self) -> None:
         if torch.cuda.device_count() < 2:
@@ -69,11 +83,11 @@ class OptimizedNVSHMEMTrainingExampleMultiGPU(BaseBenchmark):
         )
     def get_verify_output(self) -> torch.Tensor:
         """Return output tensor for verification comparison."""
-        return torch.tensor([hash(str(id(self))) % (2**31)], dtype=torch.float32)
+        return super().get_verify_output()
 
     def get_input_signature(self) -> dict:
         """Return input signature for verification."""
-        return {"type": "nvshmem_training_example_optimized"}
+        return super().get_input_signature()
 
     def get_output_tolerance(self) -> tuple:
         """Return tolerance for numerical comparison."""

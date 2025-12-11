@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Optional
 
+import random
+
 import torch
 import torch.nn as nn
 
@@ -40,7 +42,8 @@ class BaselineRoutingStaticBenchmark(BaseBenchmark):
             requests_per_iteration=float(self.requests_per_iteration),
             tokens_per_iteration=float(tokens),
         )
-        self.result_output = None
+        self.output: Optional[torch.Tensor] = None
+        self._verify_input: Optional[torch.Tensor] = None
         self.register_workload_metadata(
             requests_per_iteration=float(self.requests_per_iteration),
             tokens_per_iteration=float(tokens),
@@ -50,6 +53,8 @@ class BaselineRoutingStaticBenchmark(BaseBenchmark):
         torch.backends.cudnn.benchmark = True
         torch.backends.cudnn.deterministic = False
         torch.manual_seed(42)
+        torch.cuda.manual_seed_all(42)
+        random.seed(42)
 
         self.model = LargeModel(self.hidden_dim, self.num_layers).to(self.device)
         if self.device.type == "cuda":
@@ -58,6 +63,9 @@ class BaselineRoutingStaticBenchmark(BaseBenchmark):
 
         dtype = next(self.model.parameters()).dtype
         self.inputs = torch.randn(self.batch_size, self.hidden_dim, device=self.device, dtype=dtype)
+        torch.manual_seed(42)
+        torch.cuda.manual_seed_all(42)
+        self._verify_input = torch.randn(self.batch_size, self.hidden_dim, device=self.device, dtype=dtype)
         self._synchronize()
 
     def benchmark_fn(self) -> None:
@@ -67,6 +75,9 @@ class BaselineRoutingStaticBenchmark(BaseBenchmark):
             with torch.no_grad():
                 for _ in range(self.requests_per_iteration):
                     _ = self.model(self.inputs)
+            if self._verify_input is not None:
+                with torch.no_grad():
+                    self.output = self.model(self._verify_input).detach().float().clone()
         self._synchronize()
 
     def teardown(self) -> None:
@@ -99,9 +110,9 @@ class BaselineRoutingStaticBenchmark(BaseBenchmark):
 
     def get_verify_output(self) -> torch.Tensor:
         """Return output tensor for verification comparison."""
-        if self.result_output is None:
+        if self.output is None:
             raise RuntimeError("Output not available - run benchmark first")
-        return self.result_output.float()
+        return self.output.detach().float()
 
     def get_input_signature(self) -> dict:
         """Return workload signature for input verification."""

@@ -392,7 +392,8 @@ class OptimizedFP4WeightQuantizationBenchmark(BaseBenchmark):
         """Benchmark optimized inference."""
         with self._nvtx_range("optimized_mlp"):
             with torch.no_grad():
-                _output = self.model(self.input)
+                output = self.model(self.input)
+                self.output = output.detach()
         self._synchronize()
     
     def teardown(self) -> None:

@@ -95,7 +95,7 @@ def _run_block(block: nn.Module, x: torch.Tensor) -> torch.Tensor:
     return block(x)
 
 
-GraphCacheEntry = Tuple["torch.cuda.CUDAGraph", torch.Tensor]
+GraphCacheEntry = Tuple["torch.cuda.CUDAGraph", torch.Tensor, torch.Tensor]
 
 
 class OptimizedRegionalCompilationBenchmark(BaseBenchmark):
@@ -107,8 +107,10 @@ class OptimizedRegionalCompilationBenchmark(BaseBenchmark):
         self.model: Optional[DummyTransformer] = None
         self.sequence_schedule = [768]
         self.max_seq_len = 768
+        self.d_model = MODEL_CANDIDATES[0]["d_model"]
         self._iteration = 0
         self.compiled_layers = 0
+        self.output: Optional[torch.Tensor] = None
         self.input_buffer: Optional[torch.Tensor] = None
         self.host_buffer: Optional[torch.Tensor] = None
         self.transfer_stream: Optional[torch.cuda.Stream] = None
@@ -121,25 +123,30 @@ class OptimizedRegionalCompilationBenchmark(BaseBenchmark):
         torch.cuda.manual_seed_all(42)
         # Use the larger preset so region capture speedups have room to show.
         candidate = MODEL_CANDIDATES[0]
+        self.d_model = candidate["d_model"]
         model = DummyTransformer(
             n_layers=candidate["n_layers"],
-            d_model=candidate["d_model"],
+            d_model=self.d_model,
             d_ff=candidate["d_ff"],
         ).to(self.device, dtype=torch.bfloat16).eval()
         self.model = model
         self._configure_runtime()
         self.transfer_stream = torch.cuda.Stream()
         self.input_buffer = torch.empty(
-            1, self.max_seq_len, device=self.device, dtype=torch.bfloat16
+            1, self.max_seq_len, self.d_model, device=self.device, dtype=torch.bfloat16
         )
         self.host_buffer = torch.empty(
-            1, self.max_seq_len, device="cpu", dtype=torch.bfloat16, pin_memory=True
+            1, self.max_seq_len, self.d_model, device="cpu", dtype=torch.bfloat16, pin_memory=True
         )
         self._prepare_cuda_graphs()
-        self._verify_input = torch.randint(
-            0, 50304, (1, self.max_seq_len), device=self.device, dtype=torch.long
+        self._verify_input = torch.randn(
+            1,
+            self.max_seq_len,
+            self.d_model,
+            device=self.device,
+            dtype=torch.bfloat16,
         )
-        tokens = self.max_seq_len * candidate["d_model"]
+        tokens = self.max_seq_len * self.d_model
         self.register_workload_metadata(
             requests_per_iteration=1.0,
             tokens_per_iteration=float(tokens),
@@ -177,20 +184,21 @@ class OptimizedRegionalCompilationBenchmark(BaseBenchmark):
             static_input = torch.randn(
                 1,
                 seq_len,
-                self.model.layers[0][0].normalized_shape[0],  # type: ignore[index]
+                self.d_model,
                 device=self.device,
                 dtype=torch.bfloat16,
             )
+            static_output = torch.empty_like(static_input)
             # Warm-up and capture under inference mode to avoid autograd state.
             with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
-                _ = self.model(static_input)
+                static_output.copy_(self.model(static_input))
             torch.cuda.synchronize()
 
             graph = torch.cuda.CUDAGraph()
             with torch.cuda.graph(graph):
                 with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
-                    _ = self.model(static_input)
-            self.graph_cache[seq_len] = (graph, static_input)
+                    static_output.copy_(self.model(static_input))
+            self.graph_cache[seq_len] = (graph, static_input, static_output)
         self.compiled_layers = len(self.graph_cache)
 
     def benchmark_fn(self) -> None:
@@ -205,26 +213,26 @@ class OptimizedRegionalCompilationBenchmark(BaseBenchmark):
         seq_len = self.sequence_schedule[self._iteration % len(self.sequence_schedule)]
         self._iteration += 1
         cpu_tokens = torch.randn(
-            1, seq_len, self.model.layers[0][0].normalized_shape[0], device="cpu", dtype=torch.bfloat16  # type: ignore[index]
+            1, seq_len, self.d_model, device="cpu", dtype=torch.bfloat16
         )
         self.host_buffer[:, :seq_len].copy_(cpu_tokens)
         if seq_len < self.max_seq_len:
             self.host_buffer[:, seq_len:] = 0
 
-        if self._run_with_cuda_graph(seq_len, enable_nvtx):
-            return
+        ran_graph = self._run_with_cuda_graph(seq_len, enable_nvtx)
 
-        if self.transfer_stream is not None:
-            with torch.cuda.stream(self.transfer_stream):
-                self.input_buffer.copy_(self.host_buffer, non_blocking=True)
-            torch.cuda.current_stream().wait_stream(self.transfer_stream)
-        else:
-            self.input_buffer.copy_(self.host_buffer, non_blocking=False)
+        if not ran_graph:
+            if self.transfer_stream is not None:
+                with torch.cuda.stream(self.transfer_stream):
+                    self.input_buffer.copy_(self.host_buffer, non_blocking=True)
+                torch.cuda.current_stream().wait_stream(self.transfer_stream)
+            else:
+                self.input_buffer.copy_(self.host_buffer, non_blocking=False)
 
-        with nvtx_range("regional_compilation", enable=enable_nvtx):
-            with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
-                self.output = self.model(self.input_buffer[:, :seq_len])
-        torch.cuda.synchronize()
+            with nvtx_range("regional_compilation", enable=enable_nvtx):
+                with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
+                    self.output = self.model(self.input_buffer[:, :seq_len])
+            torch.cuda.synchronize()
         if self._verify_input is not None and self.model is not None:
             with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
                 self.output = self.model(self._verify_input[:, :seq_len]).detach().float().clone()
@@ -257,7 +265,7 @@ class OptimizedRegionalCompilationBenchmark(BaseBenchmark):
         entry = self.graph_cache.get(seq_len)
         if entry is None:
             return False
-        graph, static_input = entry
+        graph, static_input, static_output = entry
         source = self.host_buffer[:, :seq_len]
         if self.transfer_stream is not None:
             with torch.cuda.stream(self.transfer_stream):
@@ -269,6 +277,7 @@ class OptimizedRegionalCompilationBenchmark(BaseBenchmark):
         with nvtx_range("regional_compilation[cuda_graph]", enable=enable_nvtx):
             graph.replay()
         torch.cuda.synchronize()
+        self.output = static_output.detach().float().clone()
         return True
 
     def get_config(self) -> BenchmarkConfig:
@@ -305,7 +314,7 @@ class OptimizedRegionalCompilationBenchmark(BaseBenchmark):
 
     def get_input_signature(self) -> dict:
         """Return input signature for verification."""
-        return {"max_seq_len": self.max_seq_len}
+        return {"max_seq_len": self.max_seq_len, "d_model": self.d_model}
 
     def get_output_tolerance(self) -> tuple:
         """Return tolerance for numerical comparison."""

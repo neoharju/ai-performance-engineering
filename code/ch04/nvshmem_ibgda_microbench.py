@@ -46,6 +46,7 @@ class NvshmemIbgdaMicrobench(CudaBinaryBenchmark):
         self.symmetric_size = symmetric_size
         self.nvshmemrun: Optional[str] = None
         self._parsed_metrics: Dict[str, float] = {}
+        self._last_output: Optional[torch.Tensor] = None
 
         args = [
             f"--mode={mode}",
@@ -183,6 +184,26 @@ class NvshmemIbgdaMicrobench(CudaBinaryBenchmark):
     # --------------------------------------------------------------------- Benchmark API
     def benchmark_fn(self) -> None:
         self._last_result = self._run_once()
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self._last_output = torch.tensor(
+            [self._parsed_metrics.get("bandwidth_gbps", 0.0)],
+            device=device,
+            dtype=torch.float32,
+        )
+        self._set_verification_payload(
+            inputs={
+                "mode": torch.tensor([ord(self.mode[0])], device=device, dtype=torch.int64),
+            },
+            output=self._last_output,
+            batch_size=1,
+            parameter_count=0,
+            precision_flags={
+                "fp16": False,
+                "bf16": False,
+                "fp8": False,
+                "tf32": torch.backends.cuda.matmul.allow_tf32 if torch.cuda.is_available() else False,
+            },
+        )
 
     def get_config(self) -> BenchmarkConfig:
         # Single execution; wall-clock timer is provided by harness.
@@ -209,7 +230,7 @@ class NvshmemIbgdaMicrobench(CudaBinaryBenchmark):
 
     def get_input_signature(self) -> dict:
         """Return input signature for verification."""
-        return {"mode": self.mode, "bytes_per_message": self.bytes_per_message}
+        return super().get_input_signature()
 
     def get_output_tolerance(self) -> tuple:
         """Return tolerance for numerical comparison."""

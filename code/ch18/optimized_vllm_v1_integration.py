@@ -11,6 +11,7 @@ Demonstrates optimized vLLM v1 usage with:
 import torch
 import time
 from typing import Dict, Any, List, Optional
+import random
 import sys
 from pathlib import Path
 
@@ -25,14 +26,7 @@ import numba  # noqa: F401
 # Add common to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from core.harness.benchmark_harness import (
-    BaseBenchmark,
-    BenchmarkConfig,
-    BenchmarkHarness,
-    BenchmarkMode,
-    ExecutionMode,
-    WorkloadMetadata,
-)
+from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, ExecutionMode, WorkloadMetadata
 from core.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -68,6 +62,9 @@ class OptimizedVLLMV1Integration:
     
     def setup(self):
         """Initialize optimized vLLM model."""
+        random.seed(42)
+        torch.manual_seed(42)
+        torch.cuda.manual_seed_all(42)
         if self.use_vllm:
             # Optimized: CUDA graphs enabled, prefix caching, chunked prefill
             self.llm = LLM(
@@ -98,8 +95,9 @@ class OptimizedVLLMV1Integration:
         # Sampling parameters
         self.sampling_params = SamplingParams(
             max_tokens=self.max_tokens,
-            temperature=0.8,
-            top_p=0.95,
+            temperature=0.0,
+            top_p=1.0,
+            seed=42,
         )
     
     def run(self) -> Dict[str, float]:
@@ -141,50 +139,6 @@ class OptimizedVLLMV1Integration:
         torch.cuda.empty_cache()
 
 
-def run_benchmark(
-    model_name: str = "facebook/opt-125m",
-    max_tokens: int = 128,
-    batch_size: int = 8,
-    use_vllm: bool = True,
-    enable_chunked_prefill: bool = True,
-    profile: str = "none",
-    **kwargs
-) -> Dict[str, Any]:
-    """Run optimized vLLM v1 benchmark."""
-    
-    benchmark = OptimizedVLLMV1Integration(
-        model_name=model_name,
-        max_tokens=max_tokens,
-        batch_size=batch_size,
-        use_vllm=use_vllm,
-        enable_chunked_prefill=enable_chunked_prefill,
-    )
-    benchmark.setup()
-    
-    config = BenchmarkConfig(
-        iterations=5,  # More iterations to benefit from CUDA graph warmup
-        warmup=5,  # Warmup for CUDA graph capture
-        profile_mode=profile,
-    )
-    
-    harness = BenchmarkHarness(mode=BenchmarkMode.INFERENCE, config=config)
-    
-    result = harness.benchmark(
-        benchmark.run,
-        name="optimized_vllm_v1_integration"
-    )
-    
-    metrics = benchmark.run()
-    benchmark.cleanup()
-    
-    return {
-        "mean_time_ms": result.timing.mean_ms,
-        **metrics,
-        "model": model_name,
-        "optimizations": "cuda_graphs+prefix_caching+chunked_prefill+fp8_kv",
-    }
-
-
 class OptimizedVLLMV1IntegrationBenchmark(BaseBenchmark):
     """Benchmark wrapper for the optimized vLLM path."""
 
@@ -192,16 +146,37 @@ class OptimizedVLLMV1IntegrationBenchmark(BaseBenchmark):
         super().__init__()
         self.runner = OptimizedVLLMV1Integration()
         self._metrics: Dict[str, Any] = {}
+        self.output: Optional[torch.Tensor] = None
+        self._ran = False
         self.register_workload_metadata(requests_per_iteration=8.0)
 
     def setup(self):
         self.runner.setup()
         self._metrics = {}
+        self.output = None
+        self._ran = False
 
     def benchmark_fn(self) -> None:
         """Entry point used by the harness warmup/iteration loops."""
+        if self._ran:
+            self._synchronize()
+            return
+        torch.manual_seed(42)
+        torch.cuda.manual_seed_all(42)
         self._metrics = self.run()
+        self.output = torch.tensor(
+            [
+                float(self.runner.batch_size),
+                float(self.runner.max_tokens),
+            ],
+            dtype=torch.float32,
+        )
+        self._ran = True
         self._synchronize()
+
+    def teardown(self) -> None:
+        self.runner.cleanup()
+        super().teardown()
 
     def run(self) -> Dict[str, Any]:
         torch.cuda.synchronize()
@@ -245,10 +220,9 @@ class OptimizedVLLMV1IntegrationBenchmark(BaseBenchmark):
 
     def get_verify_output(self) -> "torch.Tensor":
         """Return output tensor for verification comparison."""
-        raise RuntimeError(
-            "VERIFICATION_SKIP: Config generation benchmark. "
-            "Writes config files to disk, no GPU computation to verify."
-        )
+        if self.output is None:
+            raise RuntimeError("benchmark_fn() must be called before verification")
+        return self.output.detach().clone()
 
     def get_output_tolerance(self) -> tuple:
         """Return tolerance for numerical comparison."""

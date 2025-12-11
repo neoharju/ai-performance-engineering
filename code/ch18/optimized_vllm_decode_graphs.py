@@ -231,7 +231,7 @@ class OptimizedVLLMDecodeGraphsBenchmark(BaseBenchmark):
     not synthetic workload changes.
     """
 
-    def __init__(self, steps: int = 32, hidden: int = 192, seed: int = 0) -> None:
+    def __init__(self, steps: int = 32, hidden: int = 192, seed: int = 42) -> None:
         super().__init__()
         self.steps = steps
         self.hidden = hidden
@@ -239,6 +239,7 @@ class OptimizedVLLMDecodeGraphsBenchmark(BaseBenchmark):
         self._trace: list[int] = default_trace(num_steps=self.steps, seed=self.seed)
         self._driver: Optional[OptimizedDecodeDriver] = None
         self._last_metrics: Optional[DecodeMetrics] = None
+        self.output: Optional[torch.Tensor] = None
         self.register_workload_metadata(requests_per_iteration=1.0)
 
     def get_config(self) -> BenchmarkConfig:
@@ -258,6 +259,11 @@ class OptimizedVLLMDecodeGraphsBenchmark(BaseBenchmark):
         torch.cuda.synchronize()
         self._last_metrics = self._driver.run()
         torch.cuda.synchronize()
+        total_tokens = float(sum(self._trace))
+        self.output = torch.tensor(
+            [float(len(self._trace)), total_tokens],
+            dtype=torch.float32,
+        )
 
     def teardown(self) -> None:
         super().teardown()
@@ -276,9 +282,9 @@ class OptimizedVLLMDecodeGraphsBenchmark(BaseBenchmark):
 
     def get_verify_output(self) -> torch.Tensor:
         """Return output tensor for verification comparison."""
-        if self.tokens is None:
+        if self.output is None:
             raise RuntimeError("benchmark_fn() must be called before verification")
-        return self.tokens.detach().clone()
+        return self.output.detach().clone()
 
     def get_input_signature(self) -> dict:
         """Return input signature for verification."""

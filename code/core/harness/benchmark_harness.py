@@ -1744,6 +1744,27 @@ class BenchmarkHarness:
         previous_config = getattr(benchmark, "_config", None)
         # Make merged config visible to benchmarks that need per-target args.
         benchmark._config = config  # type: ignore[attr-defined]
+
+        # Fail-fast compliance gate for perf path
+        if not callable_wrapped and isinstance(benchmark, BaseBenchmark):
+            from core.benchmark.quarantine import detect_skip_flags
+
+            skip_flag = detect_skip_flags(benchmark)
+            if skip_flag:
+                reason = skip_flag.value if hasattr(skip_flag, "value") else str(skip_flag)
+                raise RuntimeError(f"SKIPPED: Benchmark compliance failed: {reason}")
+
+            required_methods = (
+                "get_input_signature",
+                "get_verify_output",
+                "get_output_tolerance",
+                "get_verify_inputs",
+                "validate_result",
+            )
+            for method in required_methods:
+                meth = getattr(benchmark, method, None)
+                if meth is None or not callable(meth):
+                    raise RuntimeError(f"SKIPPED: Benchmark missing required method '{method}'")
         
         # CRITICAL: Ensure percentiles is always a list (never None)
         # This handles cases where benchmark.get_config() returns a config with percentiles=None
@@ -2445,6 +2466,7 @@ class BenchmarkHarness:
         proton_metrics = {}
         times_ms = cast(List[float], [])
         inference_timing_data = None
+        seed_metadata = copy.deepcopy(getattr(self, "_seed_info", None))
         
         # Get benchmark name for error messages (same as subprocess path)
         benchmark_class = benchmark.__class__.__name__
@@ -3575,14 +3597,16 @@ class BenchmarkHarness:
                 threshold = getattr(config, 'timing_cross_validation_threshold', 0.5)
                 
                 if timing_cross_validation_ratio < threshold:
-                    import warnings
-                    warnings.warn(
-                        f"TIMING CROSS-VALIDATION WARNING: CUDA event timing ({cuda_median:.3f}ms) "
+                    message = (
+                        f"TIMING CROSS-VALIDATION FAILURE: CUDA event timing ({cuda_median:.3f}ms) "
                         f"is only {timing_cross_validation_ratio*100:.1f}% of wall clock timing ({wall_median:.3f}ms). "
-                        f"This may indicate timing manipulation or missing stream synchronization. "
-                        f"Enable full_device_sync=True to ensure all streams are properly timed.",
-                        RuntimeWarning,
+                        f"This likely indicates timing manipulation or missing stream synchronization. "
+                        f"Set full_device_sync=True and ensure all streams are synchronized."
                     )
+                    if _is_chapter_or_labs_benchmark(benchmark_obj):
+                        raise RuntimeError(message)
+                    import warnings
+                    warnings.warn(message, RuntimeWarning)
         else:
             # CPU: use high-resolution timer
             for _ in range(config.iterations):

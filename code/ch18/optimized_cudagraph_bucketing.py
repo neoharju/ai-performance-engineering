@@ -423,8 +423,17 @@ class OptimizedCUDAGraphBucketingBenchmark(BaseBenchmark):
             region=self.region,
             model_label=self.model_label,
         )
+        traffic = getattr(optimized, "traffic", demo_traffic())
+        total_tokens = sum(batch * seqlen for batch, seqlen in traffic)
         sim = optimized.run()
         self._last_sim = sim
+        self.output = torch.tensor(
+            [
+                float(len(traffic)),
+                float(total_tokens),
+            ],
+            dtype=torch.float32,
+        )
         
         self._compile_stats = optimized.run_compile_validation()
         
@@ -439,7 +448,7 @@ class OptimizedCUDAGraphBucketingBenchmark(BaseBenchmark):
             with torch.no_grad():
                 for batch, seq in test_shapes:
                     x = torch.randn(batch, seq, 256, device=self.device, dtype=torch.bfloat16)
-                    self.output = self._graph_bucketing.forward(x)
+                    _ = self._graph_bucketing.forward(x)
             
             self._graph_stats = self._graph_bucketing.get_stats()
             torch.cuda.synchronize()

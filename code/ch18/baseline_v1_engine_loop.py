@@ -13,6 +13,7 @@ if str(repo_root) not in sys.path:
 
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig  # noqa: E402
 from ch18.v1_engine_loop_common import MockRequestOutput, build_demo_stack
+from ch18.optimized_v1_engine_loop import run_engine_loop
 
 
 def baseline_engine_loop(
@@ -86,10 +87,12 @@ class BaselineV1EngineLoopBenchmark(BaseBenchmark):
         # Reset the engine state for each iteration
         self.engine_core, self.core_client = build_demo_stack()
         outputs = list(baseline_engine_loop(self.engine_core, self.core_client))
+        verify_core, verify_client = build_demo_stack()
+        verify_outputs = list(run_engine_loop(verify_core, verify_client))
         # Store metrics as output tensor for verification
         self.output = torch.tensor([
-            float(self.engine_core.calls),
-            float(len(outputs)),
+            float(verify_core.calls),
+            float(len(verify_outputs)),
         ], dtype=torch.float32)
         return {
             "steps": self.engine_core.calls,

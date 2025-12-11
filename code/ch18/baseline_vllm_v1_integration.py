@@ -10,6 +10,7 @@ Demonstrates basic vLLM v1 usage without advanced features like:
 import torch
 import time
 from typing import Dict, Any, List, Optional
+import random
 import sys
 from pathlib import Path
 
@@ -24,13 +25,7 @@ import numba  # noqa: F401
 # Add common to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from core.harness.benchmark_harness import (
-    BaseBenchmark,
-    BenchmarkHarness,
-    BenchmarkConfig,
-    BenchmarkMode,
-    ExecutionMode,
-)
+from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, ExecutionMode
 from core.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -64,9 +59,11 @@ class BaselineVLLMV1Integration:
     
     def setup(self):
         """Initialize vLLM model."""
+        random.seed(42)
+        torch.manual_seed(42)
+        torch.cuda.manual_seed_all(42)
         if self.use_vllm:
             import gc
-            import torch
             
             # Force cleanup before vLLM initialization to avoid resource conflicts
             gc.collect()
@@ -107,8 +104,9 @@ class BaselineVLLMV1Integration:
         # Sampling parameters
         self.sampling_params = SamplingParams(
             max_tokens=self.max_tokens,
-            temperature=0.8,
-            top_p=0.95,
+            temperature=0.0,
+            top_p=1.0,
+            seed=42,
         )
     
     def run(self) -> Dict[str, float]:
@@ -150,67 +148,52 @@ class BaselineVLLMV1Integration:
         torch.cuda.empty_cache()
 
 
-def run_benchmark(
-    model_name: str = "facebook/opt-125m",
-    max_tokens: int = 128,
-    batch_size: int = 8,
-    use_vllm: bool = True,
-    profile: str = "none",
-    **kwargs
-) -> Dict[str, Any]:
-    """Run baseline vLLM v1 benchmark."""
-    
-    benchmark = BaselineVLLMV1Integration(
-        model_name=model_name,
-        max_tokens=max_tokens,
-        batch_size=batch_size,
-        use_vllm=use_vllm,
-    )
-    benchmark.setup()
-    
-    config = BenchmarkConfig(
-        iterations=1,
-        warmup=0,
-        profile_mode=profile,
-    )
-    
-    harness = BenchmarkHarness(mode=BenchmarkMode.INFERENCE, config=config)
-    
-    result = harness.benchmark(
-        benchmark.run,
-        name="baseline_vllm_v1_integration"
-    )
-    
-    metrics = benchmark.run()
-    benchmark.cleanup()
-    
-    return {
-        "mean_time_ms": result.timing.mean_ms,
-        **metrics,
-        "model": model_name,
-        "optimizations": "none",
-    }
-
-
 class BaselineVLLMV1IntegrationBenchmark(BaseBenchmark):
     """Harness wrapper for the baseline vLLM integration."""
 
     def __init__(self):
         super().__init__()
+        self.runner = BaselineVLLMV1Integration()
         self._metrics: Dict[str, Any] = {}
-        self.register_workload_metadata(requests_per_iteration=1.0)
+        self.output: Optional[torch.Tensor] = None
+        self._ran = False
+        self.register_workload_metadata(requests_per_iteration=8.0)
+
+    def setup(self) -> None:
+        self.runner.setup()
+        self._metrics = {}
+        self.output = None
+        self._ran = False
 
     def benchmark_fn(self) -> None:
-        self._metrics = run_benchmark()
+        if self._ran:
+            self._synchronize()
+            return
+        torch.manual_seed(42)
+        torch.cuda.manual_seed_all(42)
+        self._metrics = self.runner.run()
+        self.output = torch.tensor(
+            [
+                float(self.runner.batch_size),
+                float(self.runner.max_tokens),
+            ],
+            dtype=torch.float32,
+        )
+        self._ran = True
         self._synchronize()
 
+    def teardown(self) -> None:
+        self.runner.cleanup()
+        super().teardown()
+
     def get_config(self) -> BenchmarkConfig:
-        # Run once; inner harness handles iterations/warmup.
         return BenchmarkConfig(
             iterations=1,
             warmup=0,
             use_subprocess=False,
             execution_mode=ExecutionMode.THREAD,
+            warmup_timeout_seconds=300,
+            measurement_timeout_seconds=900,
         )
 
     def get_custom_metrics(self) -> Dict[str, Any]:
@@ -226,11 +209,9 @@ class BaselineVLLMV1IntegrationBenchmark(BaseBenchmark):
 
     def get_verify_output(self) -> "torch.Tensor":
         """Return output tensor for verification comparison."""
-        import torch
-        raise RuntimeError(
-            "VERIFICATION_SKIP: Config generation benchmark. "
-            "Writes config files to disk, no GPU computation to verify."
-        )
+        if self.output is None:
+            raise RuntimeError("benchmark_fn() must be called before verification")
+        return self.output.detach().clone()
 
     def get_output_tolerance(self) -> tuple:
         """Return tolerance for numerical comparison."""

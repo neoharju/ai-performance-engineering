@@ -307,7 +307,8 @@ class BaselineFP4WeightQuantizationBenchmark(BaseBenchmark):
         """Benchmark naive MLP."""
         with self._nvtx_range("baseline_naive_mlp"):
             with torch.no_grad():
-                _output = self.model(self.input)
+                output = self.model(self.input)
+                self.output = output.detach()
         self._synchronize()
     
     def teardown(self) -> None:

@@ -20,9 +20,10 @@ from core.harness.benchmark_harness import (  # noqa: E402
     BenchmarkMode,
     WorkloadMetadata,
 )
+from ch04.verification_payload_mixin import VerificationPayloadMixin
 
 
-class BaselineNVLinkBenchmark(BaseBenchmark):
+class BaselineNVLinkBenchmark(VerificationPayloadMixin, BaseBenchmark):
     """Baseline: PCIe-based communication (no NVLink).
     
     NVLink: This baseline does not use NVLink for high-speed GPU-to-GPU communication.
@@ -58,6 +59,20 @@ class BaselineNVLinkBenchmark(BaseBenchmark):
             self.data_gpu0 = torch.randn(self.N, device=torch.device("cuda:0"), dtype=torch.float32)
             self.data_gpu1 = torch.randn(self.N, device=torch.device("cuda:1"), dtype=torch.float32)
         torch.cuda.synchronize(self.device)
+        probe = torch.randn(1024, device=self.device)
+        output = torch.zeros(1, device=self.device)
+        self._set_verification_payload(
+            inputs={"probe": probe},
+            output=output,
+            batch_size=probe.shape[0],
+            parameter_count=0,
+            precision_flags={
+                "fp16": False,
+                "bf16": False,
+                "fp8": False,
+                "tf32": torch.backends.cuda.matmul.allow_tf32 if torch.cuda.is_available() else False,
+            },
+        )
     
     def benchmark_fn(self) -> None:
         """Benchmark: PCIe-based communication (no NVLink)."""
@@ -113,15 +128,11 @@ class BaselineNVLinkBenchmark(BaseBenchmark):
 
     def get_input_signature(self) -> dict:
         """Return workload signature for input verification."""
-        return {
-            "N": self.N,
-        }
+        return super().get_input_signature()
 
     def get_verify_output(self) -> torch.Tensor:
         """Return output tensor for verification comparison."""
-        if self.output is not None:
-            return self.output.detach().clone()
-        return torch.tensor([0.0], dtype=torch.float32, device=self.device)
+        return super().get_verify_output()
     
     def get_output_tolerance(self) -> tuple:
         """Return custom tolerance for memory transfer benchmark."""

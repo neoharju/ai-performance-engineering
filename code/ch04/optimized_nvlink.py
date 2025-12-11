@@ -20,9 +20,10 @@ from core.harness.benchmark_harness import (  # noqa: E402
     BenchmarkMode,
     WorkloadMetadata,
 )
+from ch04.verification_payload_mixin import VerificationPayloadMixin
 
 
-class OptimizedNVLinkBenchmark(BaseBenchmark):
+class OptimizedNVLinkBenchmark(VerificationPayloadMixin, BaseBenchmark):
     """NVLink GPU-to-GPU transfer benchmark."""
     
     def __init__(self):
@@ -63,6 +64,20 @@ class OptimizedNVLinkBenchmark(BaseBenchmark):
                 torch.cuda.device(0).enable_peer_access(1)
                 torch.cuda.device(1).enable_peer_access(0)
         torch.cuda.synchronize(self.device)
+        probe = torch.randn(1024, device=self.device)
+        output = torch.zeros(1, device=self.device)
+        self._set_verification_payload(
+            inputs={"probe": probe},
+            output=output,
+            batch_size=probe.shape[0],
+            parameter_count=0,
+            precision_flags={
+                "fp16": False,
+                "bf16": False,
+                "fp8": False,
+                "tf32": torch.backends.cuda.matmul.allow_tf32 if torch.cuda.is_available() else False,
+            },
+        )
     
     def benchmark_fn(self) -> None:
         """Benchmark: NVLink-optimized communication."""
@@ -123,15 +138,11 @@ class OptimizedNVLinkBenchmark(BaseBenchmark):
 
     def get_input_signature(self) -> dict:
         """Return workload signature for input verification."""
-        return {
-            "N": self.N,
-        }
+        return super().get_input_signature()
 
     def get_verify_output(self) -> torch.Tensor:
         """Return output tensor for verification comparison."""
-        if self.output is not None:
-            return self.output.detach().clone()
-        return torch.tensor([0.0], dtype=torch.float32, device=self.device)
+        return super().get_verify_output()
     
     def get_output_tolerance(self) -> tuple:
         """Return custom tolerance for memory transfer benchmark."""

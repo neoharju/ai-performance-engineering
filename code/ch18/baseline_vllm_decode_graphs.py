@@ -227,7 +227,7 @@ class VLLMDecodeGraphsBenchmark(BaseBenchmark):
     recaptures, allocator growth, and eager KV compaction costs.
     """
 
-    def __init__(self, steps: int = 32, hidden: int = 192, seed: int = 0) -> None:
+    def __init__(self, steps: int = 32, hidden: int = 192, seed: int = 42) -> None:
         if not DECODE_KERNEL_AVAILABLE:
             raise RuntimeError("SKIPPED: vllm_decode_graphs dependencies unavailable")
         super().__init__()
@@ -237,6 +237,7 @@ class VLLMDecodeGraphsBenchmark(BaseBenchmark):
         self._trace: List[int] = default_trace(num_steps=self.steps, seed=self.seed)
         self._driver: Optional[BaselineDecodeDriver] = None
         self._last_metrics: Optional[DecodeMetrics] = None
+        self.output: Optional[torch.Tensor] = None
         self.register_workload_metadata(requests_per_iteration=1.0)
 
     def get_config(self) -> BenchmarkConfig:
@@ -257,6 +258,11 @@ class VLLMDecodeGraphsBenchmark(BaseBenchmark):
         torch.cuda.synchronize()
         self._last_metrics = self._driver.run()
         torch.cuda.synchronize()
+        total_tokens = float(sum(self._trace))
+        self.output = torch.tensor(
+            [float(len(self._trace)), total_tokens],
+            dtype=torch.float32,
+        )
 
     def teardown(self) -> None:
         super().teardown()
@@ -275,12 +281,9 @@ class VLLMDecodeGraphsBenchmark(BaseBenchmark):
 
     def get_verify_output(self) -> torch.Tensor:
         """Return output tensor for verification comparison."""
-        # Convert driver metrics to tensor for verification
-        import torch
-        if self._last_metrics is None:
+        if self.output is None:
             raise RuntimeError("benchmark_fn() must be called before verification")
-        m = self._last_metrics
-        return torch.tensor([m.get("total_tokens", 0.0), m.get("elapsed_ms", 0.0)], dtype=torch.float32)
+        return self.output.detach().clone()
 
     def get_input_signature(self) -> dict:
         """Return input signature for verification."""

@@ -29,6 +29,9 @@ class TestBenchmarkDefaults:
         assert defaults.measurement_timeout_seconds == 1200
         assert defaults.execution_mode is None
         assert defaults.launch_via == "python"
+        assert defaults.detect_setup_precomputation is True
+        assert defaults.graph_capture_cheat_ratio_threshold == 10.0
+        assert defaults.graph_capture_memory_threshold_mb == 100.0
     
     def test_from_env_returns_defaults(self):
         """Test that from_env() returns default values (env vars no longer supported)."""
@@ -58,6 +61,9 @@ class TestBenchmarkConfigDefaults:
         assert config.use_subprocess is True, "use_subprocess should default to True"
         assert config.execution_mode == ExecutionMode.SUBPROCESS
         assert config.launch_via == LaunchVia.PYTHON
+        assert config.detect_setup_precomputation is True
+        assert config.graph_capture_cheat_ratio_threshold == 10.0
+        assert config.graph_capture_memory_threshold_mb == 100.0
     
 
 
@@ -97,6 +103,15 @@ class TestBenchmarkTimeoutMultiplier:
         config = BenchmarkConfig(iterations=999, warmup=99)
         assert config.iterations == 999
         assert config.warmup == 99
+
+    def test_config_graph_capture_overrides(self):
+        """Graph capture thresholds should be configurable."""
+        config = BenchmarkConfig(
+            graph_capture_cheat_ratio_threshold=3.5,
+            graph_capture_memory_threshold_mb=42.0,
+        )
+        assert config.graph_capture_cheat_ratio_threshold == 3.5
+        assert config.graph_capture_memory_threshold_mb == 42.0
 
 
 class TestWarmupEnforcement:

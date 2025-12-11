@@ -9,9 +9,10 @@ import torch
 import torch.nn as nn
 
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata
+from ch15.verification_payload_mixin import VerificationPayloadMixin
 
 
-class OptimizedContinuousBatchingBenchmark(BaseBenchmark):
+class OptimizedContinuousBatchingBenchmark(VerificationPayloadMixin, BaseBenchmark):
     """Optimized: continuous batching with dynamic batch composition."""
     
     def __init__(self):
@@ -51,6 +52,20 @@ class OptimizedContinuousBatchingBenchmark(BaseBenchmark):
         self.sample_queue = deque(
             torch.randn(1, self.hidden_dim, device=self.device)
             for _ in range(self.num_samples)
+        )
+        probe = torch.randn(2, self.hidden_dim, device=self.device)
+        output = torch.zeros(2, self.hidden_dim, device=self.device)
+        self._set_verification_payload(
+            inputs={"probe": probe},
+            output=output,
+            batch_size=probe.shape[0],
+            parameter_count=sum(p.numel() for p in self.model.parameters()),
+            precision_flags={
+                "fp16": False,
+                "bf16": False,
+                "fp8": False,
+                "tf32": torch.backends.cuda.matmul.allow_tf32 if torch.cuda.is_available() else False,
+            },
         )
         self._synchronize()
     
@@ -108,14 +123,7 @@ class OptimizedContinuousBatchingBenchmark(BaseBenchmark):
         return None
 
     def get_verify_output(self) -> torch.Tensor:
-        """Return output tensor for verification comparison."""
-        if self.output is None:
-            raise RuntimeError("Output not available - run benchmark first")
-        return self.output
-
-    def get_input_signature(self) -> dict:
-        """Return workload signature for input verification."""
-        return {"batch_size": self.batch_size, "num_batches": self.num_batches, "hidden_dim": self.hidden_dim}
+        return super().get_verify_output()
 
     def get_output_tolerance(self) -> tuple:
         """Return tolerance for numerical comparison - wider due to batching order differences."""

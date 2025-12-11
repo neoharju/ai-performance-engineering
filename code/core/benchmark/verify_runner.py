@@ -19,6 +19,7 @@ import pickle
 import subprocess
 import time
 import traceback
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -96,6 +97,7 @@ class GoldenOutput:
     checksum: str
     created_at: datetime
     seed: int
+    tolerance: Optional["ToleranceSpec"] = None
     
     def compute_checksum(self) -> str:
         """Compute checksum of outputs for integrity verification."""
@@ -161,6 +163,7 @@ class GoldenOutputCache:
                 checksum=data["checksum"],
                 created_at=datetime.fromisoformat(data["created_at"]),
                 seed=data["seed"],
+                tolerance=self._load_tolerance(data),
             )
         except Exception:
             return None
@@ -180,6 +183,7 @@ class GoldenOutputCache:
             "created_at": golden.created_at.isoformat(),
             "seed": golden.seed,
             "cache_salt": self.cache_salt,
+            "tolerance": self._dump_tolerance(golden.tolerance),
         }
         with open(path, "wb") as f:
             pickle.dump(data, f)
@@ -210,6 +214,34 @@ class GoldenOutputCache:
             path.unlink()
             count += 1
         return count
+
+    @staticmethod
+    def _dump_tolerance(tolerance: Optional["ToleranceSpec"]) -> Optional[Dict[str, Any]]:
+        """Convert tolerance to a JSON/pickle-friendly dict."""
+        if tolerance is None:
+            return None
+        return {
+            "rtol": tolerance.rtol,
+            "atol": tolerance.atol,
+            "justification": getattr(tolerance, "justification", None),
+            "has_comparator": tolerance.comparator_fn is not None,
+        }
+
+    @staticmethod
+    def _load_tolerance(data: Dict[str, Any]) -> Optional["ToleranceSpec"]:
+        """Rehydrate tolerance from cached dict (ignores comparator functions)."""
+        tol_dict = data.get("tolerance")
+        if not tol_dict:
+            return None
+        tol = ToleranceSpec(
+            rtol=tol_dict.get("rtol"),
+            atol=tol_dict.get("atol"),
+            justification=tol_dict.get("justification"),
+            comparator_fn=None,
+        )
+        # Preserve knowledge that a comparator existed so callers can fail fast.
+        setattr(tol, "_cached_has_comparator", bool(tol_dict.get("has_comparator")))
+        return tol
 
 
 @dataclass
@@ -667,15 +699,15 @@ class VerifyRunner:
         self,
         benchmark: Any,
         seed: int,
-    ) -> Tuple[Dict[str, torch.Tensor], Dict[str, float], Dict[str, int]]:
+    ) -> Tuple[Dict[str, torch.Tensor], Dict[str, float], Dict[str, int], Dict[str, torch.Tensor]]:
         """Run a benchmark with specific seed and extract outputs.
         
         Args:
             benchmark: The benchmark instance
             seed: Random seed to use
-            
+        
         Returns:
-            Tuple of (outputs, workload_metrics, seed_info)
+            Tuple of (outputs, workload_metrics, seed_info, inputs_used)
         """
         # Set deterministic seeds BEFORE setup and capture seed_info
         # NOTE: We do NOT re-seed after setup. This ensures inputs created
@@ -687,9 +719,24 @@ class VerifyRunner:
         # Setup creates model and fixed inputs deterministically
         benchmark.setup()
         
+        # Block CUDA graphs in verification to prevent capture/replay cheating
+        cfg = getattr(benchmark, "_config", None) or getattr(benchmark, "config", None)
+        if getattr(cfg, "enable_cuda_graph", False) or getattr(benchmark, "enable_cuda_graph", False):
+            raise RuntimeError("Verification forbids CUDA graph capture. Disable enable_cuda_graph for verify runs.")
+        
+        inputs_for_validation: Dict[str, torch.Tensor] = {}
+        stream_auditor = None
+        pre_streams: List[int] = []
+        audit_ctx = nullcontext()
+        if torch.cuda.is_available():
+            from core.harness.validity_checks import audit_streams, get_active_streams
+            audit_ctx = audit_streams(getattr(benchmark, "device", None))
+            pre_streams = get_active_streams(getattr(benchmark, "device", None))
+        
         try:
-            # Run benchmark function
-            benchmark.benchmark_fn()
+            # Run benchmark function under stream audit when CUDA is available
+            with audit_ctx as stream_auditor:
+                benchmark.benchmark_fn()
             
             # Sync CUDA
             if torch.cuda.is_available():
@@ -698,12 +745,34 @@ class VerifyRunner:
             # Extract outputs
             outputs = self._extract_output(benchmark)
             metrics = self._extract_workload_metrics(benchmark)
+            try:
+                inputs_for_validation = self._extract_inputs(benchmark)
+            except Exception:
+                inputs_for_validation = {}
+            
+            # Stream audit check for verification path
+            if stream_auditor is not None:
+                from core.harness.validity_checks import check_stream_sync_completeness, get_active_streams
+                post_streams = get_active_streams(getattr(benchmark, "device", None))
+                sync_complete, sync_warning = check_stream_sync_completeness(pre_streams, post_streams)
+                audit_ok, audit_warnings = stream_auditor.check_issues()
+                issues: List[str] = []
+                if not sync_complete:
+                    issues.append("Stream synchronization incomplete during verification run")
+                if sync_warning:
+                    issues.append(sync_warning)
+                if not audit_ok or audit_warnings:
+                    issues.extend(audit_warnings)
+                if issues:
+                    raise RuntimeError(
+                        "STREAM TIMING VIOLATION (verification): " + " | ".join(issues)
+                    )
             
             # Check for seed mutation
             if detect_seed_mutation(seed_info):
                 raise RuntimeError("Benchmark mutated RNG seeds during execution")
             
-            return outputs, metrics, seed_info
+            return outputs, metrics, seed_info, inputs_for_validation
             
         finally:
             # Always teardown
@@ -712,6 +781,73 @@ class VerifyRunner:
                     benchmark.teardown()
                 except Exception:
                     pass
+
+    def _validate_inputs_match_signature(
+        self,
+        signature: InputSignature,
+        inputs: Dict[str, torch.Tensor],
+    ) -> None:
+        """Ensure runtime inputs align with declared signature (shapes/dtypes)."""
+        if not signature.shapes:
+            raise ValueError("Input signature has no shapes declared.")
+        if not inputs:
+            raise ValueError("get_verify_inputs() returned no tensors for validation.")
+
+        def _norm_dtype(value: Any) -> str:
+            return str(value).replace("torch.", "").lower()
+
+        # All signature-listed tensors must be present and shape-matching
+        for name, expected_shape in signature.shapes.items():
+            if name not in inputs:
+                raise ValueError(f"Input '{name}' declared in signature missing from get_verify_inputs().")
+            tensor = inputs[name]
+            if tuple(tensor.shape) != tuple(expected_shape):
+                raise ValueError(
+                    f"Input '{name}' shape mismatch: signature {tuple(expected_shape)} vs actual {tuple(tensor.shape)}."
+                )
+
+        # Dtype checks for overlapping names
+        for name, tensor in inputs.items():
+            if name in signature.dtypes:
+                expected_dtype = _norm_dtype(signature.dtypes[name])
+                actual_dtype = _norm_dtype(tensor.dtype)
+                if expected_dtype != actual_dtype:
+                    raise ValueError(
+                        f"Input '{name}' dtype mismatch: signature {expected_dtype} vs actual {actual_dtype}."
+                    )
+
+    def _enforce_skip_policy(self, benchmark: Any) -> None:
+        """Allow verification skips only for sanctioned cases."""
+        cfg = getattr(benchmark, "_config", None) or getattr(benchmark, "config", None)
+        multi_gpu_required = bool(
+            getattr(cfg, "multi_gpu_required", False)
+            or getattr(benchmark, "multi_gpu_required", False)
+        )
+        if multi_gpu_required:
+            if not torch.cuda.is_available() or torch.cuda.device_count() < 2:
+                raise RuntimeError("SKIPPED: requires >=2 GPUs")
+
+        skip_input = False
+        skip_output = False
+        try:
+            skip_input = bool(benchmark.skip_input_verification())  # type: ignore[attr-defined]
+        except Exception:
+            pass
+        try:
+            skip_output = bool(benchmark.skip_output_verification())  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
+        if skip_input or skip_output:
+            reason = getattr(benchmark, "verification_not_applicable_reason", None)
+            if reason:
+                raise RuntimeError(f"SKIPPED: {reason}")
+            if multi_gpu_required and (not torch.cuda.is_available() or torch.cuda.device_count() < 2):
+                raise RuntimeError("SKIPPED: requires >=2 GPUs")
+            raise RuntimeError(
+                "SKIPPED: skip_input/output_verification() is only allowed for sanctioned cases. "
+                "Provide verification_not_applicable_reason or disable skip flags."
+            )
     
     def _run_fresh_input_check(
         self,
@@ -739,7 +875,7 @@ class VerifyRunner:
         try:
             # Run with different seed
             fresh_seed = config.seed + 1000
-            fresh_outputs, _, _ = self._run_with_seed(benchmark, fresh_seed)
+            fresh_outputs, _, _, _ = self._run_with_seed(benchmark, fresh_seed)
             
             # For deterministic algorithms, outputs should match
             # For non-deterministic, they should differ
@@ -762,9 +898,10 @@ class VerifyRunner:
                 # Check if benchmark declares itself as deterministic
                 is_deterministic = getattr(benchmark, "_is_deterministic", False)
                 if not is_deterministic:
-                    # Suspicious - might be caching
-                    # But don't fail yet - could be legit deterministic algo
-                    pass
+                    return False, (
+                        "Fresh-input check failed: outputs are identical under a different seed. "
+                        "Declare _is_deterministic=True explicitly if this benchmark is truly deterministic."
+                    )
             
             return True, None
             
@@ -895,6 +1032,10 @@ class VerifyRunner:
             VerifyResult with verification outcome
         """
         config = config or VerifyConfig()
+        try:
+            self._enforce_skip_policy(baseline)
+        except RuntimeError as exc:
+            return VerifyResult.fail(str(exc))
         
         # Check compliance
         issues = check_benchmark_compliance(baseline)
@@ -927,7 +1068,22 @@ class VerifyRunner:
         
         try:
             # Run baseline with deterministic seed
-            outputs, metrics, seed_info = self._run_with_seed(baseline, config.seed)
+            outputs, metrics, seed_info, inputs = self._run_with_seed(baseline, config.seed)
+            try:
+                self._validate_inputs_match_signature(signature, inputs)
+            except Exception as exc:
+                return VerifyResult.fail(f"Baseline inputs do not match signature: {exc}")
+            
+            # Capture baseline tolerance (fail-fast)
+            try:
+                baseline_tol = get_output_tolerance(baseline)
+            except Exception as exc:
+                return VerifyResult(
+                    passed=False,
+                    reason=QuarantineReason.MISSING_OUTPUT_TOLERANCE.value,
+                    details={"error": str(exc)},
+                    timestamp=datetime.now(),
+                )
             
             if not outputs:
                 return VerifyResult.fail("Baseline produced no extractable outputs")
@@ -940,6 +1096,7 @@ class VerifyRunner:
                 checksum="",  # Will be computed
                 created_at=datetime.now(),
                 seed=config.seed,
+                tolerance=baseline_tol,
             )
             golden.checksum = golden.compute_checksum()
             self.cache.put(golden)
@@ -972,6 +1129,10 @@ class VerifyRunner:
             VerifyResult with verification outcome
         """
         config = config or VerifyConfig()
+        try:
+            self._enforce_skip_policy(optimized)
+        except RuntimeError as exc:
+            return VerifyResult.fail(str(exc))
         
         # Check compliance
         issues = check_benchmark_compliance(optimized)
@@ -999,12 +1160,16 @@ class VerifyRunner:
         
         try:
             # Run optimized with same seed
-            outputs, metrics, seed_info = self._run_with_seed(optimized, config.seed)
+            outputs, metrics, seed_info, inputs = self._run_with_seed(optimized, config.seed)
+            try:
+                self._validate_inputs_match_signature(signature, inputs)
+            except Exception as exc:
+                return VerifyResult.fail(f"Optimized inputs do not match signature: {exc}")
             
             if not outputs:
                 return VerifyResult.fail("Optimized produced no extractable outputs")
             
-            # Get tolerance - config override takes precedence, then benchmark, then dtype default
+            # Get tolerance - enforce baseline-bound tolerances
             tolerance = config.tolerance_override
             if tolerance is None:
                 try:
@@ -1016,6 +1181,32 @@ class VerifyRunner:
                         details={"error": str(exc)},
                         timestamp=datetime.now(),
                     )
+            baseline_tol = golden.tolerance
+            if baseline_tol is None and tolerance is not None:
+                return VerifyResult.fail(
+                    "Baseline tolerance missing from cache. Re-run verify_baseline with force_recache=True."
+                )
+            if baseline_tol is not None:
+                if getattr(baseline_tol, "_cached_has_comparator", False) or baseline_tol.comparator_fn is not None:
+                    return VerifyResult.fail(
+                        "Comparator-based tolerances are not supported in verification cache. Use numeric rtol/atol."
+                    )
+                if tolerance.comparator_fn is not None:
+                    return VerifyResult.fail(
+                        "Comparator-based tolerances are not supported for optimized benchmarks. Use numeric rtol/atol."
+                    )
+                # Disallow looser tolerances on optimized path
+                if tolerance.rtol > baseline_tol.rtol or tolerance.atol > baseline_tol.atol:
+                    return VerifyResult.fail(
+                        f"Optimized tolerance ({tolerance.rtol}, {tolerance.atol}) exceeds baseline tolerance "
+                        f"({baseline_tol.rtol}, {baseline_tol.atol})."
+                    )
+                # Use the stricter tolerance between baseline/optimized
+                tolerance = ToleranceSpec(
+                    rtol=min(tolerance.rtol, baseline_tol.rtol),
+                    atol=min(tolerance.atol, baseline_tol.atol),
+                    justification=tolerance.justification or baseline_tol.justification,
+                )
             
             # Compare outputs
             comparison = self._compare_outputs(
@@ -1121,6 +1312,12 @@ class VerifyRunner:
             VerifyResult with final verification outcome
         """
         config = config or VerifyConfig()
+        
+        try:
+            self._enforce_skip_policy(baseline)
+            self._enforce_skip_policy(optimized)
+        except RuntimeError as exc:
+            return VerifyResult.fail(str(exc))
         
         # Step 0: Validate timing configuration matches
         if not config.skip_timing_validation:
@@ -1249,7 +1446,7 @@ class VerifyRunner:
         
         # Step 2: Run local verification
         try:
-            outputs, metrics, seed_info = self._run_with_seed(benchmark, config.seed)
+            outputs, metrics, seed_info, _ = self._run_with_seed(benchmark, config.seed)
         except Exception as e:
             return VerifyResult.fail(f"Rank {rank} execution failed: {e}")
         

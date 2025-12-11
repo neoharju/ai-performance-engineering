@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Optional
 
+import random
+
 import torch
 import torch.nn as nn
 
@@ -51,7 +53,8 @@ class OptimizedRoutingBenchmark(BaseBenchmark):
             requests_per_iteration=float(len(self.routing_order)),
             tokens_per_iteration=float(tokens),
         )
-        self.result_output = None
+        self.output: Optional[torch.Tensor] = None
+        self._verify_input: Optional[torch.Tensor] = None
         self.register_workload_metadata(
             requests_per_iteration=float(len(self.routing_order)),
             tokens_per_iteration=float(tokens),
@@ -63,8 +66,12 @@ class OptimizedRoutingBenchmark(BaseBenchmark):
             torch.backends.cudnn.deterministic = False
             enable_tf32()
         torch.manual_seed(42)
+        torch.cuda.manual_seed_all(42)
+        random.seed(42)
         self.small_model = SimpleModel(hidden_dim=1024, num_layers=8).to(self.device).eval()
         self.medium_model = SimpleModel(hidden_dim=1536, num_layers=16).to(self.device).eval()
+        torch.manual_seed(42)
+        torch.cuda.manual_seed_all(42)
         self.large_model = SimpleModel(hidden_dim=2048, num_layers=24).to(self.device).eval()
 
         if self.device.type == "cuda":
@@ -79,6 +86,9 @@ class OptimizedRoutingBenchmark(BaseBenchmark):
         self.x_small = torch.randn(self.batch_size, 1024, device=self.device, dtype=dtype_small)
         self.x_medium = torch.randn(self.batch_size, 1536, device=self.device, dtype=dtype_medium)
         self.x_large = torch.randn(self.batch_size, 2048, device=self.device, dtype=dtype_large)
+        torch.manual_seed(42)
+        torch.cuda.manual_seed_all(42)
+        self._verify_input = torch.randn(self.batch_size, 2048, device=self.device, dtype=dtype_large)
         self._synchronize()
     
     def benchmark_fn(self) -> None:
@@ -99,6 +109,9 @@ class OptimizedRoutingBenchmark(BaseBenchmark):
                         _ = self.large_model(self.x_large)
                     idx = (idx + 1) % order_len
                 self._schedule_index = idx
+            if self._verify_input is not None:
+                with torch.no_grad():
+                    self.output = self.large_model(self._verify_input).detach().float().clone()
         self._synchronize()
 
     def teardown(self) -> None:
@@ -136,9 +149,9 @@ class OptimizedRoutingBenchmark(BaseBenchmark):
 
     def get_verify_output(self) -> torch.Tensor:
         """Return output tensor for verification comparison."""
-        if self.result_output is None:
+        if self.output is None:
             raise RuntimeError("Output not available - run benchmark first")
-        return self.result_output.float()
+        return self.output.detach().float()
 
     def get_input_signature(self) -> dict:
         """Return workload signature for input verification."""

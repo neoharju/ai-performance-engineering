@@ -37,6 +37,8 @@ class _DynamicRoutingBenchmark(BaseBenchmark):
             tokens_per_iteration=float(batch_size * 128),
         )
         self.output = None
+        self._iteration = 0
+        self._queue_length_table: Optional[torch.Tensor] = None
         self.register_workload_metadata(
             requests_per_iteration=float(batch_size),
             tokens_per_iteration=float(batch_size * 128),
@@ -50,6 +52,9 @@ class _DynamicRoutingBenchmark(BaseBenchmark):
         self._priorities: Optional[torch.Tensor] = None
 
     def setup(self) -> None:
+        random.seed(42)
+        torch.manual_seed(42)
+        torch.cuda.manual_seed_all(42)
         now = time.time()
         for idx in range(4):
             self.router.prefill_workers[f"prefill-{idx}"] = self._make_metrics(queue=idx, now=now)
@@ -71,6 +76,16 @@ class _DynamicRoutingBenchmark(BaseBenchmark):
                 [0 if r.priority is Priority.LOW else (2 if r.priority is Priority.HIGH else 1) 
                  for r in self._cached_requests], dtype=torch.int32
             )
+        cfg = self.get_config()
+        num_iters = (cfg.warmup or 0) + (cfg.iterations or 0) + 5
+        high = self.router.PREFILL_QUEUE_MAX + 6  # match baseline randint upper bound
+        self._queue_length_table = torch.randint(
+            0,
+            high,
+            (num_iters, self.batch_size),
+            dtype=torch.int32,
+        )
+        self._iteration = 0
 
     def _make_metrics(self, queue: int, now: float):
         return WorkerMetrics(
@@ -105,30 +120,48 @@ class _DynamicRoutingBenchmark(BaseBenchmark):
         rejects = 0
         offloaded = 0
         start = self._record_start()
+        queue_lengths: Optional[torch.Tensor] = None
+        if self._queue_length_table is not None:
+            table_idx = self._iteration % self._queue_length_table.shape[0]
+            queue_lengths = self._queue_length_table[table_idx]
+        self._iteration += 1
 
         if self.vectorized and self._prompt_lengths is not None:
             # Vectorized routing decisions using pre-allocated tensors
-            # Only randomize queue lengths each iteration (simulates changing load)
-            self._queue_lengths.random_(0, 10)
+            if (
+                queue_lengths is None
+                or self._queue_lengths is None
+                or self._cached_lengths is None
+                or self._priorities is None
+            ):
+                raise RuntimeError("Vectorized routing buffers not initialized")
+            self._queue_lengths.copy_(queue_lengths)
 
             # Vectorized boolean operations (single pass over data)
             long_prefill = (self._prompt_lengths - self._cached_lengths) > self.router.PREFILL_LENGTH_THRESHOLD
             capacity = self._queue_lengths < self.router.PREFILL_QUEUE_MAX
             offload_mask = long_prefill & capacity
 
-            load_estimate = self._queue_lengths.float() * self.router.avg_prefill_time_per_req
-            slo_mask = load_estimate <= self.router.TTFT_SLO_MAX
-            admit_mask = torch.logical_or(slo_mask, self._priorities == 2)
+            est_ttft = (
+                self.router.get_current_prefill_queue_length() * self.router.avg_prefill_time_per_req
+                + self.router.get_current_decode_queue_length() * self.router.avg_decode_time_per_req
+            )
+            admit_mask = torch.ones_like(self._priorities, dtype=torch.bool)
+            if est_ttft > self.router.TTFT_SLO_MAX:
+                admit_mask = self._priorities != 0  # reject low-priority requests under high load
 
             rejects = int((~admit_mask).sum().item())
             offloaded = int(torch.logical_and(admit_mask, offload_mask).sum().item())
         else:
             # Python loop-based routing (sequential, one-at-a-time)
-            for req in requests:
+            for idx, req in enumerate(requests):
                 if not self.router.admit_request(req):
                     rejects += 1
                     continue
-                queue_depth = random.randint(0, self.router.PREFILL_QUEUE_MAX + 5)
+                if queue_lengths is None:
+                    queue_depth = random.randint(0, self.router.PREFILL_QUEUE_MAX + 5)
+                else:
+                    queue_depth = int(queue_lengths[idx % queue_lengths.numel()].item())
                 if self.router.should_offload_prefill(len(req.prompt_tokens), req.prefix_cached_length, queue_depth):
                     offloaded += 1
 

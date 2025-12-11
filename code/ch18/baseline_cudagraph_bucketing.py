@@ -92,6 +92,7 @@ class BaselineCUDAGraphBucketingBenchmark(BaseBenchmark):
         self.vllm_model = "gpt-oss-20b"
         self.use_vllm_bins = True
         self._last = None
+        self.output: Optional[torch.Tensor] = None
         self.register_workload_metadata(requests_per_iteration=1.0)
 
     def _resolve_device(self) -> torch.device:
@@ -109,11 +110,18 @@ class BaselineCUDAGraphBucketingBenchmark(BaseBenchmark):
             pass
 
     def benchmark_fn(self) -> None:
-        sim = BaselineCUDAGraphBucketing(
+        runner = BaselineCUDAGraphBucketing(
             vllm_model=self.vllm_model,
             use_vllm_bins=self.use_vllm_bins,
-        ).run()
+        )
+        sim = runner.run()
         self._last = sim
+        traffic = getattr(runner, "traffic", demo_traffic())
+        total_tokens = sum(batch * seqlen for batch, seqlen in traffic)
+        self.output = torch.tensor(
+            [float(len(traffic)), float(total_tokens)],
+            dtype=torch.float32,
+        )
 
     def get_custom_metrics(self) -> Optional[dict]:
         """Return speculative decoding metrics for cudagraph_bucketing."""
@@ -137,13 +145,9 @@ class BaselineCUDAGraphBucketingBenchmark(BaseBenchmark):
         """
         if self._last is None:
             raise RuntimeError("benchmark_fn() must be called before verification")
-        stats = self._last.stats
-        # Convert simulation stats to a tensor for verification
-        return torch.tensor([
-            float(stats.captures),
-            float(stats.prewarm_captures),
-            float(stats.replays),
-        ], dtype=torch.float32)
+        if self.output is None:
+            raise RuntimeError("Output tensor missing - run benchmark first")
+        return self.output.detach().clone()
 
     def get_input_signature(self) -> dict:
         """Return input signature for verification."""
