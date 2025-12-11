@@ -38,7 +38,6 @@ def _configure_blackwell_nccl() -> None:
 class OptimizedSymmetricMemoryMultiGPU(BaseBenchmark):
     def __init__(self) -> None:
         super().__init__()
-        self.jitter_exemption_reason = "Symmetric memory optimized: multi-GPU"
         self.register_workload_metadata(requests_per_iteration=1.0)
 
     def setup(self) -> None:

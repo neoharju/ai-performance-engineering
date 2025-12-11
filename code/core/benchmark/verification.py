@@ -595,7 +595,7 @@ def select_jitter_dimension(input_signature: InputSignature) -> Optional[Tuple[s
     1. Iterate through shapes in input_signature.shapes
     2. For each shape, find first dimension that is NOT batch dimension (dim 0)
     3. Return (tensor_name, dimension_index) for first suitable dimension
-    4. If no suitable dimension found, return None (requires jitter_exemption_reason)
+    4. If no suitable dimension found, return None (jitter check is skipped)
     
     Example:
         shapes = {"input": (32, 256, 256), "mask": (32, 256)}

@@ -34,7 +34,6 @@ class ThresholdBenchmarkBase(BaseBenchmark):
         self.outputs: Optional[torch.Tensor] = None
         self.host_inputs: Optional[torch.Tensor] = None
         self.extension = None
-        self.jitter_exemption_reason = "Threshold benchmark: fixed dimensions for accuracy"
         self.register_workload_metadata(requests_per_iteration=1.0)
 
     def setup(self) -> None:

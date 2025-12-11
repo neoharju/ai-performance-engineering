@@ -22,7 +22,6 @@ class OptimizedDistributedBenchmark(BaseBenchmark):
         self.rank = 0
         self.world_size = 1
         self.N = 10_000_000
-        self.jitter_exemption_reason = "Distributed benchmark: fixed size for comparison"
         self._workload = WorkloadMetadata(
             requests_per_iteration=1.0,
             tokens_per_iteration=float(self.N),

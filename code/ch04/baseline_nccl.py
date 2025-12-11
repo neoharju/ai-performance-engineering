@@ -46,7 +46,6 @@ class BaselineNcclBenchmark(BaseBenchmark):
             tokens_per_iteration=float(tokens),
         )
         # Reduction benchmark: fixed dimensions
-        self.jitter_exemption_reason = "NCCL benchmark: fixed dimensions for measurement"
     
     def setup(self) -> None:
         """Setup: Initialize model."""

@@ -24,7 +24,6 @@ class BaselineMatmulBenchmark(BaseBenchmark):
         self.C: torch.Tensor | None = None
         self.n = 8192
         self.tile_k = 128
-        self.jitter_exemption_reason = "Matmul benchmark: fixed dimensions for comparison"
         self.register_workload_metadata(bytes_per_iteration=float(self.n * self.n * 4 * 3))
 
     def setup(self) -> None:

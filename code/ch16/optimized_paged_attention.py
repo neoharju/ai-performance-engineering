@@ -63,7 +63,6 @@ class OptimizedPagedAttentionBenchmark(BaseBenchmark):
             tokens_per_iteration=float(tokens),
         )
         self.output = None
-        self.jitter_exemption_reason = "Paged attention benchmark: fixed dimensions for attention comparison"
     
     def setup(self) -> None:
         """Setup: Initialize Flash Attention model."""

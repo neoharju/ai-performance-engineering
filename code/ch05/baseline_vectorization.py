@@ -18,7 +18,6 @@ class BaselineVectorizationBenchmark(BaseBenchmark):
         self.output: Optional[torch.Tensor] = None
         self.N = 1_000_000
         # Computation benchmark - jitter check not applicable
-        self.jitter_exemption_reason = "Computation benchmark: fixed input size"
         tokens = self.N
         self._workload = WorkloadMetadata(
             requests_per_iteration=1.0,

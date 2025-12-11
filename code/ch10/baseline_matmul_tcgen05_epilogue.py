@@ -31,7 +31,6 @@ class BaselineMatmulTCGen05EpilogueBenchmark(BaseBenchmark):
         self.B: Optional[torch.Tensor] = None
         self.bias: Optional[torch.Tensor] = None
         self.output: Optional[torch.Tensor] = None
-        self.jitter_exemption_reason = "TCGen05 epilogue benchmark: fixed dimensions for comparison"
         self.register_workload_metadata(bytes_per_iteration=float(self.n * self.n * 2 * 4))
 
     def setup(self) -> None:

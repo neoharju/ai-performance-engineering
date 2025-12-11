@@ -58,7 +58,6 @@ class OptimizedSpeculativeDecodingBenchmark(BaseBenchmark):
             requests_per_iteration=1.0,
             tokens_per_iteration=float(self.batch_size * self.num_iterations * self.speculative_k),
         )
-        self.jitter_exemption_reason = "Speculative decoding benchmark: fixed dimensions"
     
     def setup(self) -> None:
         """Setup target model for batch verification."""

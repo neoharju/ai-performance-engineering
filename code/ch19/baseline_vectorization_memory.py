@@ -35,7 +35,6 @@ class VectorizationBenchmark(BaseBenchmark):
             requests_per_iteration=float(self.repeats),
             tokens_per_iteration=float(self.N * self.repeats),
         )
-        self.jitter_exemption_reason = "Vectorization benchmark: fixed dimensions"
 
     def setup(self) -> None:
         torch.manual_seed(0)

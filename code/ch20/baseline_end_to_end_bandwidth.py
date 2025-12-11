@@ -41,7 +41,6 @@ class BaselineEndToEndBandwidthBenchmark(BaseBenchmark):
             requests_per_iteration=float(self.batch_size * self.num_batches),
             tokens_per_iteration=float(tokens),
         )
-        self.jitter_exemption_reason = "End-to-end bandwidth benchmark: fixed dimensions"
     
     def setup(self) -> None:
         torch.manual_seed(42)

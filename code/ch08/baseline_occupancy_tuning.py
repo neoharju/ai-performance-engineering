@@ -64,20 +64,25 @@ class OccupancyBinaryBenchmark(CudaBinaryBenchmark):
         """Return tolerance for numerical comparison."""
         return (0.1, 1.0)
 
-    def _build_binary(self) -> None:
+    def _build_binary(self, verify_mode: bool = False) -> None:
         """Compile the executable with optional env overrides (e.g., MAXRREGCOUNT)."""
         self.arch = detect_supported_arch()
         suffix = ARCH_SUFFIX[self.arch]
-        target = f"{self.binary_name}{suffix}"
+        target = f"{self.binary_name}_verify{suffix}" if verify_mode else f"{self.binary_name}{suffix}"
         env = os.environ.copy()
         env.update(self.build_env)
         build_cmd = ["make", f"ARCH={self.arch}", target]
+        if verify_mode:
+            build_cmd.append("VERIFY=1")
 
         completed = self._run_make(build_cmd, env)
         path = self.chapter_dir / target
         if not path.exists():
             raise FileNotFoundError(f"Built binary not found at {path}")
-        self.exec_path = path
+        if verify_mode:
+            self._verify_exec_path = path
+        else:
+            self.exec_path = path
 
     def _run_make(self, build_cmd, env):
         import subprocess

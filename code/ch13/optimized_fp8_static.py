@@ -233,7 +233,6 @@ class StaticFP8Benchmark(BaseBenchmark):
         self.x = None
         self.batch_size = 32
         self.seq_len = 512
-        self.jitter_exemption_reason = "FP8 static benchmark: fixed dimensions"
         self.dim = 4096
         self._last = 0.0
         

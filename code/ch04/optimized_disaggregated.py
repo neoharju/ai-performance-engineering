@@ -58,7 +58,6 @@ class OptimizedDisaggregatedBenchmark(BaseBenchmark):
             requests_per_iteration=float(self.batch_size),
             tokens_per_iteration=float(tokens),
         )
-        self.jitter_exemption_reason = "Disaggregated benchmark: multi-GPU"
     
     def setup(self) -> None:
         """Setup: Initialize separate models for prefill and decode."""

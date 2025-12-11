@@ -67,7 +67,6 @@ class OptimizedDisaggregatedBenchmark(BaseBenchmark):
         self.prefill_seq = 256  # Match baseline
         self.decode_seq = 16  # Match baseline
         self.batch_size = 1  # Match baseline
-        self.jitter_exemption_reason = "Prefill/decode benchmark: fixed dimensions"
 
         self.prefill_model: Optional[nn.Module] = None
         self.decode_model: Optional[nn.Module] = None

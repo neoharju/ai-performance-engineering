@@ -26,7 +26,6 @@ class OptimizedModel(nn.Module):
     def __init__(self, hidden_dim=2048):
         super().__init__()
         self.output = None
-        self._verify_input = None
         # Same architecture but will use BF16 + fused ops
         self.fc1 = nn.Linear(hidden_dim, hidden_dim * 4)
         self.fc2 = nn.Linear(hidden_dim * 4, hidden_dim * 4)
@@ -56,7 +55,6 @@ class OptimizedAllTechniquesBenchmark(BaseBenchmark):
             requests_per_iteration=float(self.batch_size),
             tokens_per_iteration=float(tokens),
         )
-        self.jitter_exemption_reason = "Multiple optimized benchmark: fixed dimensions"
     
     def setup(self) -> None:
         if torch.cuda.is_available():

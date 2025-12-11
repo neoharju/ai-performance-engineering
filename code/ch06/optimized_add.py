@@ -19,7 +19,6 @@ class OptimizedAddParallelBenchmark(BaseBenchmark):
         self.C: Optional[torch.Tensor] = None
         self.N = 10_000  # Same as baseline for fair comparison
         # Kernel launch overhead benchmark - fixed input size
-        self.jitter_exemption_reason = "Kernel launch overhead benchmark: fixed N to measure launch latency"
         tokens = self.N
         self._workload = WorkloadMetadata(
             requests_per_iteration=1.0,

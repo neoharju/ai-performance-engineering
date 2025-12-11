@@ -80,7 +80,6 @@ class BaselinePersistentMatmulTMABenchmark(BaseBenchmark):
         self.N = N
         self.K = K
         self.result = None
-        self.jitter_exemption_reason = "Persistent matmul TMA: fixed dimensions"
         self.register_workload_metadata(
             requests_per_iteration=1.0,
             tokens_per_iteration=float(M * N),

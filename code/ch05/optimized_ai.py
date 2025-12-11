@@ -34,7 +34,6 @@ class OptimizedAIBenchmark(BaseBenchmark):
         self.batch = 512
         self.hidden = 1024
         # Inference benchmark - jitter check not applicable
-        self.jitter_exemption_reason = "Inference benchmark: fixed input shape"
         tokens = self.batch * self.hidden
         self._workload = WorkloadMetadata(
             requests_per_iteration=1.0,

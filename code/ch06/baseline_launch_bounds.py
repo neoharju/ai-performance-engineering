@@ -22,7 +22,6 @@ class BaselineLaunchBoundsBenchmark(BaseBenchmark):
         self._extension = None
         self.extra_passes = 2
         # Launch bounds benchmark - fixed input size
-        self.jitter_exemption_reason = "Launch bounds benchmark: fixed N to measure register allocation impact"
         # Treat each element as a token
         self._workload = WorkloadMetadata(
             requests_per_iteration=1.0,

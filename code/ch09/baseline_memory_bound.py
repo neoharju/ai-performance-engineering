@@ -32,7 +32,6 @@ class BaselineMemoryBoundBenchmark(BaseBenchmark):
         self.repeats = 64
         self.N = 16_777_216  # ~64 MB
         # Memory-bound benchmark - fixed dimensions for roofline analysis
-        self.jitter_exemption_reason = "Memory-bound benchmark: fixed dimensions for roofline analysis"
         self._workload = WorkloadMetadata(
             requests_per_iteration=float(self.repeats),
             tokens_per_iteration=float(self.N * self.repeats),

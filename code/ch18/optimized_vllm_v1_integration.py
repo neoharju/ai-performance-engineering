@@ -192,7 +192,6 @@ class OptimizedVLLMV1IntegrationBenchmark(BaseBenchmark):
         super().__init__()
         self.runner = OptimizedVLLMV1Integration()
         self._metrics: Dict[str, Any] = {}
-        self.jitter_exemption_reason = "VLLM V1 integration benchmark: fixed configuration"
         self.register_workload_metadata(requests_per_iteration=8.0)
 
     def setup(self):

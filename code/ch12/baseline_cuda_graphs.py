@@ -31,7 +31,6 @@ class BaselineCudaGraphsBenchmark(BaseBenchmark):
         super().__init__()
         self.data = None
         self.N = 1 << 20  # 1M elements - large enough for meaningful work
-        self.jitter_exemption_reason = "CUDA graphs benchmark: fixed dimensions"
         self.iterations = 500  # More iterations to amortize graph capture cost
         self._extension = None
         self._workload = WorkloadMetadata(

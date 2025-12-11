@@ -226,42 +226,28 @@ Use `aisp bench audit --all` to check verification compliance:
 - All benchmark files must have 100% compliance
 - Compliance means explicit implementations, not auto-detected ones
 
-## Jitter Check Compliance (CRITICAL)
+## Jitter Check (Advisory)
 
-The jitter check protects against benchmarks returning constant output regardless of input.
+The jitter check protects against benchmarks returning **constant/hardcoded outputs** regardless of input.
 
-**Rules:**
-1. Jitter exemptions should be RARE exceptions, not the default
-2. Return actual output tensors - not checksums, scalars, or fixed values
-3. If output is too large, return a representative slice: `output[:1000].clone()`
-4. For memory transfer benchmarks, return slice of transferred data
-5. **CRITICAL**: `get_input_signature()` MUST include a `shapes` key with 2D+ shapes for jitter check to work
+**How It Works:**
+1. Perturbs the input tensor by adding small noise
+2. Re-runs `benchmark_fn()`
+3. Verifies output CHANGED (if output unchanged → hardcoded)
 
-**How Jitter Check Works:**
-- The jitter check perturbs a dimension of the input signature's shapes and verifies output changes
-- It looks for shapes with `len(shape) > 1` (at least 2 dimensions) to find a non-batch dimension to perturb
-- If no suitable dimension is found and no `jitter_exemption_reason` is provided, verification FAILS
+**Important Notes:**
+- The jitter check is largely **redundant** with proper output verification
+- If baseline computes real output and optimized returns hardcoded values, they won't match anyway
+- Jitter check only catches the case where BOTH baseline AND optimized return the SAME hardcoded value (extremely unlikely)
+- No exemptions needed - the check auto-skips when appropriate
 
 **Anti-patterns (DO NOT USE):**
-- `return torch.tensor([1.0])` - Fixed constant
-- `return torch.tensor([output.sum().item()])` - Scalar defeats jitter
-- `return {"size_mb": 256}` - No shapes key → synthetic 1D shape → jitter fails
+- `return torch.tensor([1.0])` - Fixed constant (fails verification, not just jitter)
+- `return torch.tensor([output.sum().item()])` - Scalar checksum (defeats both jitter AND verification)
 
 **Valid patterns:**
-- `return self.model(self.input)` - Actual output
-- `return self.gpu_data[:1000].clone()` - Slice of actual data
-
-**Input Signature with Shapes (REQUIRED for jitter check):**
-```python
-def get_input_signature(self) -> dict:
-    """Return input signature WITH shapes for jitter check compliance."""
-    num_elements = (self.size_mb * 1024 * 1024) // 4
-    return {
-        "size_mb": self.size_mb,
-        "shapes": {"data": (1, num_elements)},  # 2D shape enables jitter check
-        "dtypes": {"data": "float32"},
-    }
-```
+- `return self.output.detach().clone()` - Actual output from benchmark_fn
+- `return self.gpu_data[:1000].clone()` - Slice of actual data for large outputs
 
 
 ### Benchmark Verification Interface

@@ -29,26 +29,32 @@ class OptimizedGb200LocalityBenchmark(BaseBenchmark):
         self.size_mb = size_mb
         self.numel = int((self.size_mb * 1024 * 1024) / 4)  # float32
         self.device_buf: Optional[torch.Tensor] = None
+        self.device_template: Optional[torch.Tensor] = None
         self.output: Optional[torch.Tensor] = None
         # Memory copy benchmark - jitter check not applicable
-        self.jitter_exemption_reason = "Memory copy benchmark: input is fixed-size buffer"
         tokens = float(self.numel)
         self._workload = WorkloadMetadata(tokens_per_iteration=tokens, requests_per_iteration=1.0)
 
     def setup(self) -> None:
         # Keep data resident on GPU to maximize locality.
-        self.device_buf = torch.ones(self.numel, device=self.device, dtype=torch.float32)
+        torch.manual_seed(42)
+        torch.cuda.manual_seed_all(42)
+        self.device_template = torch.ones(self.numel, device=self.device, dtype=torch.float32)
+        self.device_buf = torch.empty_like(self.device_template)
         torch.cuda.synchronize(self.device)
 
     def benchmark_fn(self) -> None:
-        assert self.device_buf is not None
+        assert self.device_buf is not None and self.device_template is not None
         with self._nvtx_range("device_only_compute"):
+            # Reset from a device-resident template to avoid host traffic while keeping outputs identical
+            self.device_buf.copy_(self.device_template)
             self.device_buf.add_(1.0)
         self.output = self.device_buf.sum().unsqueeze(0)
         self._synchronize()
 
     def teardown(self) -> None:
         self.device_buf = None
+        self.device_template = None
         torch.cuda.empty_cache()
 
     def get_config(self) -> BenchmarkConfig:
@@ -78,9 +84,9 @@ class OptimizedGb200LocalityBenchmark(BaseBenchmark):
 
     def get_verify_output(self) -> torch.Tensor:
         """Return output tensor for verification comparison."""
-        if self.output is not None:
-            return self.output.detach().clone()
-        return torch.tensor([0.0], dtype=torch.float32, device=self.device)
+        if self.output is None:
+            raise RuntimeError("benchmark_fn() must run before verification")
+        return self.output.detach().clone()
     
     def get_output_tolerance(self) -> tuple:
         """Return custom tolerance for memory copy benchmark."""

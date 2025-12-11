@@ -42,7 +42,6 @@ class OptimizedTensorCoresBenchmark(BaseBenchmark):
             tokens_per_iteration=float(self.size * self.size),
         )
         self.output = None
-        self.jitter_exemption_reason = "Tensor cores benchmark: fixed matrix size for comparison"
     
     def setup(self) -> None:
         """Setup: Initialize matrices in FP16/BF16 for tensor cores."""

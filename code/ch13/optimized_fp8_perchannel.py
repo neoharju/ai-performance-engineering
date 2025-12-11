@@ -107,7 +107,6 @@ class OptimizedFP8PerChannelBenchmark(BaseBenchmark):
             tokens_per_iteration=float(tokens),
         )
         self.output = None
-        self.jitter_exemption_reason = "FP8 per-channel benchmark: fixed dimensions for precision comparison"
         self.register_workload_metadata(
             requests_per_iteration=float(self.batch_size),
             tokens_per_iteration=float(tokens),

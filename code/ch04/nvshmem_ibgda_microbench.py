@@ -65,7 +65,6 @@ class NvshmemIbgdaMicrobench(CudaBinaryBenchmark):
             run_args=args,
             time_regex=None,  # Use harness timing instead of stdout parsing.
         )
-        self.jitter_exemption_reason = "NVSHMEM IBGDA microbench: fixed dimensions"
         self.register_workload_metadata(requests_per_iteration=1.0)
 
     # --------------------------------------------------------------------- Setup/teardown

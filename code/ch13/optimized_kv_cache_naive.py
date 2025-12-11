@@ -208,7 +208,6 @@ class OptimizedKVCachePagedBenchmark(BaseBenchmark):
             tokens_per_iteration=float(total_tokens),
         )
         self.output = None
-        self.jitter_exemption_reason = "KV cache benchmark: fixed dimensions for cache measurement"
         self.register_workload_metadata(
             requests_per_iteration=float(len(self.sequence_lengths)),
             tokens_per_iteration=float(total_tokens),

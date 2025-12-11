@@ -29,7 +29,6 @@ class BaselineOptimizerReplicatedBenchmark(BaseBenchmark):
             requests_per_iteration=float(self.batch_size),
             tokens_per_iteration=float(tokens),
         )
-        self.jitter_exemption_reason = "Optimizer replicated benchmark: fixed dimensions"
 
     def setup(self) -> None:
         torch.manual_seed(123)

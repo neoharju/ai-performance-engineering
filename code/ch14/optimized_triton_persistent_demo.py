@@ -466,7 +466,6 @@ class TritonPersistentDemoBenchmark(BaseBenchmark):
         self.M = 256
         self.N = 256
         self.K = 256
-        self.jitter_exemption_reason = "Triton persistent demo: fixed dimensions"
         self._last = 0.0
         
         # FLOP calculation: 2*M*N*K for matmul

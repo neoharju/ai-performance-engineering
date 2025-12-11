@@ -207,7 +207,6 @@ class BaselineSpeculativeDecodingBenchmark(BaseBenchmark):
         self._metrics: Dict[str, Any] = {}
         self._inner_benchmark = None
         self.output = None
-        self.jitter_exemption_reason = "Speculative decoding benchmark: fixed dimensions"
         self.register_workload_metadata(requests_per_iteration=1.0)
 
     def benchmark_fn(self) -> None:

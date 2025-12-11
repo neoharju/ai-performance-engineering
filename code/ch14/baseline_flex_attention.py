@@ -42,7 +42,6 @@ class BaselineFlexAttentionBenchmark(BaseBenchmark):
             tokens_per_iteration=float(tokens),
         )
         self.output = None
-        self.jitter_exemption_reason = "Flex attention benchmark: fixed dimensions for attention comparison"
         self.register_workload_metadata(
             requests_per_iteration=float(self.seq_len),
             tokens_per_iteration=float(tokens),

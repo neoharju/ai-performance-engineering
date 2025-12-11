@@ -39,7 +39,6 @@ class OptimizedAttentionBenchmark(BaseBenchmark):
         self.num_heads = 16
         self.head_dim = self.hidden_dim // self.num_heads
         self.output = None
-        self.jitter_exemption_reason = "Attention benchmark: fixed dimensions for comparison"
 
     def setup(self) -> None:
         if torch.cuda.is_available():

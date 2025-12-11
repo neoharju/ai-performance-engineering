@@ -60,7 +60,6 @@ class OptimizedMatmulCUTLASSBenchmark(BaseBenchmark):
             requests_per_iteration=1.0,
             tokens_per_iteration=float(tokens),
         )
-        self.jitter_exemption_reason = "Matmul benchmark: fixed dimensions"
         # Register workload metadata at init time for compliance check
         bytes_per_iter = (self.m * self.k + self.k * self.n + self.m * self.n * 2) * 2  # fp16
         self.register_workload_metadata(

@@ -29,7 +29,6 @@ class PieceGraphBlock(nn.Module):
     def __init__(self, hidden_dim: int = 512, num_heads: int = 8):
         super().__init__()
         self.output = None
-        self._verify_input = None
         self.norm1 = nn.LayerNorm(hidden_dim)
         self.attn = nn.MultiheadAttention(
             embed_dim=hidden_dim,
@@ -86,7 +85,6 @@ class OptimizedPieceGraphsBenchmark(BaseBenchmark):
         self._rng.manual_seed(0)
         self.hidden_dim_val = 768
         self.n_layers_val = 12
-        self.jitter_exemption_reason = "Piece graphs benchmark: fixed dimensions"
         self.register_workload_metadata(requests_per_iteration=1.0)
 
     def setup(self) -> None:
@@ -154,7 +152,7 @@ class OptimizedPieceGraphsBenchmark(BaseBenchmark):
         with nvtx_range("piece_graph_tail", enable=enable_nvtx):
             tail_graph.replay()
         torch.cuda.synchronize()
-        _ = tail_output  # Placeholder to keep lints quiet
+        self.output = tail_output.detach().clone()
 
     def teardown(self) -> None:
         self.model = None

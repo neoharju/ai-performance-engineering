@@ -41,7 +41,6 @@ class BaselineRoutingStaticBenchmark(BaseBenchmark):
             tokens_per_iteration=float(tokens),
         )
         self.result_output = None
-        self.jitter_exemption_reason = "Routing benchmark: fixed dimensions for comparison"
         self.register_workload_metadata(
             requests_per_iteration=float(self.requests_per_iteration),
             tokens_per_iteration=float(tokens),

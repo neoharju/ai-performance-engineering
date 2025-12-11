@@ -33,7 +33,6 @@ class OptimizedBatchBenchmark(BaseBenchmark):
             requests_per_iteration=1.0,
             tokens_per_iteration=float(tokens),
         )
-        self.jitter_exemption_reason = "Batch benchmark: fixed dimensions for comparison"
         self.register_workload_metadata(
             requests_per_iteration=1.0,
             tokens_per_iteration=float(tokens),

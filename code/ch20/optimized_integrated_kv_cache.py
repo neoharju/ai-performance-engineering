@@ -215,7 +215,6 @@ class OptimizedIntegratedKVCacheBenchmark(BaseBenchmark):
         self.batch_size = 1
         self.sequence_lengths = [512, 1024, 2048]
         self.block_size = 8
-        self.jitter_exemption_reason = "Integrated KV cache optimized: fixed dimensions"
         self.register_workload_metadata(requests_per_iteration=1.0)
     
     def setup(self) -> None:

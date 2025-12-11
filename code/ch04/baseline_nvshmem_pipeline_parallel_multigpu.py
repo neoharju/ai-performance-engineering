@@ -18,7 +18,6 @@ from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig
 class NVSHMEMPipelineParallelMultiGPU(BaseBenchmark):
     def __init__(self) -> None:
         super().__init__()
-        self.jitter_exemption_reason = "NVSHMEM pipeline parallel benchmark: multi-GPU"
         self.register_workload_metadata(requests_per_iteration=1.0)
 
     def setup(self) -> None:

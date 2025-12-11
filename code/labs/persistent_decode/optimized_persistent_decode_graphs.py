@@ -61,7 +61,7 @@ class OptimizedPersistentDecodeGraphsBenchmark(BaseBenchmark):
         self.max_capture_seq = max_capture_seq or self.seq_len
         self._history: dict[str, list[float]] = {}
         self.register_workload_metadata(tokens_per_iteration=tokens_per_iteration())
-        self.jitter_exemption_reason = "Persistent decode graphs: fixed dimensions"
+        self.output: torch.Tensor | None = None
 
     def setup(self) -> None:
         self.inputs = build_inputs(self.device)
@@ -177,6 +177,8 @@ class OptimizedPersistentDecodeGraphsBenchmark(BaseBenchmark):
             self._history.setdefault("per_token_ms", []).append(decode_ms / max(1, self.seq_len))
             self._history.setdefault("graph_path", []).append("piecewise_graph")
         self._synchronize()
+        if self.inputs is not None:
+            self.output = self.inputs.out[:1, : min(8, self.inputs.out.shape[1])].detach().float().clone()
 
     def teardown(self) -> None:
         torch.cuda.empty_cache()
@@ -185,6 +187,7 @@ class OptimizedPersistentDecodeGraphsBenchmark(BaseBenchmark):
         self.decode_graph = None
         self.full_graph = None
         self.prefill_out = None
+        self.output = None
 
     def get_config(self) -> BenchmarkConfig:
         return BenchmarkConfig(
@@ -214,11 +217,24 @@ class OptimizedPersistentDecodeGraphsBenchmark(BaseBenchmark):
 
     def get_verify_output(self) -> torch.Tensor:
         """Return output tensor for verification comparison."""
-        return torch.tensor([hash(str(id(self))) % (2**31)], dtype=torch.float32)
+        if self.output is None:
+            raise RuntimeError("benchmark_fn() must be called before verification")
+        return self.output
 
     def get_input_signature(self) -> dict:
         """Return input signature for verification."""
-        return {"batch": self.batch, "seq_len": self.seq_len, "graph_mode": str(self.graph_mode)}
+        return {
+            "batch": self.batch,
+            "seq_len": self.seq_len,
+            "head_dim": self.head_dim,
+            "graph_mode": str(self.graph_mode),
+            "shapes": {
+                "q": (self.batch, self.seq_len, self.head_dim),
+                "k": (self.batch, self.seq_len, self.head_dim),
+                "v": (self.batch, self.seq_len, self.head_dim),
+                "out": (self.batch, self.head_dim),
+            },
+        }
 
     def get_output_tolerance(self) -> tuple:
         """Return tolerance for numerical comparison."""

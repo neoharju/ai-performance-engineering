@@ -28,7 +28,7 @@ class OptimizedKVCacheNVFP4Benchmark(BaselineKVCacheBenchmark):
         )
         self.nvfp4_active = False
         self._nvfp4_skip_reason: Optional[str] = None
-        self.jitter_exemption_reason = "KV cache NVFP4 benchmark: fixed dimensions"
+        self.output: Optional[torch.Tensor] = None
 
     def setup(self) -> None:
         preferred_recipe = self.fp8_recipe
@@ -58,6 +58,26 @@ class OptimizedKVCacheNVFP4Benchmark(BaselineKVCacheBenchmark):
     def validate_result(self) -> Optional[str]:
         return super().validate_result()
 
+    def benchmark_fn(self) -> None:
+        if self.model is None or self.cache is None:
+            raise RuntimeError("Benchmark not initialized")
+        reset_cache(self.cache)
+        offset = 0
+        recipe = self.runtime_recipe if self.nvfp4_active else self.fp8_recipe
+        if recipe is None:
+            raise RuntimeError("No NVFP4/FP8 recipe available for benchmark")
+        with te_autocast(enabled=True, recipe=recipe):
+            for prefill in self.prefill_inputs:
+                _ = self.model(prefill, self.cache, offset)
+                offset += prefill.shape[1]
+            for decode in self.decode_inputs:
+                _ = self.model(decode, self.cache, offset)
+                offset += decode.shape[1]
+        torch.cuda.synchronize()
+        if self.cache and self.cache.kv is not None:
+            view = self.cache.kv[0, :, :, : min(1, self.cache.kv.shape[3]), : min(8, self.cache.kv.shape[4])]
+            self.output = view.detach().float().clone()
+
     def get_custom_metrics(self) -> Optional[dict]:
         """Return NVFP4-specific metrics."""
         metrics = super().get_custom_metrics() or {}
@@ -73,11 +93,34 @@ class OptimizedKVCacheNVFP4Benchmark(BaselineKVCacheBenchmark):
 
     def get_verify_output(self) -> torch.Tensor:
         """Return output tensor for verification comparison."""
-        return torch.tensor([hash(str(id(self))) % (2**31)], dtype=torch.float32)
+        if self.output is None:
+            raise RuntimeError("benchmark_fn() must be called before verification")
+        return self.output
 
     def get_input_signature(self) -> dict:
         """Return input signature for verification."""
-        return {"batch_size": self.batch_size, "hidden_dim": self.hidden_dim, "nvfp4": True}
+        total_tokens = self.prefill_seq + self.decode_seq * self.decode_steps
+        return {
+            "batch_size": self.batch_size,
+            "hidden_dim": self.hidden_dim,
+            "num_heads": self.num_heads,
+            "prefill_seq": self.prefill_seq,
+            "decode_seq": self.decode_seq,
+            "decode_steps": self.decode_steps,
+            "nvfp4": True,
+            "shapes": {
+                "prefill": (self.batch_size, self.prefill_seq // 2, self.hidden_dim),
+                "decode": (self.batch_size, self.decode_seq, self.hidden_dim),
+                "cache": (
+                    2,
+                    self.batch_size,
+                    self.num_heads,
+                    total_tokens,
+                    self.hidden_dim // self.num_heads,
+                ),
+            },
+            "dtypes": {"activations": str(self.tensor_dtype)},
+        }
 
     def get_output_tolerance(self) -> tuple:
         """Return tolerance for numerical comparison."""

@@ -42,7 +42,6 @@ class OptimizedTensorCoreBenchmark(BaseBenchmark):
         self.n = 8192  # Match baseline workload signature
         self.tile_k = 128  # Match baseline for equivalent workload
         self.dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
-        self.jitter_exemption_reason = "Matmul benchmark: fixed dimensions for comparison"
         self.register_workload_metadata(bytes_per_iteration=float(self.n * self.n * 2 * 3))
     
     def setup(self) -> None:

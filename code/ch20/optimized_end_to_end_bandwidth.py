@@ -63,7 +63,6 @@ class OptimizedEndToEndBandwidthBenchmark(BaseBenchmark):
             requests_per_iteration=float(tokens),
             tokens_per_iteration=float(tokens),
         )
-        self.jitter_exemption_reason = "End-to-end bandwidth benchmark: fixed dimensions"
     
     def setup(self) -> None:
         self._inductor_cfg_state = disable_inductor_cudagraph_features()

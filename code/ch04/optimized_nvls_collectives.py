@@ -31,7 +31,6 @@ class NVLSCollectivesBenchmark(BaseBenchmark):
         self.tensor: Optional[torch.Tensor] = None
         self._initialized = False
         self._workload = WorkloadMetadata(bytes_per_iteration=0.0)
-        self.jitter_exemption_reason = "NVLS collectives benchmark: multi-GPU"
 
     def setup(self) -> None:
         if torch.cuda.device_count() < 2:

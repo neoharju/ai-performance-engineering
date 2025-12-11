@@ -125,7 +125,6 @@ class BaselineTritonPersistentBenchmark(BaseBenchmark):
             tokens_per_iteration=float(self.batch_size * self.M * self.N),
         )
         self.output = None
-        self.jitter_exemption_reason = "Triton persistent benchmark: fixed dimensions for kernel comparison"
         self.register_workload_metadata(
             requests_per_iteration=float(self.batch_size),
             tokens_per_iteration=float(self.batch_size * self.M * self.N),

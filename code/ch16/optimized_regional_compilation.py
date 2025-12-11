@@ -48,7 +48,6 @@ class LargeTransformerBlock(nn.Module):
     def __init__(self, d_model: int = 8192, d_ff: int = 32768):
         super().__init__()
         self.output = None
-        self._verify_input = None
         self.ln1 = nn.LayerNorm(d_model)
         self.attn = nn.MultiheadAttention(d_model, num_heads=64, batch_first=True)
         self.ln2 = nn.LayerNorm(d_model)
@@ -113,7 +112,6 @@ class OptimizedRegionalCompilationBenchmark(BaseBenchmark):
         self.host_buffer: Optional[torch.Tensor] = None
         self.transfer_stream: Optional[torch.cuda.Stream] = None
         self.graph_cache: Dict[int, GraphCacheEntry] = {}
-        self.jitter_exemption_reason = "Regional compilation benchmark: fixed config"
         self.register_workload_metadata(requests_per_iteration=1.0)
 
     def setup(self) -> None:
@@ -212,7 +210,7 @@ class OptimizedRegionalCompilationBenchmark(BaseBenchmark):
 
         with nvtx_range("regional_compilation", enable=enable_nvtx):
             with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
-                _ = self.model(self.input_buffer[:, :seq_len])
+                self.output = self.model(self.input_buffer[:, :seq_len])
         torch.cuda.synchronize()
 
     def run(self, compare_eager: bool = False) -> torch.Tensor:

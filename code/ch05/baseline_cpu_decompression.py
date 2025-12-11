@@ -27,7 +27,6 @@ class CPUDecompressionBenchmark(BaseBenchmark):
         self.compressed: Optional[bytes] = None
         self.output: Optional[torch.Tensor] = None
         self._workload = WorkloadMetadata(bytes_per_iteration=0.0)
-        self.jitter_exemption_reason = "Decompression benchmark: fixed data size"
 
     def setup(self) -> None:
         payload = torch.randn(1024 * 1024, dtype=torch.float32).numpy().tobytes()

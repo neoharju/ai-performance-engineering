@@ -867,8 +867,7 @@ class BaseBenchmark:
         raise NotImplementedError(
             f"{self.__class__.__name__} must implement get_verify_output() explicitly. "
             "Return the output tensor that should be compared between baseline and optimized. "
-            "If this is a throughput-only benchmark with no output, implement "
-            "get_verify_output() to return a checksum tensor instead."
+            "Checksums or fixed scalars are not allowed—surface the real tensor (or a representative slice)."
         )
 
     def skip_input_verification(self) -> bool:
@@ -1011,14 +1010,8 @@ class BaseBenchmark:
         return self._workload_metadata
 
     def _infer_workload_metadata(self) -> Optional[WorkloadMetadata]:
-        """Best-effort inference for benchmarks that rely on external configs.
-        
-        This inspects common attribute names (batch_size, seq_len, hidden_size, etc.)
-        to synthesize conservative workload metadata so downstream tools can make
-        apples-to-apples comparisons even when individual benchmarks omit explicit
-        WorkloadMetadata registration. The goal is cosmetic consistency for review
-        tooling; benchmarks can still override via register_workload_metadata().
-        """
+        """Workload inference is disabled; benchmarks must register explicitly."""
+        return None
 
         def _collect_numeric_attrs() -> Dict[str, float]:
             values: Dict[str, float] = {}
@@ -1845,6 +1838,44 @@ class BenchmarkHarness:
             schemaVersion="1.0",
         )
     
+    def _validate_jitter_signature(self, benchmark: BaseBenchmark) -> None:
+        """Fail fast if get_input_signature() cannot support jitter checks."""
+        sig = benchmark.get_input_signature()
+        if not isinstance(sig, dict) or not sig:
+            raise RuntimeError("get_input_signature() must return a non-empty dict for jitter compliance.")
+
+        # Allow skips only for sanctioned cases (multi-GPU or config-generation benchmarks).
+        def _maybe_skip(reason: str) -> None:
+            raise RuntimeError(f"SKIPPED: {reason}")
+
+        # Multi-GPU benchmarks are skipped entirely when <2 GPUs.
+        cfg = getattr(benchmark, "_config", None) or getattr(benchmark, "get_config", lambda: None)()
+        multi_gpu_flag = False
+        if cfg is not None and getattr(cfg, "multi_gpu_required", False):
+            multi_gpu_flag = True
+        if getattr(benchmark, "multi_gpu_required", False):
+            multi_gpu_flag = True
+        if multi_gpu_flag and torch.cuda.device_count() < 2:
+            _maybe_skip("requires >=2 GPUs")
+
+        # Config-generation / non-compute utilities may declare a verification_not_applicable_reason.
+        not_applicable = getattr(benchmark, "verification_not_applicable_reason", None)
+        if not_applicable:
+            _maybe_skip(not_applicable)
+
+        shapes = sig.get("shapes")
+        if shapes is None:
+            raise RuntimeError("Jitter check requires get_input_signature() to include a 'shapes' entry with at least one 2D shape.")
+        shape_list: List[Tuple[int, ...]] = []
+        if isinstance(shapes, dict):
+            for value in shapes.values():
+                if isinstance(value, (list, tuple)):
+                    shape_list.append(tuple(value))
+        elif isinstance(shapes, (list, tuple)):
+            shape_list.append(tuple(shapes))
+        if not shape_list or not any(len(shape) > 1 for shape in shape_list):
+            raise RuntimeError("Jitter check requires at least one shape with length >=2 in get_input_signature()['shapes'].")
+    
     def verify(
         self,
         baseline: BaseBenchmark,
@@ -1881,6 +1912,10 @@ class BenchmarkHarness:
         from core.benchmark.verify_runner import VerifyRunner, VerifyConfig
         from core.benchmark.verification import VerifyResult
         
+        # Fail early on missing jitter metadata to avoid late surprises.
+        self._validate_jitter_signature(baseline)
+        self._validate_jitter_signature(optimized)
+
         runner = VerifyRunner()
         config = VerifyConfig(
             seed=42,
@@ -2296,13 +2331,6 @@ class BenchmarkHarness:
         custom_metrics = self._resolve_custom_metrics(benchmark)
         if custom_metrics:
             result.custom_metrics = custom_metrics
-        custom_metrics = self._resolve_custom_metrics(benchmark)
-        if custom_metrics:
-            result.custom_metrics = custom_metrics
-        custom_metrics = self._resolve_custom_metrics(benchmark)
-        if custom_metrics:
-            result.custom_metrics = custom_metrics
-        self._attach_throughput_metrics(result, benchmark)
         self._attach_throughput_metrics(result, benchmark)
         
         # Add inference timing if available
@@ -2476,8 +2504,11 @@ class BenchmarkHarness:
                     # Apply per-target CLI overrides (e.g., backend selection) before setup.
                     self._apply_target_overrides(benchmark, config)
 
-                    setup_already_run = False
-                    # Force setup pre-computation detection for all runs (no opt-out)
+                    # Setup - this may include CUDA extension compilation OR torch.compile()
+                    # IMPORTANT: Setup can hang, so we need actual timeout enforcement
+                    import time
+                    setup_start_time = time.time()
+                    setup_timeout = config.get_effective_timeout('setup')
                     from core.harness.validity_checks import check_setup_precomputation
                     def _collect_outputs_for_hash():
                         outputs = {}
@@ -2490,46 +2521,26 @@ class BenchmarkHarness:
                             except Exception:
                                 pass
                         return outputs
-                    start_stage('setup')
-                    precompute_ok, precompute_err = check_setup_precomputation(_collect_outputs_for_hash, benchmark.setup)
-                    finish_stage('setup')
-                    setup_already_run = True
-                    if not precompute_ok:
-                        msg = precompute_err or "Setup pre-computation detected"
-                        errors.append(msg)
-                        timeout_result_storage[0] = self._create_timeout_result(
-                            stage="setup",
-                            duration=0.0,
-                            limit=config.get_effective_timeout('setup'),
-                            errors=errors,
-                            benchmark_name=benchmark_name,
-                            config=config,
-                            watchdog=stage_watchdog,
-                        )
-                        return
 
-                    # Setup - this may include CUDA extension compilation OR torch.compile()
-                    # IMPORTANT: Setup can hang, so we need actual timeout enforcement
-                    import time
-                    setup_start_time = time.time()
-                    setup_timeout = config.get_effective_timeout('setup')
+                    def _run_setup_with_detection():
+                        start_stage('setup')
+                        precompute_ok, precompute_err = check_setup_precomputation(_collect_outputs_for_hash, benchmark.setup)
+                        if not precompute_ok:
+                            finish_stage('setup', status='error')
+                            raise RuntimeError(precompute_err or "Setup pre-computation detected")
+                        finish_stage('setup')
                     
-                    if setup_already_run:
-                        setup_time = time.time() - setup_start_time
-                    elif setup_timeout is not None:
+                    if setup_timeout is not None:
                         # Setup has explicit timeout - enforce it with threading timeout
                         setup_complete = threading.Event()
                         setup_error: List[Optional[Exception]] = [None]
                         
                         def run_setup():
                             try:
-                                start_stage('setup')
-                                benchmark.setup()
-                                finish_stage('setup')
+                                _run_setup_with_detection()
                                 setup_complete.set()
                             except Exception as e:
                                 setup_error[0] = e
-                                finish_stage('setup', status='error')
                                 setup_complete.set()
                         
                         setup_thread = threading.Thread(target=run_setup, daemon=True)
@@ -2578,9 +2589,7 @@ class BenchmarkHarness:
                             logger.warning(f"Setup took {setup_time:.1f}s (near timeout limit of {setup_timeout}s)")
                     else:
                         # No explicit setup timeout - just run it
-                        start_stage('setup')
-                        benchmark.setup()
-                        finish_stage('setup')
+                        _run_setup_with_detection()
                         setup_time = time.time() - setup_start_time
                         # Warn if setup is suspiciously long (even without timeout)
                         measurement_timeout = config.get_effective_timeout('measurement')
@@ -3892,95 +3901,8 @@ class BenchmarkHarness:
         return None
 
     def _infer_workload_metadata_from_attributes(self, benchmark: BaseBenchmark) -> Optional[WorkloadMetadata]:
-        """Best-effort inference of workload metadata from common benchmark attributes."""
-        def _read_numeric_attr(names: List[str]) -> Optional[float]:
-            for name in names:
-                if hasattr(benchmark, name):
-                    value = getattr(benchmark, name)
-                    if isinstance(value, (int, float)) and value > 0:
-                        return float(value)
-            return None
-
-        batch = _read_numeric_attr([
-            "batch_size",
-            "train_batch_size",
-            "eval_batch_size",
-            "micro_batch_size",
-            "micro_batchsize",
-        ])
-        seq_len = _read_numeric_attr([
-            "seq_len",
-            "seq_length",
-            "sequence_length",
-            "token_count",
-            "tokens",
-        ])
-        explicit_tokens = _read_numeric_attr([
-            "tokens_per_iteration",
-            "tokens_per_step",
-            "tokens_per_batch",
-        ])
-        explicit_requests = _read_numeric_attr([
-            "requests_per_iteration",
-            "requests_per_step",
-            "num_requests",
-        ])
-        samples = _read_numeric_attr([
-            "samples_per_iteration",
-            "samples_per_step",
-            "num_samples",
-        ])
-        bytes_per_iter = _read_numeric_attr([
-            "bytes_per_iteration",
-            "payload_bytes",
-            "data_bytes",
-        ])
-        custom_units = _read_numeric_attr([
-            "workload_units_per_iteration",
-            "flops_per_iteration",
-        ])
-        goodput = _read_numeric_attr([
-            "target_goodput",
-            "expected_goodput",
-        ])
-
-        tokens = explicit_tokens
-        if tokens is None:
-            if batch is not None and seq_len is not None:
-                tokens = batch * seq_len
-            elif seq_len is not None:
-                tokens = seq_len
-            elif batch is not None:
-                tokens = batch
-
-        if samples is None and batch is not None:
-            samples = batch
-
-        if custom_units is not None and getattr(benchmark, "workload_unit_name", None):
-            custom_unit_name = getattr(benchmark, "workload_unit_name")
-        else:
-            custom_unit_name = None
-
-        requests = explicit_requests or batch or 1.0
-
-        if (
-            tokens is None
-            and samples is None
-            and bytes_per_iter is None
-            and custom_units is None
-            and (requests == 1.0 or requests is None)
-        ):
-            return None
-
-        return WorkloadMetadata(
-            requests_per_iteration=requests or 1.0,
-            tokens_per_iteration=tokens,
-            samples_per_iteration=samples,
-            bytes_per_iteration=bytes_per_iter,
-            custom_units_per_iteration=custom_units,
-            custom_unit_name=custom_unit_name,
-            goodput=goodput,
-        )
+        """Workload inference is disabled; benchmarks must register explicitly."""
+        return None
 
     def _compute_throughput_stats(
         self,

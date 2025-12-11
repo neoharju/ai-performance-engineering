@@ -42,7 +42,6 @@ class FlexDecodingHarness(BaseBenchmark):
             tokens_per_iteration=float(total_tokens),
         )
         # FlexDecoding benchmark: fixed dimensions
-        self.jitter_exemption_reason = "FlexDecoding benchmark: fixed configuration"
 
     # --------------------------------------------------------------------- setup
     def setup(self) -> None:

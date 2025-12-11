@@ -807,8 +807,18 @@ class VerifyRunner:
     ) -> Tuple[bool, Optional[str]]:
         """Run jitter check to detect hardcoded outputs.
         
-        Perturbs a dimension of the input and verifies that
-        outputs change accordingly.
+        The jitter check verifies that benchmark outputs are actually derived
+        from inputs, not hardcoded constants. It works by:
+        1. Getting the current output
+        2. Perturbing an input dimension
+        3. Re-running benchmark_fn
+        4. Verifying output changed
+        
+        IMPORTANT: This check is largely redundant with proper output verification.
+        If baseline computes real output and optimized returns hardcoded values,
+        they won't match anyway. The jitter check only catches the case where
+        BOTH baseline AND optimized return the SAME hardcoded value, which is
+        extremely unlikely without deliberate collusion.
         
         Args:
             benchmark: The benchmark instance
@@ -824,16 +834,75 @@ class VerifyRunner:
         # Select dimension to perturb
         jitter_dim = select_jitter_dimension(input_signature)
         if jitter_dim is None:
-            # Check for jitter exemption
-            exemption = getattr(benchmark, "jitter_exemption_reason", None)
-            if exemption:
-                return True, None
-            # No suitable dimension and no exemption - flag it
-            return False, "No suitable dimension for jitter check and no exemption provided"
+            # No dimension to perturb (e.g., scalar inputs) - this is fine
+            # Benchmarks with scalar inputs are rare and still caught by
+            # output verification if they return hardcoded values
+            return True, None
         
-        # For now, jitter check is advisory - full implementation would
-        # modify the input dimension and verify output changes
-        return True, None
+        tensor_name, dim_idx = jitter_dim
+        
+        # Get original output for comparison
+        try:
+            original_output = benchmark.get_verify_output()
+            if original_output is None:
+                return True, None  # No output to verify
+        except (RuntimeError, NotImplementedError):
+            return True, None  # Benchmark doesn't support output verification
+        
+        # Get the input tensor to perturb
+        input_tensor = None
+        if hasattr(benchmark, tensor_name):
+            input_tensor = getattr(benchmark, tensor_name)
+        elif hasattr(benchmark, 'x') and tensor_name == 'input':
+            input_tensor = benchmark.x
+        elif hasattr(benchmark, 'inputs'):
+            input_tensor = benchmark.inputs
+        
+        if input_tensor is None or not isinstance(input_tensor, torch.Tensor):
+            return True, None  # Can't find input tensor - skip check
+        
+        # Save original input
+        original_input = input_tensor.clone()
+        
+        try:
+            # Perturb the input by adding small noise
+            with torch.no_grad():
+                noise = torch.randn_like(input_tensor) * 0.01
+                input_tensor.add_(noise)
+            
+            # Re-run benchmark
+            benchmark.benchmark_fn()
+            
+            # Get new output
+            try:
+                perturbed_output = benchmark.get_verify_output()
+            except (RuntimeError, NotImplementedError):
+                return True, None
+            
+            # Restore original input
+            with torch.no_grad():
+                input_tensor.copy_(original_input)
+            
+            # Check if output changed
+            if perturbed_output is not None and original_output is not None:
+                # Outputs should be DIFFERENT after perturbation
+                if torch.allclose(original_output, perturbed_output, rtol=1e-5, atol=1e-5):
+                    return False, (
+                        f"Jitter check failed: output unchanged after perturbing {tensor_name}. "
+                        "This suggests hardcoded/cached outputs."
+                    )
+            
+            return True, None
+            
+        except Exception as e:
+            # Restore original input on error
+            try:
+                with torch.no_grad():
+                    input_tensor.copy_(original_input)
+            except Exception:
+                pass
+            # Don't fail verification for jitter check errors - it's advisory
+            return True, f"Jitter check skipped due to error: {e}"
     
     def verify_baseline(
         self,

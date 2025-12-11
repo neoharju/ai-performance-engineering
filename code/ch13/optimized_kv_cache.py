@@ -131,7 +131,6 @@ class OptimizedKVCacheOptimizedBenchmark(BaseBenchmark):
         self.batch_size = 4
         self.max_seq_len = 256
         self.sequence_lengths = [128, 192, 256]
-        self.jitter_exemption_reason = "KV cache benchmark: fixed dimensions"
         tokens = self.batch_size * sum(self.sequence_lengths)
         self._workload = WorkloadMetadata(
             requests_per_iteration=float(len(self.sequence_lengths)),

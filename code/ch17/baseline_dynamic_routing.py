@@ -37,7 +37,6 @@ class _DynamicRoutingBenchmark(BaseBenchmark):
             tokens_per_iteration=float(batch_size * 128),
         )
         self.output = None
-        self.jitter_exemption_reason = "Dynamic routing benchmark: fixed batch size for comparison"
         self.register_workload_metadata(
             requests_per_iteration=float(batch_size),
             tokens_per_iteration=float(batch_size * 128),

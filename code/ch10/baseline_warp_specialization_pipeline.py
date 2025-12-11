@@ -42,7 +42,6 @@ class BaselineWarpSpecializationPipelineBenchmark(BaseBenchmark):
             tokens_per_iteration=float(tokens),
         )
         self.output: Optional[torch.Tensor] = None
-        self.jitter_exemption_reason = "Warp specialization benchmark: fixed dimensions"
         self.register_workload_metadata(
             requests_per_iteration=float(self.micro_batches),
             tokens_per_iteration=float(tokens),

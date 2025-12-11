@@ -27,12 +27,12 @@ class OptimizedFlashAttentionGluonBenchmark(BaseBenchmark):
         self.dtype = torch.float16
         self.inputs: Optional[FlashAttentionInputs] = None
         self.kernel: Optional[FlashAttentionKernel] = None
+        self.output: Optional[torch.Tensor] = None
         tokens = self.batch * self.seq_len
         self._workload = WorkloadMetadata(
             requests_per_iteration=float(self.batch),
             tokens_per_iteration=float(tokens),
         )
-        self.jitter_exemption_reason = "FlashAttention Gluon optimized: fixed dimensions"
 
     def setup(self) -> None:
         torch.manual_seed(0)
@@ -53,12 +53,14 @@ class OptimizedFlashAttentionGluonBenchmark(BaseBenchmark):
 
         with torch.inference_mode():
             with self._nvtx_range(f"flashattention_optimized_{self.kernel.provider}"):
-                _ = self.kernel.fn(self.inputs.q, self.inputs.k, self.inputs.v)
+                result = self.kernel.fn(self.inputs.q, self.inputs.k, self.inputs.v)
+                self.output = result.detach().float().clone()
         self._synchronize()
 
     def teardown(self) -> None:
         self.inputs = None
         self.kernel = None
+        self.output = None
         super().teardown()
 
     def get_config(self) -> BenchmarkConfig:
@@ -77,11 +79,24 @@ class OptimizedFlashAttentionGluonBenchmark(BaseBenchmark):
 
     def get_verify_output(self) -> torch.Tensor:
         """Return output tensor for verification comparison."""
-        return torch.tensor([hash(str(id(self))) % (2**31)], dtype=torch.float32)
+        if self.output is None:
+            raise RuntimeError("benchmark_fn() must be called before verification")
+        return self.output
 
     def get_input_signature(self) -> dict:
         """Return input signature for verification."""
-        return {"batch": self.batch, "seq_len": self.seq_len}
+        return {
+            "batch": self.batch,
+            "seq_len": self.seq_len,
+            "heads": self.heads,
+            "head_dim": self.head_dim,
+            "shapes": {
+                "q": (self.batch, self.heads, self.seq_len, self.head_dim),
+                "k": (self.batch, self.heads, self.seq_len, self.head_dim),
+                "v": (self.batch, self.heads, self.seq_len, self.head_dim),
+            },
+            "dtypes": {"q": str(self.dtype), "k": str(self.dtype), "v": str(self.dtype)},
+        }
 
     def get_output_tolerance(self) -> tuple:
         """Return tolerance for numerical comparison."""

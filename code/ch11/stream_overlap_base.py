@@ -37,7 +37,6 @@ class StridedStreamBaseline(BaseBenchmark):
         self.host_out_chunks = None
         self.device_chunks = None
         # Stream benchmark - fixed dimensions for overlap measurement
-        self.jitter_exemption_reason = "Stream overlap benchmark: fixed N to measure copy/compute overlap"
         bytes_transferred = float(num_elements * 4 * 2)  # H2D + D2H
         self.register_workload_metadata(bytes_per_iteration=bytes_transferred)
 
@@ -143,7 +142,6 @@ class ConcurrentStreamOptimized(BaseBenchmark):
         self.host_out_chunks: List[torch.Tensor] | None = None
         self.device_chunks: List[torch.Tensor] | None = None
         # Stream benchmark - fixed dimensions for overlap measurement
-        self.jitter_exemption_reason = "Stream overlap benchmark: fixed N to measure copy/compute overlap"
         bytes_transferred = float(num_elements * 4 * 2)  # H2D + D2H
         self.register_workload_metadata(bytes_per_iteration=bytes_transferred)
 

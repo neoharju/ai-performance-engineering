@@ -217,7 +217,6 @@ class PersistentMatmulTMABenchmark(BaseBenchmark):
             requests_per_iteration=1.0,
             tokens_per_iteration=float(self.M * self.N),
         )
-        self.jitter_exemption_reason = "TMA matmul benchmark: fixed dimensions for comparison"
         self.register_workload_metadata(
             requests_per_iteration=1.0,
             tokens_per_iteration=float(self.M * self.N),

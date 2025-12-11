@@ -97,7 +97,6 @@ class OptimizedFP8PerChannelBenchmark(BaseBenchmark):
         self.x = None
         self.batch_size = 32
         self.seq_len = 512
-        self.jitter_exemption_reason = "FP8 per-channel benchmark: fixed dimensions"
         self.in_features = 4096
         self.out_features = 4096
         self.dtype = torch.float32

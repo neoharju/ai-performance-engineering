@@ -17,7 +17,6 @@ class BaselineMemoryTransferBenchmark(BaseBenchmark):
         self.host_data: Optional[torch.Tensor] = None
         self.device_data: Optional[torch.Tensor] = None
         self.N = 10_000_000
-        self.jitter_exemption_reason = "Memory transfer benchmark: fixed size"
         bytes_per_iter = self.N * 4  # float32 copy
         self._workload = WorkloadMetadata(
             requests_per_iteration=1.0,

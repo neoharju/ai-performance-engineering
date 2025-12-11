@@ -72,7 +72,6 @@ class OptimizedDockerBenchmark(BaseBenchmark):
         self.prefetcher: Optional[Prefetcher] = None
         self.output: Optional[torch.Tensor] = None
         # Training benchmarks don't support jitter check - outputs change due to weight updates
-        self.jitter_exemption_reason = "Training benchmark: outputs change each iteration due to gradient updates"
         # Larger transfers to make H2D optimization measurable on high-bandwidth GPUs
         # The prefetcher benefit is proportional to (H2D time / compute time)
         from core.benchmark.smoke import is_smoke_mode
@@ -82,7 +81,6 @@ class OptimizedDockerBenchmark(BaseBenchmark):
         self.output_dim = 1024 if low_mem else 2048
         self.batch_size = 512 if low_mem else 1024  # Large batch = significant H2D
         self.num_batches = 4 if low_mem else 8
-        self.jitter_exemption_reason = "Docker benchmark: fixed batch size for comparison"
         # Register workload metadata in __init__ for compliance checks
         self.register_workload_metadata(
             requests_per_iteration=1.0,

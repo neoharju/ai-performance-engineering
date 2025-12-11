@@ -35,7 +35,6 @@ class BaselineDockerBenchmark(BaseBenchmark):
         self.output_dim = 1024 if low_mem else 2048
         self.batch_size = 512 if low_mem else 1024  # Large batch = significant H2D
         self.num_batches = 4 if low_mem else 8
-        self.jitter_exemption_reason = "Docker benchmark: fixed batch size for comparison"
         self.model: Optional[nn.Module] = None
         self.optimizer: Optional[torch.optim.Optimizer] = None
         self.host_batches: List[torch.Tensor] = []
@@ -43,7 +42,6 @@ class BaselineDockerBenchmark(BaseBenchmark):
         self.batch_idx = 0
         self.output: Optional[torch.Tensor] = None
         # Training benchmarks don't support jitter check - outputs change due to weight updates
-        self.jitter_exemption_reason = "Training benchmark: outputs change each iteration due to gradient updates"
         # Register workload metadata in __init__ for compliance checks
         self.register_workload_metadata(
             requests_per_iteration=1.0,

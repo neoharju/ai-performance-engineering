@@ -213,7 +213,6 @@ class _MoERoutingTopologyAwareBenchmark(BaseBenchmark):
         self._impl = OptimizedMoERoutingTopologyAware()
         self._metrics = {}
         self.output = None
-        self.jitter_exemption_reason = "MoE routing topology-aware: fixed configuration"
         self.register_workload_metadata(requests_per_iteration=1.0)
 
     def setup(self) -> None:

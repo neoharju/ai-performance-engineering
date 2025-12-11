@@ -51,7 +51,6 @@ class OptimizedPrecisionMixedBenchmark(BaseBenchmark):
             tokens_per_iteration=float(tokens * self.micro_steps),
         )
         self.output = None
-        self.jitter_exemption_reason = "Precision benchmark: fixed dimensions for precision comparison"
         self.register_workload_metadata(
             requests_per_iteration=float(self.micro_steps),
             tokens_per_iteration=float(tokens * self.micro_steps),

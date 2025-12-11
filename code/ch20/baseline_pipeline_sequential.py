@@ -68,7 +68,6 @@ class BaselinePipelineSequentialBenchmark(BaseBenchmark):
         self.hidden_dim = 1536
         self.num_stages = 4
         self.repeats = 6
-        self.jitter_exemption_reason = "Pipeline sequential benchmark: fixed dimensions"
         self.register_workload_metadata(requests_per_iteration=float(self.batch_size))
     
     def get_workload_metadata(self) -> Optional[WorkloadMetadata]:

@@ -24,7 +24,6 @@ class BaselineGemmBenchmark(BaseBenchmark):
         self.m = 2048
         self.n = 2048
         self.k = 2048
-        self.jitter_exemption_reason = "GEMM benchmark: fixed matrix dimensions"
         # Micro-batch size for blocked computation
         self.block_size = 256
         self.num_blocks = self.k // self.block_size

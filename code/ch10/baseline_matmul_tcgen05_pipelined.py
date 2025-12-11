@@ -42,7 +42,6 @@ class BaselineMatmulTCGen05PipelinedBenchmark(BaseBenchmark):
         self.B: Optional[torch.Tensor] = None
         self.module = None
         self.output: Optional[torch.Tensor] = None
-        self.jitter_exemption_reason = "TCGen05 pipelined benchmark: fixed dimensions for comparison"
         self.register_workload_metadata(bytes_per_iteration=float(self.n * self.n * 2 * 3))
 
     def setup(self) -> None:

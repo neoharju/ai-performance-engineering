@@ -32,7 +32,6 @@ class OptimizedKVCacheNvlinkPoolBenchmark(BaseBenchmark):
     def __init__(self):
         super().__init__()
         self.output = None
-        self._verify_input = None
         self.model: Optional[nn.MultiheadAttention] = None
         self.local_cache_limit = 64
         self.peer_cache_limit = 64
@@ -46,7 +45,6 @@ class OptimizedKVCacheNvlinkPoolBenchmark(BaseBenchmark):
             requests_per_iteration=float(self.batch),
             tokens_per_iteration=float(tokens),
         )
-        self.jitter_exemption_reason = "KV cache NVLink pool benchmark: fixed dimensions"
 
     def setup(self) -> None:
         torch.manual_seed(42)
@@ -95,7 +93,7 @@ class OptimizedKVCacheNvlinkPoolBenchmark(BaseBenchmark):
                 k_all = torch.cat(gathered_k, dim=1)
                 v_all = torch.cat(gathered_v, dim=1)
                 out, _ = self.model(q, k_all, v_all)
-                _ = out.sum()
+                self.output = out.detach().clone()
             self._synchronize()
 
     def teardown(self) -> None:

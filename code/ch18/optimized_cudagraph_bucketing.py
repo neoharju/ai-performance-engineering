@@ -361,7 +361,6 @@ class OptimizedCUDAGraphBucketingBenchmark(BaseBenchmark):
     def __init__(self) -> None:
         super().__init__()
         self.output = None
-        self._verify_input = None
         self.vllm_model = "gpt-oss-20b"
         self.use_vllm_bins = True
         self.region = "local"
@@ -378,7 +377,6 @@ class OptimizedCUDAGraphBucketingBenchmark(BaseBenchmark):
             requests_per_iteration=float(batch_size),
             tokens_per_iteration=float(batch_size * seq_len),
         )
-        self.jitter_exemption_reason = "CUDA graph bucketing benchmark: fixed configuration"
 
     def _resolve_device(self) -> torch.device:
         if torch.cuda.is_available():

@@ -57,7 +57,6 @@ class BaselineDataParallelBenchmark(BaseBenchmark):
         self.batch_size = 512
         self.output: Optional[torch.Tensor] = None
         # Training benchmarks don't support jitter check
-        self.jitter_exemption_reason = "Training benchmark: outputs change each iteration due to gradient updates"
         tokens = self.batch_size * self.input_size
         self._workload = WorkloadMetadata(
             requests_per_iteration=float(self.batch_size),

@@ -44,7 +44,6 @@ class TilingBenchmarkBase(BaseBenchmark):
         self.matrix_a: Optional[torch.Tensor] = None
         self.matrix_b: Optional[torch.Tensor] = None
         self.output: Optional[torch.Tensor] = None
-        self.jitter_exemption_reason = "Tiling benchmark: fixed dimensions for accuracy"
         self.register_workload_metadata(requests_per_iteration=1.0)
 
     # --------------------------------------------------------------------- #

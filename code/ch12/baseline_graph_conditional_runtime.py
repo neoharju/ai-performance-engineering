@@ -44,7 +44,6 @@ class BaselineGraphBenchmark(BaseBenchmark):
         super().__init__()
         self.batch_size = 32
         self.seq_len = 512
-        self.jitter_exemption_reason = "Graph conditional runtime: fixed dimensions"
         self.hidden_dim = 2048
         
         self.data: Optional[torch.Tensor] = None

@@ -21,7 +21,6 @@ class BaselineMoERouterUniformBenchmark(BaseBenchmark):
     def __init__(self):
         super().__init__()
         self.num_experts = 16
-        self.jitter_exemption_reason = "MoE router benchmark: fixed expert count"
         self.tokens = 4096
         self.experts: List[int] = list(range(self.num_experts))
         self._workload = WorkloadMetadata(

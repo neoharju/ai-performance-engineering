@@ -72,7 +72,6 @@ class OptimizedTritonBenchmark(BaseBenchmark):
         self.output = None
         self.N = 1_000_000
         # Triton benchmark - fixed N for kernel comparison
-        self.jitter_exemption_reason = "Triton kernel benchmark: fixed N for consistent comparison"
         self._workload = WorkloadMetadata(
             requests_per_iteration=1.0,
             tokens_per_iteration=float(self.N),

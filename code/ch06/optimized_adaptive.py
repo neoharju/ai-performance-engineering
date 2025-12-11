@@ -22,7 +22,6 @@ class OptimizedAdaptiveBenchmark(BaseBenchmark):
         self.prefetch_stream: Optional[torch.cuda.Stream] = None
         self.stage_buffers: list[torch.Tensor] = []
         # Chunked processing benchmark - fixed input size
-        self.jitter_exemption_reason = "Chunked processing benchmark: fixed N to measure chunk strategy"
         self._workload = WorkloadMetadata(
             requests_per_iteration=1.0,
             tokens_per_iteration=float(self.N),

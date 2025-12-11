@@ -68,7 +68,6 @@ class BaselinePieceGraphsBenchmark(BaseBenchmark):
         self.repeats = 12
         self.batch = 16
         self.hidden = 768
-        self.jitter_exemption_reason = "Piece graphs benchmark: fixed dimensions"
         tokens = self.batch * self.hidden * self.repeats
         self._workload = WorkloadMetadata(
             requests_per_iteration=float(self.repeats),

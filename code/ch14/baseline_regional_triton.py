@@ -83,7 +83,6 @@ class BaselineRegionalTritonBenchmark(BaseBenchmark):
             tokens_per_iteration=float(max_tokens),
         )
         self.output = None
-        self.jitter_exemption_reason = "Regional Triton benchmark: fixed sequence schedule for compile comparison"
         self.register_workload_metadata(
             requests_per_iteration=1.0,
             tokens_per_iteration=float(max_tokens),

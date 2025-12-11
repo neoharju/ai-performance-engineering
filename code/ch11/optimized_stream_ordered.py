@@ -28,7 +28,6 @@ class OptimizedStreamOrderedBenchmark(BaseBenchmark):
         self.hidden_dim = 1024
         self.batch_size = 128
         # Stream benchmark - fixed dimensions for overlap measurement
-        self.jitter_exemption_reason = "Stream ordered benchmark: fixed dimensions for overlap measurement"
     
     def setup(self) -> None:
         """Setup: initialize lightweight model and multi-stream buffers.

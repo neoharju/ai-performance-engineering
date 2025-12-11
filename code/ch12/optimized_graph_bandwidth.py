@@ -34,7 +34,6 @@ class OptimizedGraphBandwidthBenchmark(BaseBenchmark):
         self.src = None
         self.dst = None
         self.N = 50_000_000
-        self.jitter_exemption_reason = "Graph bandwidth benchmark: fixed dimensions"
         self.iterations = 10
         self._extension = None
         self._workload = WorkloadMetadata(

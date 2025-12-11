@@ -42,7 +42,6 @@ class MemoryDoubleBufferingBenchmark(BaseBenchmark):
             requests_per_iteration=float(self.micro_batches),
             tokens_per_iteration=float(tokens),
         )
-        self.jitter_exemption_reason = "Memory double buffering benchmark: fixed dimensions"
 
     def setup(self) -> None:
         """Setup: Initialize single-GPU tensors."""

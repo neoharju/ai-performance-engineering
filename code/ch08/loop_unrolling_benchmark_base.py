@@ -42,7 +42,6 @@ class LoopUnrollingBenchmarkBase(BaseBenchmark):
         self.weights: Optional[torch.Tensor] = None
         self.output: Optional[torch.Tensor] = None
         # Loop unrolling benchmark: fixed dimensions for measurement
-        self.jitter_exemption_reason = "Loop unrolling benchmark: fixed dimensions"
 
     def setup(self) -> None:
         self.extension = load_cuda_extension(

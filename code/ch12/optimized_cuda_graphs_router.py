@@ -51,7 +51,6 @@ class CUDAGraphRouterBenchmark(BaseBenchmark):
         self.static_out: Optional[torch.Tensor] = None
         # Match baseline workload signature: N represents total elements processed
         self.N = 1 << 20  # 1M elements to match baseline
-        self.jitter_exemption_reason = "CUDA graphs router benchmark: fixed dimensions"
         self._workload = WorkloadMetadata(tokens_per_iteration=float(self.N))
 
     def setup(self) -> None:

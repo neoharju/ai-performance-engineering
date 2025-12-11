@@ -56,8 +56,8 @@ class OptimizedPersistentDecodeCUDABenchmark(BaseBenchmark):
         self.batch, self.seq_len, self.head_dim = resolve_shapes()
         self.blocks = 8
         self._ext: Optional[object] = None
+        self.output: Optional[torch.Tensor] = None
         self.register_workload_metadata(tokens_per_iteration=tokens_per_iteration())
-        self.jitter_exemption_reason = "Persistent decode CUDA: fixed dimensions"
 
     def setup(self) -> None:
         """Initialize the persistent decode CUDA extension and inputs."""
@@ -89,10 +89,13 @@ class OptimizedPersistentDecodeCUDABenchmark(BaseBenchmark):
             self.blocks,
         )
         torch.cuda.synchronize(self.device)
+        # Capture a representative slice of the output
+        self.output = self.inputs.out[:1, : min(8, self.inputs.out.shape[1])].detach().float().clone()
 
     def teardown(self) -> None:
         torch.cuda.empty_cache()
         self.inputs = None
+        self.output = None
 
     def get_config(self) -> BenchmarkConfig:
         # NOTE: CUDA binary runs external executable, warmup=5 ensures CUDA driver is initialized
@@ -120,11 +123,25 @@ class OptimizedPersistentDecodeCUDABenchmark(BaseBenchmark):
 
     def get_verify_output(self) -> torch.Tensor:
         """Return output tensor for verification comparison."""
-        return torch.tensor([hash(str(id(self))) % (2**31)], dtype=torch.float32)
+        if self.output is None:
+            raise RuntimeError("benchmark_fn() must be called before verification")
+        return self.output
 
     def get_input_signature(self) -> dict:
         """Return input signature for verification."""
-        return {"batch": self.batch, "seq_len": self.seq_len}
+        return {
+            "batch": self.batch,
+            "seq_len": self.seq_len,
+            "head_dim": self.head_dim,
+            "blocks": self.blocks,
+            "shapes": {
+                "q": (self.batch, self.seq_len, self.head_dim),
+                "k": (self.batch, self.seq_len, self.head_dim),
+                "v": (self.batch, self.seq_len, self.head_dim),
+                "out": (self.batch, self.head_dim),
+            },
+            "dtypes": {"q": "float32"},
+        }
 
     def get_output_tolerance(self) -> tuple:
         """Return tolerance for numerical comparison."""

@@ -22,7 +22,6 @@ class OptimizedStorageGdsBenchmark(BaseBenchmark):
         self.size_mb = 64  # Smaller for faster benchmark
         self.size = self.size_mb * 1024 * 1024 // 4  # float32 elements
         # Storage IO benchmark - jitter check not applicable
-        self.jitter_exemption_reason = "Storage IO benchmark: fixed-size data transfer"
         bytes_per_iter = self.size * 4  # one logical transfer retained on device
         self._workload = WorkloadMetadata(
             requests_per_iteration=1.0,

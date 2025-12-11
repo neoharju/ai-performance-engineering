@@ -21,7 +21,6 @@ class BaselineGEMMILPBenchmark(BaseBenchmark):
         self._extension = None
         self.repeats = 4
         # ILP benchmark - fixed input size to measure instruction-level parallelism
-        self.jitter_exemption_reason = "ILP benchmark: fixed N to measure instruction parallelism impact"
         self._workload = WorkloadMetadata(
             requests_per_iteration=float(self.repeats),
             tokens_per_iteration=float(self.N * self.repeats),

@@ -35,7 +35,6 @@ class OptimizedGemmBenchmark(BaseBenchmark):
         self.m = 2048
         self.n = 2048
         self.k = 2048
-        self.jitter_exemption_reason = "GEMM benchmark: fixed matrix dimensions"
         
         self.left: Optional[torch.Tensor] = None
         self.right: Optional[torch.Tensor] = None

@@ -57,7 +57,6 @@ class BaselineMoeInferenceBenchmark(BaseBenchmark):
             tokens_per_iteration=float(self.config.tokens_per_iteration),
         )
         self.output = None
-        self.jitter_exemption_reason = "MoE inference benchmark: fixed dimensions for parallelism comparison"
         self.register_workload_metadata(
             requests_per_iteration=float(self.config.batch_size),
             tokens_per_iteration=float(self.config.tokens_per_iteration),

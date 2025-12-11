@@ -114,9 +114,6 @@ class CudaBinaryBenchmark(BaseBenchmark):
         self.use_reported_time = True
         self._workload_params = workload_params or {}
         
-        # CUDA binaries have fixed dimensions compiled into the binary
-        self.jitter_exemption_reason = "CUDA binary benchmark: workload dimensions are compiled into binary"
-        
         # Verify mode support
         self.verify_checksum_regex = verify_checksum_regex or VERIFY_CHECKSUM_REGEX
         self._verify_checksum_pattern = re.compile(self.verify_checksum_regex)

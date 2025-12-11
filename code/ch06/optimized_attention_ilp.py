@@ -51,7 +51,6 @@ class OptimizedAttentionILPBenchmark(BaseBenchmark):
             tokens_per_iteration=float(token_count),
         )
         # ILP benchmark: fixed dimensions for measurement
-        self.jitter_exemption_reason = "ILP benchmark: fixed dimensions for measurement"
     
     def setup(self) -> None:
         """Setup: Initialize optimized attention model."""

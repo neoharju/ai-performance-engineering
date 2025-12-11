@@ -46,7 +46,6 @@ class BaselineArithmeticIntensityBenchmark(BaseBenchmark):
             requests_per_iteration=1.0,
             tokens_per_iteration=float(tokens),
         )
-        self.jitter_exemption_reason = "Arithmetic intensity benchmark: fixed dimensions"
     
     def setup(self) -> None:
         """Setup: Initialize large tensors."""

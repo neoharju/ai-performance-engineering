@@ -55,7 +55,6 @@ class BaselineMultipleUnoptimizedBenchmark(BaseBenchmark):
             requests_per_iteration=float(self.batch_size),
             tokens_per_iteration=float(tokens),
         )
-        self.jitter_exemption_reason = "Multiple unoptimized benchmark: fixed dimensions"
     
     def setup(self) -> None:
         # FP32 - no tensor core acceleration

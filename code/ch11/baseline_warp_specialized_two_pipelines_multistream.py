@@ -41,7 +41,6 @@ class BaselineDualPipelineBenchmark(BaseBenchmark):
         # Match constants from baseline_warp_specialized_two_pipelines_common.cuh
         self.tile_elems = 1024
         # Warp specialization benchmark - fixed dimensions for pipeline analysis
-        self.jitter_exemption_reason = "Warp specialization benchmark: fixed tile dimensions"
 
     def setup(self) -> None:
         # Gracefully skip on GPUs without DSMEM/cluster support.

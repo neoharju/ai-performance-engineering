@@ -52,7 +52,6 @@ class BandwidthSuiteMultiGPU(BaseBenchmark):
     def __init__(self) -> None:
         super().__init__()
         self.last_bandwidth_gbps: Optional[float] = None
-        self.jitter_exemption_reason = "Bandwidth benchmark suite: fixed dimensions"
         self.register_workload_metadata(requests_per_iteration=1.0)
 
     def setup(self) -> None:

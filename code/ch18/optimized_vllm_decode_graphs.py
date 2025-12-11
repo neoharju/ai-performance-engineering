@@ -239,7 +239,6 @@ class OptimizedVLLMDecodeGraphsBenchmark(BaseBenchmark):
         self._trace: list[int] = default_trace(num_steps=self.steps, seed=self.seed)
         self._driver: Optional[OptimizedDecodeDriver] = None
         self._last_metrics: Optional[DecodeMetrics] = None
-        self.jitter_exemption_reason = "VLLM decode graphs benchmark: fixed configuration"
         self.register_workload_metadata(requests_per_iteration=1.0)
 
     def get_config(self) -> BenchmarkConfig:

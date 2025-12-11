@@ -125,7 +125,6 @@ class OptimizedFSDP2FP8CommBenchmark(BaseBenchmark):
         self._comm_bytes_saved = 0.0
         self.output = None
         self._verify_input = None
-        self.jitter_exemption_reason = "FSDP2 FP8 communication benchmark: fixed dimensions"
         
         tokens = self.batch_size * self.seq_len
         self._workload = WorkloadMetadata(

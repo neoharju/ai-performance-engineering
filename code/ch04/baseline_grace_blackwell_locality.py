@@ -33,12 +33,13 @@ class BaselineGb200LocalityBenchmark(BaseBenchmark):
         self.device_buf: Optional[torch.Tensor] = None
         self.output: Optional[torch.Tensor] = None
         # Memory copy benchmark - jitter check not applicable
-        self.jitter_exemption_reason = "Memory copy benchmark: input is fixed-size buffer"
         tokens = float(self.numel)
         self._workload = WorkloadMetadata(tokens_per_iteration=tokens, requests_per_iteration=1.0)
 
     def setup(self) -> None:
         # Pinned host buffer to simulate “remote” access each iteration.
+        torch.manual_seed(42)
+        torch.cuda.manual_seed_all(42)
         self.host_buf = torch.ones(self.numel, dtype=torch.float32, pin_memory=True)
         # Destination buffer on device.
         self.device_buf = torch.empty_like(self.host_buf, device=self.device, pin_memory=False)
@@ -84,9 +85,9 @@ class BaselineGb200LocalityBenchmark(BaseBenchmark):
 
     def get_verify_output(self) -> torch.Tensor:
         """Return output tensor for verification comparison."""
-        if self.output is not None:
-            return self.output.detach().clone()
-        return torch.tensor([0.0], dtype=torch.float32, device=self.device)
+        if self.output is None:
+            raise RuntimeError("benchmark_fn() must run before verification")
+        return self.output.detach().clone()
     
     def get_output_tolerance(self) -> tuple:
         """Return custom tolerance for memory copy benchmark."""

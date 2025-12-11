@@ -30,7 +30,6 @@ class BaselinePipelineParallelismBenchmark(BaseBenchmark):
             tokens_per_iteration=float(tokens),
         )
         self.output = None
-        self.jitter_exemption_reason = "Pipeline parallelism benchmark: fixed dimensions for comparison"
         self.register_workload_metadata(
             samples_per_iteration=float(self.batch_size),
             tokens_per_iteration=float(tokens),

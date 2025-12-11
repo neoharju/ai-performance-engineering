@@ -20,8 +20,6 @@ class BaselineKVCacheLocalOnlyBenchmark(BaseBenchmark):
     def __init__(self):
         super().__init__()
         self.output = None
-        self._verify_input = None
-        self.jitter_exemption_reason = "Benchmark: fixed dimensions"
         self.model: Optional[nn.MultiheadAttention] = None
         self.cache: Optional[torch.Tensor] = None
         self.hidden = 256
@@ -62,7 +60,7 @@ class BaselineKVCacheLocalOnlyBenchmark(BaseBenchmark):
                 k_all = torch.cat(keys, dim=1)
                 v_all = torch.cat(values, dim=1)
                 out, _ = self.model(q, k_all, v_all)
-                _ = out.sum()
+                self.output = out.detach().clone()
             self._synchronize()
 
     def teardown(self) -> None:

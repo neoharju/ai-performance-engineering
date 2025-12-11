@@ -27,7 +27,6 @@ class BaselineNvlinkTopologyBlindBenchmark(BaseBenchmark):
             requests_per_iteration=1.0,
             tokens_per_iteration=float(self.numel),
         )
-        self.jitter_exemption_reason = "NVLink topology benchmark: fixed buffer size"
 
     def setup(self) -> None:
         torch.manual_seed(7)

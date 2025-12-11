@@ -253,7 +253,6 @@ class FlexAttentionSparseBenchmark(BaseBenchmark):
         self.attn = None
         self.x = None
         self.batch_size = 2
-        self.jitter_exemption_reason = "FlexAttention benchmark: fixed dimensions"
         self.num_heads = 32
         self.head_dim = 128
         self.seq_len = 4096

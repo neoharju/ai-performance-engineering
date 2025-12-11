@@ -64,7 +64,6 @@ class OptimizedSDPAAttentionBenchmark(BaseBenchmark):
         self.output = None
         
         # SDPA benchmark - fixed dimensions for attention comparison
-        self.jitter_exemption_reason = "SDPA attention benchmark: fixed dimensions for roofline analysis"
         
         tokens = self.batch_size * self.seq_len
         self._workload = WorkloadMetadata(

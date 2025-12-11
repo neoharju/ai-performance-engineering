@@ -32,7 +32,6 @@ class BaselineClusterMulticastBenchmark(BaseBenchmark):
         self.inputs: Optional[torch.Tensor] = None
         self.output: Optional[torch.Tensor] = None
         self._workload = WorkloadMetadata(bytes_per_iteration=0.0)
-        self.jitter_exemption_reason = "Cluster multicast benchmark: fixed dimensions"
         self.register_workload_metadata(bytes_per_iteration=0.0)
 
     def setup(self) -> None:

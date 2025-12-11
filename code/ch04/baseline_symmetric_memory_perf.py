@@ -53,7 +53,6 @@ class BaselineSymmetricMemoryPerfBenchmark(BaseBenchmark):
         self._last_avg_ms = 0.0
         self._last_gbps = 0.0
         self._bytes_transferred = 0.0
-        self.jitter_exemption_reason = "Symmetric memory perf benchmark: multi-GPU"
         self.register_workload_metadata(requests_per_iteration=1.0)
 
     def setup(self) -> None:

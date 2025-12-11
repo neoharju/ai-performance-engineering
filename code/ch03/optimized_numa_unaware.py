@@ -36,7 +36,6 @@ class OptimizedNUMAAwareBenchmark(BaseBenchmark):
         self.next_slot = 1
         self.output: Optional[torch.Tensor] = None
         # Memory copy benchmark - jitter check not applicable
-        self.jitter_exemption_reason = "Memory copy benchmark: input is fixed-size buffer"
         bytes_per_iter = 128_000_000 * 4  # float32 bytes (same as baseline)
         # Register workload metadata in __init__ for compliance checks
         self.register_workload_metadata(

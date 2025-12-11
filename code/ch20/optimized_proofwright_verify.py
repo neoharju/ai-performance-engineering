@@ -350,7 +350,6 @@ class OptimizedProofwrightBenchmark(BaseBenchmark):
             tokens_per_iteration=float(self.shape[0] * self.shape[1]),
         )
         self._verification_report: Dict[str, Any] = {}
-        self.jitter_exemption_reason = "Proofwright verification: fixed dimensions"
     
     def setup(self) -> None:
         """Setup: Initialize verification agent and test functions."""

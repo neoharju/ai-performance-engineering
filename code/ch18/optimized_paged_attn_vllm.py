@@ -46,7 +46,6 @@ class OptimizedPagedAttnBenchmark(BaseBenchmark):
         self.qkv: Optional[torch.Tensor] = None
         self.output = None
         self._workload = WorkloadMetadata(tokens_per_iteration=0.0)
-        self.jitter_exemption_reason = "Paged attention vLLM benchmark: fixed dimensions"
 
     def setup(self) -> None:
         torch.manual_seed(1)

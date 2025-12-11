@@ -33,7 +33,6 @@ class BaselineWorkQueueBenchmark(BaseBenchmark):
         self.input_data = None
         self.output_data = None
         self.N = 1 << 20  # 1M elements
-        self.jitter_exemption_reason = "Work queue benchmark: fixed dimensions"
         self.iterations = 5
         self._extension = None
         self._workload = WorkloadMetadata(

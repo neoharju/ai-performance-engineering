@@ -24,7 +24,6 @@ class HBMBenchmarkBase(BaseBenchmark):
     def __init__(self) -> None:
         super().__init__()
         # HBM benchmark - fixed dimensions to measure memory access patterns
-        self.jitter_exemption_reason = "HBM benchmark: fixed matrix dimensions to measure memory access patterns"
         if not torch.cuda.is_available():
             raise RuntimeError("CUDA required for HBM benchmarks")
         self.device = torch.device("cuda")

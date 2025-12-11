@@ -49,7 +49,6 @@ class OptimizedKVCacheManagementMathBenchmark(BaseBenchmark):
             requests_per_iteration=float(self.batch_size),
             tokens_per_iteration=float(tokens),
         )
-        self.jitter_exemption_reason = "KV cache management benchmark: fixed dimensions"
     
     def setup(self) -> None:
         if torch.cuda.is_available():

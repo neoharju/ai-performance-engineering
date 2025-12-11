@@ -43,7 +43,6 @@ class _DynamicQuantizedCacheBenchmark(BaseBenchmark):
             requests_per_iteration=1.0,
             tokens_per_iteration=float(total_tokens),
         )
-        self.jitter_exemption_reason = "Dynamic quantized cache benchmark: fixed configuration"
 
     def get_verify_output(self) -> torch.Tensor:
         """Return output tensor for verification comparison."""

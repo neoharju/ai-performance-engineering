@@ -69,7 +69,6 @@ class OptimizedFlashSDPBenchmark(BaseBenchmark):
             tokens_per_iteration=float(tokens),
         )
         self.output = None
-        self.jitter_exemption_reason = "Flash SDP benchmark: fixed dimensions for attention comparison"
         self.register_workload_metadata(
             requests_per_iteration=float(self.batch),
             tokens_per_iteration=float(tokens),

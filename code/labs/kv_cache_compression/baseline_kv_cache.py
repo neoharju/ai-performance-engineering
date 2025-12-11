@@ -55,7 +55,7 @@ class BaselineKVCacheBenchmark(BaseBenchmark):
         )
         self.runtime_recipe = self.fp8_recipe
         self._fallback_recipe = self.fp8_recipe
-        self.jitter_exemption_reason = "KV cache benchmark: fixed dimensions"
+        self.output: Optional[torch.Tensor] = None
 
     def setup(self) -> None:
         self._setup_with_recipe(self.fp8_recipe)
@@ -126,12 +126,18 @@ class BaselineKVCacheBenchmark(BaseBenchmark):
                 _ = self.model(decode, self.cache, offset)
                 offset += decode.shape[1]
         torch.cuda.synchronize()
+        # Capture a slice of the cache as verification output
+        if self.cache and self.cache.kv is not None:
+            # kv is [2, B, H, T, D]
+            view = self.cache.kv[0, :, :, : min(1, self.cache.kv.shape[3]), : min(8, self.cache.kv.shape[4])]
+            self.output = view.detach().float().clone()
 
     def teardown(self) -> None:
         self.prefill_inputs = []
         self.decode_inputs = []
         self.cache = None
         self.model = None
+        self.output = None
         torch.cuda.empty_cache()
 
     def validate_result(self) -> Optional[str]:
@@ -159,11 +165,32 @@ class BaselineKVCacheBenchmark(BaseBenchmark):
 
     def get_verify_output(self) -> torch.Tensor:
         """Return output tensor for verification comparison."""
-        return torch.tensor([hash(str(id(self))) % (2**31)], dtype=torch.float32)
+        if self.output is None:
+            raise RuntimeError("benchmark_fn() must be called before verification")
+        return self.output
 
     def get_input_signature(self) -> dict:
         """Return input signature for verification."""
-        return {"batch_size": self.batch_size, "hidden_dim": self.hidden_dim}
+        return {
+            "batch_size": self.batch_size,
+            "hidden_dim": self.hidden_dim,
+            "num_heads": self.num_heads,
+            "prefill_seq": self.prefill_seq,
+            "decode_seq": self.decode_seq,
+            "decode_steps": self.decode_steps,
+            "shapes": {
+                "prefill": (self.batch_size, self.prefill_seq // 2, self.hidden_dim),
+                "decode": (self.batch_size, self.decode_seq, self.hidden_dim),
+                "cache": (
+                    2,
+                    self.batch_size,
+                    self.num_heads,
+                    self.prefill_seq + self.decode_seq * self.decode_steps,
+                    self.hidden_dim // self.num_heads,
+                ),
+            },
+            "dtypes": {"activations": str(self.tensor_dtype)},
+        }
 
     def get_output_tolerance(self) -> tuple:
         """Return tolerance for numerical comparison."""

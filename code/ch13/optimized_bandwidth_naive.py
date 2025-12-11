@@ -44,7 +44,6 @@ class OptimizedBandwidthCoalescedBenchmark(BaseBenchmark):
             tokens_per_iteration=float(self.size),
             bytes_per_iteration=float(self.size * 4 * 3),
         )
-        self.jitter_exemption_reason = "Bandwidth benchmark: fixed size for measurement"
     
     def setup(self) -> None:
         """Setup: Initialize large tensors."""

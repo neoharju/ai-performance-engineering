@@ -52,7 +52,6 @@ class OptimizedRackPrepBenchmark(BaseBenchmark):
         super().__init__()
         self.seq_len = 4096
         self.hidden_size = 4096
-        self.jitter_exemption_reason = "Rack prep benchmark: fixed dimensions"
         self.reserve_cores = 2
         self.apply_affinity = False
         self.preferred_nics: List[str] = []

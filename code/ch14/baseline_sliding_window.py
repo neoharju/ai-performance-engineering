@@ -101,7 +101,6 @@ class BaselineSlidingWindowBenchmark(BaseBenchmark):
             tokens_per_iteration=float(tokens),
         )
         self.output = None
-        self.jitter_exemption_reason = "Sliding window benchmark: fixed dimensions for attention comparison"
         self.register_workload_metadata(
             requests_per_iteration=float(self.batch_size),
             tokens_per_iteration=float(tokens),

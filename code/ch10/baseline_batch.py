@@ -36,7 +36,6 @@ class BaselineBatchBenchmark(BaseBenchmark):
             requests_per_iteration=float(self.micro_batches),
             tokens_per_iteration=float(tokens),
         )
-        self.jitter_exemption_reason = "Batch benchmark: fixed dimensions for comparison"
         self.register_workload_metadata(
             requests_per_iteration=float(self.micro_batches),
             tokens_per_iteration=float(tokens),

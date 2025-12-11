@@ -32,7 +32,6 @@ class OptimizedNVLinkBenchmark(BaseBenchmark):
         self.output: Optional[torch.Tensor] = None
         self.N = 10_000_000
         # Memory transfer benchmark - jitter check not applicable
-        self.jitter_exemption_reason = "Memory transfer benchmark: input is fixed-size buffer"
         self._workload = WorkloadMetadata(
             requests_per_iteration=1.0,
             tokens_per_iteration=float(self.N),

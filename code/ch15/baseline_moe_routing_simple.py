@@ -150,7 +150,6 @@ class _MoERoutingSimpleBenchmark(BaseBenchmark):
         self._impl = BaselineMoERoutingSimple()
         self._metrics = {}
         self.output = None
-        self.jitter_exemption_reason = "MoE routing simple: fixed configuration"
         self.register_workload_metadata(requests_per_iteration=1.0)
 
     def setup(self) -> None:

@@ -60,7 +60,6 @@ class OptimizedPipelineOverlapBenchmark(BaseBenchmark):
             tokens_per_iteration=float(self.batch_size),
             samples_per_iteration=float(self.batch_size),
         )
-        self.jitter_exemption_reason = "Pipeline overlap benchmark: fixed dimensions"
     
     def setup(self) -> None:
         if torch.cuda.is_available():

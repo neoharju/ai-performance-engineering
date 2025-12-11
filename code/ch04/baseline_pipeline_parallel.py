@@ -227,7 +227,6 @@ class _PipelineParallelBenchmark(BaseBenchmark):
 
     def __init__(self) -> None:
         super().__init__()
-        self.jitter_exemption_reason = "Pipeline parallel baseline: multi-GPU"
         self.register_workload_metadata(requests_per_iteration=1.0)
 
     def benchmark_fn(self) -> None:

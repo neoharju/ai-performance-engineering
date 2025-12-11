@@ -453,7 +453,6 @@ class FP8PerChannelDemoBenchmark(BaseBenchmark):
         self.batch_size = 32
         self.seq_len = 512
         self.in_features = 4096
-        self.jitter_exemption_reason = "FP8 per-channel demo: fixed dimensions"
         self.out_features = 4096
         self._last = 0.0
         

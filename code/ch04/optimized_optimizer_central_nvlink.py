@@ -32,7 +32,6 @@ class OptimizedOptimizerCentralNvlinkBenchmark(BaseBenchmark):
             requests_per_iteration=float(self.batch_size),
             tokens_per_iteration=float(tokens),
         )
-        self.jitter_exemption_reason = "Optimizer central NVLink benchmark: multi-GPU"
 
     def _enable_peer_access(self) -> None:
         num = torch.cuda.device_count()

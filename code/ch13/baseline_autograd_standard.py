@@ -44,7 +44,6 @@ class BaselineAutogradStandardBenchmark(BaseBenchmark):
             tokens_per_iteration=float(tokens),
         )
         self.output = None
-        self.jitter_exemption_reason = "Autograd benchmark: fixed dimensions for gradient measurement"
         self.register_workload_metadata(
             requests_per_iteration=1.0,
             tokens_per_iteration=float(tokens),

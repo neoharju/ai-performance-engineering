@@ -101,7 +101,6 @@ class OptimizedOverlapDdpBenchmark(BaseBenchmark):
             requests_per_iteration=float(self.batch_size),
             tokens_per_iteration=float(tokens),
         )
-        self.jitter_exemption_reason = "DDP overlap benchmark: multi-GPU"
     
     def setup(self) -> None:
         """Setup: DDP with gradient_as_bucket_view for communication overlap."""

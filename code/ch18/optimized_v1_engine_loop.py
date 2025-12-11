@@ -70,7 +70,6 @@ class OptimizedV1EngineLoopBenchmark(BaseBenchmark):
         self._core_client = None
         self._outputs = None
         self.output = None
-        self.jitter_exemption_reason = "V1 engine loop benchmark: fixed configuration"
         self.register_workload_metadata(requests_per_iteration=1.0)
 
     def get_config(self) -> BenchmarkConfig:

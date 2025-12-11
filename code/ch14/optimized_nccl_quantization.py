@@ -39,7 +39,6 @@ class OptimizedNcclQuantizationBenchmark(BaseBenchmark):
             tokens_per_iteration=float(tokens),
         )
         self.output = None
-        self.jitter_exemption_reason = "NCCL quantization benchmark: fixed dimensions for comm comparison"
         self.register_workload_metadata(
             requests_per_iteration=float(self.num_chunks),
             tokens_per_iteration=float(tokens),

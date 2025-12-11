@@ -278,7 +278,6 @@ class OptimizedSpeculativeDecodingMultiDraftBenchmark(BaseBenchmark):
     def __init__(self):
         super().__init__()
         self._metrics: Dict[str, Any] = {}
-        self.jitter_exemption_reason = "Speculative decoding multi-draft benchmark: fixed dimensions"
         self.register_workload_metadata(requests_per_iteration=1.0)
 
     def benchmark_fn(self) -> None:

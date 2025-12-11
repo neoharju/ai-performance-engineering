@@ -27,7 +27,6 @@ class DTensorMeshBenchmark(BaseBenchmark):
         self.mesh = None
         self.tensor: Optional[torch.Tensor] = None
         self.output: Optional[torch.Tensor] = None
-        self.jitter_exemption_reason = "DTensor mesh benchmark: fixed configuration"
 
     def setup(self) -> None:
         try:

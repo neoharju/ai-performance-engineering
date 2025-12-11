@@ -33,7 +33,6 @@ class BaselineKernelFusionBenchmark(BaseBenchmark):
         super().__init__()
         self.data = None
         self.N = 16_000_000  # Larger size to be memory-bound
-        self.jitter_exemption_reason = "Kernel fusion benchmark: fixed dimensions"
         self.iterations = 10
         self._extension = None
         self._workload = WorkloadMetadata(

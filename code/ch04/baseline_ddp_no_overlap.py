@@ -82,7 +82,6 @@ class BaselineNoOverlapBenchmark(BaseBenchmark):
             requests_per_iteration=float(self.batch_size),
             tokens_per_iteration=float(tokens),
         )
-        self.jitter_exemption_reason = "DDP benchmark: fixed dimensions for distributed testing"
     
     def setup(self) -> None:
         """Setup: smoke-fast, no distributed init to avoid hangs."""

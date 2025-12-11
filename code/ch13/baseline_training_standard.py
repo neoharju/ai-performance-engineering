@@ -101,7 +101,6 @@ class BaselineTrainingBenchmark(BaseBenchmark):
         )
         self._peak_memory_gb = 0.0
         self.output = None
-        self.jitter_exemption_reason = "Training benchmark: fixed dimensions for memory measurement"
         self.register_workload_metadata(
             requests_per_iteration=float(self.batch_size),
             tokens_per_iteration=float(tokens),

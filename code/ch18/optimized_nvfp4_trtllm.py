@@ -31,7 +31,6 @@ class NVFP4TRTLLMBenchmark(BaseBenchmark):
         self._workload = WorkloadMetadata(tokens_per_iteration=0.0)
         self._trt_available = False
         self.output = None
-        self.jitter_exemption_reason = "NVFP4 TensorRT-LLM benchmark: fixed configuration"
 
     def setup(self) -> None:
         # TensorRT-LLM path first, with optional CUDA Graph capture.

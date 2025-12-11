@@ -212,7 +212,6 @@ class BaselineKernelVerificationBenchmark(BaseBenchmark):
             tokens_per_iteration=float(self.shape[0] * self.shape[1]),
         )
         self._verification_results: Dict[str, Any] = {}
-        self.jitter_exemption_reason = "Kernel verification benchmark: fixed shape"
     
     def setup(self) -> None:
         """Setup: Initialize verifier and test functions."""

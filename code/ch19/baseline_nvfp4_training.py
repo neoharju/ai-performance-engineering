@@ -68,7 +68,6 @@ class BaselineNVFP4TrainingBenchmark(BaseBenchmark):
             requests_per_iteration=float(self.micro_batches),
             tokens_per_iteration=float(tokens),
         )
-        self.jitter_exemption_reason = "NVFP4 training benchmark: fixed dimensions"
 
     def setup(self) -> None:
         torch.manual_seed(42)

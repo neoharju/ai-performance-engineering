@@ -1948,6 +1948,8 @@ def _test_chapter_impl(
     accept_regressions: bool = False,
     ncu_metric_set: str = "auto",
     pm_sampling_interval: Optional[int] = None,
+    graph_capture_ratio_threshold: Optional[float] = None,
+    graph_capture_memory_threshold_mb: Optional[float] = None,
     launch_via: str = "python",
     nproc_per_node: Optional[int] = None,
     nnodes: Optional[str] = None,
@@ -2183,10 +2185,15 @@ def _test_chapter_impl(
         config_kwargs["pm_sampling_interval"] = pm_sampling_interval
     elif _defaults_obj is not None:
         config_kwargs["pm_sampling_interval"] = getattr(_defaults_obj, "pm_sampling_interval", None)
-    if args.graph_capture_ratio_threshold is not None:
-        config_kwargs["graph_capture_cheat_ratio_threshold"] = args.graph_capture_ratio_threshold
-    if args.graph_capture_memory_threshold_mb is not None:
-        config_kwargs["graph_capture_memory_threshold_mb"] = args.graph_capture_memory_threshold_mb
+    if graph_capture_ratio_threshold is not None:
+        config_kwargs["graph_capture_cheat_ratio_threshold"] = graph_capture_ratio_threshold
+    if graph_capture_memory_threshold_mb is not None:
+        config_kwargs["graph_capture_memory_threshold_mb"] = graph_capture_memory_threshold_mb
+    elif _defaults_obj is not None:
+        config_kwargs["graph_capture_memory_threshold_mb"] = getattr(_defaults_obj, "graph_capture_memory_threshold_mb", None)
+    # Note: graph_capture thresholds use BenchmarkDefaults values
+    # To customize, add graph_capture_ratio_threshold/graph_capture_memory_threshold_mb
+    # as parameters to _test_chapter_impl and pass from CLI
     base_config = BenchmarkConfig(**config_kwargs)
     logger.info("base_config launch_via=%s", base_config.launch_via)
     if profiling_output_dir:
@@ -5146,6 +5153,8 @@ def test_chapter(
     accept_regressions: bool = False,
     ncu_metric_set: str = "auto",
     pm_sampling_interval: Optional[int] = None,
+    graph_capture_ratio_threshold: Optional[float] = None,
+    graph_capture_memory_threshold_mb: Optional[float] = None,
     launch_via: str = "python",
     nproc_per_node: Optional[int] = None,
     nnodes: Optional[str] = None,
@@ -5178,6 +5187,8 @@ def test_chapter(
         cold_start=cold_start,
         iterations=iterations,
         warmup=warmup,
+        graph_capture_ratio_threshold=graph_capture_ratio_threshold,
+        graph_capture_memory_threshold_mb=graph_capture_memory_threshold_mb,
         only_examples=only_examples,
         accept_regressions=accept_regressions,
         ncu_metric_set=ncu_metric_set,
@@ -5624,6 +5635,8 @@ def main():
             accept_regressions=args.accept_regressions if hasattr(args, "accept_regressions") else False,
             ncu_metric_set=args.ncu_metric_set,
             pm_sampling_interval=args.pm_sampling_interval,
+            graph_capture_ratio_threshold=args.graph_capture_ratio_threshold,
+            graph_capture_memory_threshold_mb=args.graph_capture_memory_threshold_mb,
             launch_via=args.launch_via,
             nproc_per_node=args.nproc_per_node,
             nnodes=args.nnodes,

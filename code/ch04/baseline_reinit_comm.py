@@ -53,7 +53,6 @@ class BaselineReinitCommBenchmark(BaseBenchmark):
             requests_per_iteration=1.0,
             bytes_per_iteration=4.0,  # single float all-reduce
         )
-        self.jitter_exemption_reason = "Reinit comm benchmark: fixed dimensions"
     
     def setup(self) -> None:
         """Setup: Configure distributed environment."""

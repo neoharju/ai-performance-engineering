@@ -122,7 +122,6 @@ class OptimizedTritonPersistentBenchmark(BaseBenchmark):
         self.batch_size = 32
         self.M = 256
         self.N = 256
-        self.jitter_exemption_reason = "Triton persistent benchmark: fixed dimensions"
         self.K = 256
         self.dtype = torch.float16
         self._last = 0.0

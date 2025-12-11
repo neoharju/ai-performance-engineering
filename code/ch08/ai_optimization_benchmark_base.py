@@ -33,7 +33,6 @@ class AiOptimizationBenchmarkBase(BaseBenchmark):
         self.inputs: Optional[torch.Tensor] = None
         self.weights: Optional[torch.Tensor] = None
         self.output: Optional[torch.Tensor] = None
-        self.jitter_exemption_reason = "AI optimization benchmark: fixed dimensions for accuracy"
         self.register_workload_metadata(requests_per_iteration=1.0)
 
     def setup(self) -> None:

@@ -20,7 +20,6 @@ class OptimizedBankConflictsBenchmark(BaseBenchmark):
         self.N = 8_000_000
         self._extension = None
         # Bank conflicts benchmark - fixed input size to demonstrate shared memory patterns
-        self.jitter_exemption_reason = "Bank conflicts benchmark: fixed N to measure shared memory access patterns"
         self._workload = WorkloadMetadata(
             requests_per_iteration=1.0,
             tokens_per_iteration=float(self.N),

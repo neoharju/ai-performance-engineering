@@ -498,7 +498,6 @@ class FP8StaticDemoBenchmark(BaseBenchmark):
         self.batch_size = 32
         self.seq_len = 512
         self.dim = 4096
-        self.jitter_exemption_reason = "FP8 static demo: fixed dimensions"
         self._last = 0.0
         
         tokens = self.batch_size * self.seq_len

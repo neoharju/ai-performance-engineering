@@ -52,7 +52,6 @@ class OptimizedDdpNvlinkOverlapBenchmark(BaseBenchmark):
             tokens_per_iteration=float(tokens),
         )
         self.comm_stream = torch.cuda.Stream(device=self.root_device)
-        self.jitter_exemption_reason = "DDP NVLink overlap benchmark: multi-GPU"
 
     def setup(self) -> None:
         torch.manual_seed(0)

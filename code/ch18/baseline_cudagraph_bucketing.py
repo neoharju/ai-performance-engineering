@@ -92,7 +92,6 @@ class BaselineCUDAGraphBucketingBenchmark(BaseBenchmark):
         self.vllm_model = "gpt-oss-20b"
         self.use_vllm_bins = True
         self._last = None
-        self.jitter_exemption_reason = "CUDA graph bucketing benchmark: fixed configuration"
         self.register_workload_metadata(requests_per_iteration=1.0)
 
     def _resolve_device(self) -> torch.device:

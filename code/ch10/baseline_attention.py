@@ -37,7 +37,6 @@ class BaselineAttentionBenchmark(BaseBenchmark):
         self.head_dim = self.hidden_dim // self.num_heads
         self.scale = 1.0 / (self.head_dim ** 0.5)
         self.output = None
-        self.jitter_exemption_reason = "Attention benchmark: fixed dimensions for comparison"
 
     def setup(self) -> None:
         torch.manual_seed(42)

@@ -158,7 +158,6 @@ class _DisaggregatedPrefillDecodeBenchmark(BaseBenchmark):
         super().__init__()
         self._impl = BaselineDisaggregatedPrefillDecode()
         self._metrics = {}
-        self.jitter_exemption_reason = "Disaggregated prefill/decode: fixed configuration"
         self.register_workload_metadata(requests_per_iteration=1.0)
 
     def setup(self) -> None:

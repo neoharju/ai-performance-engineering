@@ -66,7 +66,6 @@ class OptimizedDataloaderTunedBenchmark(BaseBenchmark):
             tokens_per_iteration=float(self.dataset_size * self.feature_dim),
         )
         self.output = None
-        self.jitter_exemption_reason = "DataLoader benchmark: fixed dataset for loading comparison"
         self.register_workload_metadata(
             requests_per_iteration=float(self.dataset_size // self.batch_size),
             tokens_per_iteration=float(self.dataset_size * self.feature_dim),

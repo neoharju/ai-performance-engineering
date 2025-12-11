@@ -62,7 +62,6 @@ class OptimizedSpeculativeDecodingMathBenchmark(BaseBenchmark):
             requests_per_iteration=1.0,
             tokens_per_iteration=float(tokens),
         )
-        self.jitter_exemption_reason = "Speculative decoding benchmark: fixed dimensions"
 
     def get_input_signature(self) -> dict:
         """Return workload signature for input verification."""

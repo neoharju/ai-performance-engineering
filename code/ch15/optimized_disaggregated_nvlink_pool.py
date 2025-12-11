@@ -211,7 +211,6 @@ class _DisaggregatedNVLinkPoolBenchmark(BaseBenchmark):
 
     def __init__(self) -> None:
         super().__init__()
-        self.jitter_exemption_reason = "Disaggregated NVLink pool: multi-GPU"
         self.register_workload_metadata(requests_per_iteration=1.0)
 
     def benchmark_fn(self) -> None:

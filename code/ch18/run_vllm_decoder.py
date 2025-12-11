@@ -308,7 +308,6 @@ class VLLMMoEInferenceBenchmark(BaseBenchmark):
         self._mem_log_path: Optional[Path] = None
         self._nvlink_warned: bool = False
         self._nvlink_status: str = "unknown"
-        self.jitter_exemption_reason = "vLLM decoder benchmark: fixed configuration"
         self.register_workload_metadata(
             requests_per_iteration=float(self.config.batch_size),
             tokens_per_iteration=float(self.config.tokens_per_iteration),

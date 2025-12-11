@@ -52,7 +52,6 @@ class OptimizedAutotuningBenchmark(BaseBenchmark):
             requests_per_iteration=float(self.batch),
             tokens_per_iteration=float(tokens),
         )
-        self.jitter_exemption_reason = "Autotuning benchmark: fixed dimensions"
 
     def setup(self) -> None:
         torch.manual_seed(0)

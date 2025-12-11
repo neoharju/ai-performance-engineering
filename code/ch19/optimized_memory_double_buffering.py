@@ -37,7 +37,6 @@ class OptimizedMemoryDoubleBufferingBenchmark(BaseBenchmark):
     def __init__(self):
         super().__init__()
         self.output = None
-        self._verify_input = None
         self.device = resolve_device()
         self.model = None
 
@@ -50,7 +49,6 @@ class OptimizedMemoryDoubleBufferingBenchmark(BaseBenchmark):
         self.hidden_dim = 1024
         self.micro_batches = 16
         self.host_batches: list[torch.Tensor] = []
-        self.jitter_exemption_reason = "Memory double buffering benchmark: fixed dimensions"
         self.register_workload_metadata(requests_per_iteration=float(self.micro_batches))
     
     def setup(self) -> None:
@@ -126,7 +124,7 @@ class OptimizedMemoryDoubleBufferingBenchmark(BaseBenchmark):
                     with torch.cuda.stream(self.compute_stream):
                         # Ensure the compute stream only waits when the copy has finished.
                         self.compute_stream.wait_event(current_event)
-                        self.last_output = self.model(current_buffer)
+                        self.output = self.model(current_buffer)
 
                     if i + 1 < self.micro_batches:
                         next_buffer = buffers[(i + 1) % 2]

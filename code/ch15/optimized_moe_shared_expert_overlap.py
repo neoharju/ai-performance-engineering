@@ -28,7 +28,6 @@ class OverlappedMoE(nn.Module):
     def __init__(self, hidden_dim: int = 1024, num_experts: int = 4):
         super().__init__()
         self.output = None
-        self._verify_input = None
         self.gate = nn.Linear(hidden_dim, num_experts, bias=False)
         self.experts = nn.ModuleList(
             [nn.Sequential(nn.Linear(hidden_dim, hidden_dim), nn.SiLU()) for _ in range(num_experts)]
@@ -124,7 +123,6 @@ class OptimizedMoeOverlapBenchmark(BaseBenchmark):
         self.model: Optional[OverlappedMoE] = None
         self.inputs: Optional[torch.Tensor] = None
         self._workload = WorkloadMetadata(tokens_per_iteration=1024.0)
-        self.jitter_exemption_reason = "MoE overlap benchmark: fixed dimensions"
 
     def setup(self) -> None:
         torch.manual_seed(4)

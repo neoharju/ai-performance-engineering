@@ -425,7 +425,6 @@ class SlidingWindowDemoBenchmark(BaseBenchmark):
         self.output = None
         # Match baseline dimensions for fair comparison
         self.batch_size = 4
-        self.jitter_exemption_reason = "Sliding window demo: fixed dimensions"
         self.num_heads = 16
         self.head_dim = 64  # embed_dim(1024) / num_heads(16)
         self.seq_len = 4096

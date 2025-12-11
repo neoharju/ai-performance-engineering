@@ -34,7 +34,6 @@ class BaselineComputeBoundBenchmark(BaseBenchmark):
         self.repeats = 16
         self.N = 4096
         # Compute-bound benchmark - fixed dimensions for roofline analysis
-        self.jitter_exemption_reason = "Compute-bound benchmark: fixed dimensions for roofline analysis"
         tokens = self.N * self.repeats
         self._workload = WorkloadMetadata(
             requests_per_iteration=float(self.repeats),

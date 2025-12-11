@@ -47,7 +47,6 @@ class OptimizedInferenceDisaggregatedBenchmark(BaseBenchmark):
             requests_per_iteration=float(self.batch),
             tokens_per_iteration=float(tokens),
         )
-        self.jitter_exemption_reason = "Inference monolithic benchmark: fixed dimensions"
     
     def setup(self) -> None:
         if torch.cuda.is_available():

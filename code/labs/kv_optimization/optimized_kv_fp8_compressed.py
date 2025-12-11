@@ -49,7 +49,7 @@ class OptimizedKVFP8Compressed(BaseBenchmark):
         self.use_fp8 = use_fp8
         self.use_fp4 = use_fp4
         self._last_metrics: Dict[str, Any] = {}
-        self.jitter_exemption_reason = "KV cache benchmark: fixed dimensions for memory testing"
+        self.output: Optional[torch.Tensor] = None
         self.register_workload_metadata(requests_per_iteration=1.0)
 
         # Determine precision
@@ -206,6 +206,9 @@ class OptimizedKVFP8Compressed(BaseBenchmark):
             "compression_ratio": 2.0 / self.bytes_per_element,
         }
 
+        view = self.kv_cache[:1, :1, :, :, : min(1, self.kv_cache.shape[4]), : min(8, self.kv_cache.shape[5])]
+        self.output = view.detach().float().clone()
+
     def get_custom_metrics(self) -> Dict[str, Any]:
         return self._last_metrics
 
@@ -216,15 +219,37 @@ class OptimizedKVFP8Compressed(BaseBenchmark):
     def teardown(self):
         """Clean up."""
         del self.kv_cache
+        self.output = None
         super().teardown()
 
     def get_verify_output(self) -> torch.Tensor:
         """Return output tensor for verification comparison."""
-        return torch.tensor([hash(str(id(self))) % (2**31)], dtype=torch.float32)
+        if self.output is None:
+            raise RuntimeError("benchmark_fn() must be called before verification")
+        return self.output
 
     def get_input_signature(self) -> dict:
         """Return input signature for verification."""
-        return {"batch_size": self.batch_size, "num_layers": self.num_layers, "use_fp8": self.use_fp8}
+        return {
+            "batch_size": self.batch_size,
+            "num_layers": self.num_layers,
+            "num_heads": self.num_heads,
+            "head_dim": self.head_dim,
+            "max_seq_length": self.max_seq_length,
+            "use_fp8": self.use_fp8,
+            "use_fp4": self.use_fp4,
+            "shapes": {
+                "kv_cache": (
+                    self.batch_size,
+                    self.num_layers,
+                    2,
+                    self.num_heads,
+                    self.max_seq_length,
+                    self.head_dim,
+                )
+            },
+            "dtypes": {"kv_cache": str(self.cache_dtype)},
+        }
 
     def get_output_tolerance(self) -> tuple:
         """Return tolerance for numerical comparison."""

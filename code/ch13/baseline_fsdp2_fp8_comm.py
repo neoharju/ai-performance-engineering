@@ -68,7 +68,6 @@ class BaselineFSDP2FP32CommBenchmark(BaseBenchmark):
         self.batch_size = 4
         self.seq_len = 512
         self.hidden_dim = 4096
-        self.jitter_exemption_reason = "FSDP2 FP8 communication benchmark: fixed dimensions"
         self.num_layers = 4
         self._last = 0.0
         self._comm_bytes = 0.0

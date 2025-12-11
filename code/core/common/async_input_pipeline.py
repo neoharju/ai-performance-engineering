@@ -72,7 +72,6 @@ class AsyncInputPipelineBenchmark(BaseBenchmark):
         self.model: Optional[nn.Module] = None
         self.copy_stream: Optional[torch.cuda.Stream] = None
         self.compute_stream: Optional[torch.cuda.Stream] = None
-        self.jitter_exemption_reason = "Async input pipeline benchmark: fixed configuration"
         self.register_workload_metadata(samples_per_iteration=self.cfg.batch_size)
 
     def setup(self) -> None:

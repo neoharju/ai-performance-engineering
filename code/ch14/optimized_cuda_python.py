@@ -188,7 +188,6 @@ class OptimizedCudaPythonBenchmark(BaseBenchmark):
             requests_per_iteration=float(self.batch),
             tokens_per_iteration=float(tokens),
         )
-        self.jitter_exemption_reason = "CUDA Python benchmark: fixed dimensions for kernel comparison"
         self.register_workload_metadata(
             requests_per_iteration=float(self.batch),
             tokens_per_iteration=float(tokens),

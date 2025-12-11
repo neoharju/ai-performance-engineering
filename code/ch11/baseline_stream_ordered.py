@@ -25,7 +25,6 @@ class BaselineStreamOrderedBenchmark(BaseBenchmark):
         self.num_streams = 4
         self.num_requests = 32  # More requests to amortize overhead
         # Stream benchmark - fixed dimensions for overlap measurement
-        self.jitter_exemption_reason = "Stream ordered benchmark: fixed dimensions for overlap measurement"
 
     def setup(self) -> None:
         torch.manual_seed(42)

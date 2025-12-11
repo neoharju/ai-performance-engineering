@@ -37,7 +37,6 @@ class BaselineKubernetesBenchmark(BaseBenchmark):
         self.batch_idx = 0
         self.output: Optional[torch.Tensor] = None
         # Training benchmarks don't support jitter check - outputs change due to weight updates
-        self.jitter_exemption_reason = "Training benchmark: outputs change each iteration due to gradient updates"
         # Two float32 batches per step: inputs + targets (512x1024 elements each)
         elements = 2 * 512 * 1024
         # Register workload metadata in __init__ for compliance checks

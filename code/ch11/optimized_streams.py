@@ -44,7 +44,6 @@ class OptimizedStreamsBenchmark(BaseBenchmark):
         self.N = 5_000_000  # Elements per chunk - balanced for H2D/compute overlap
         self.num_chunks = 20  # More chunks to amortize pipeline startup
         # Stream benchmark - fixed dimensions for overlap measurement
-        self.jitter_exemption_reason = "Stream benchmark: fixed N for consistent overlap measurement"
     
     def setup(self) -> None:
         """Setup: Initialize streams, pinned memory, and device buffers."""

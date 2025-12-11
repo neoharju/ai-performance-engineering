@@ -59,7 +59,6 @@ class BaselineKernelLaunchesBenchmark(BaseBenchmark):
             tokens_per_iteration=float(tokens),
         )
         # Kernel launch benchmark - fixed dimensions for consistent overhead measurement
-        self.jitter_exemption_reason = "Kernel launch benchmark: fixed size for overhead measurement"
     
     def setup(self) -> None:
         """Setup: initialize tensor."""

@@ -44,7 +44,6 @@ class OptimizedDualPipelineBenchmark(BaseBenchmark):
         self.tiles = 128  # Same as baseline for fair comparison
         self.baseline_total_elements = self.tiles * self.tile_elems
         # Warp specialization benchmark - fixed dimensions for pipeline analysis
-        self.jitter_exemption_reason = "Warp specialization benchmark: fixed tile dimensions"
 
     def setup(self) -> None:
         torch.manual_seed(42)  # Match baseline seed

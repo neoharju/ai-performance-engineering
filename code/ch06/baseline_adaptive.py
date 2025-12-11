@@ -20,7 +20,6 @@ class BaselineAdaptiveBenchmark(BaseBenchmark):
         self.N = 4_000_000
         self.static_chunk = 2048
         # Chunked processing benchmark - fixed input size
-        self.jitter_exemption_reason = "Chunked processing benchmark: fixed N to measure chunk strategy"
         self._workload = WorkloadMetadata(
             requests_per_iteration=1.0,
             tokens_per_iteration=float(self.N),

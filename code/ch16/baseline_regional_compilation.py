@@ -74,7 +74,6 @@ class BaselineRegionalCompilationBenchmark(BaseBenchmark):
         self.inputs: Optional[torch.Tensor] = None
         # Use a mid-sized config so the full-graph compilation cost is noticeable.
         self.choice = MODEL_CANDIDATES[4]  # 6B-style config (24x4096)
-        self.jitter_exemption_reason = "Regional compilation benchmark: fixed model config"
         tokens = self.choice["seq_len"] * self.choice["d_model"]
         self._workload = WorkloadMetadata(
             requests_per_iteration=1.0,

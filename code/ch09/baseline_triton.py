@@ -45,7 +45,6 @@ class BaselineTritonBenchmark(BaseBenchmark):
         self.output: Optional[torch.Tensor] = None
         self.N = 1_000_000
         # Triton benchmark - fixed N for kernel comparison
-        self.jitter_exemption_reason = "Triton kernel benchmark: fixed N for consistent comparison"
         tokens = self.N
         self._workload = WorkloadMetadata(
             requests_per_iteration=1.0,

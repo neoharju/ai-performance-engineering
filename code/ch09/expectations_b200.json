@@ -1,5 +1,30 @@
 {
   "examples": {
+    "compute_bound": {
+      "example": "compute_bound",
+      "metadata": {
+        "best_optimization": "optimized_compute_bound",
+        "best_optimization_file": "optimized_compute_bound.py",
+        "best_optimization_speedup": 3.716590984678388,
+        "best_optimization_time_ms": 0.27405760288238523,
+        "git_commit": "838b20d6bf245d2cfd0dbbf172931688c51448b1",
+        "updated_at": "2025-12-11T07:22:21.705520"
+      },
+      "metrics": {
+        "baseline_p75_ms": 1.0459840297698975,
+        "baseline_throughput.latency_ms": 1.0185600161552428,
+        "baseline_throughput.requests_per_s": 15708.45089756731,
+        "baseline_throughput.tokens_per_s": 64341814.876435705,
+        "baseline_time_ms": 1.0185600161552428,
+        "best_optimized_p75_ms": 0.28044798970222473,
+        "best_optimized_speedup": 3.716590984678388,
+        "best_optimized_throughput.latency_ms": 0.27405760288238523,
+        "best_optimized_throughput.requests_per_s": 3648.8679368226126,
+        "best_optimized_time_ms": 0.27405760288238523,
+        "best_speedup": 3.716590984678388
+      },
+      "type": "python"
+    },
     "cutlass_gemm": {
       "example": "cutlass_gemm",
       "metadata": {
@@ -158,6 +183,31 @@
       },
       "type": "cuda"
     },
+    "memory_bound": {
+      "example": "memory_bound",
+      "metadata": {
+        "best_optimization": "optimized_memory_bound",
+        "best_optimization_file": "optimized_memory_bound.py",
+        "best_optimization_speedup": 29.081525660541065,
+        "best_optimization_time_ms": 0.08401759974658489,
+        "git_commit": "838b20d6bf245d2cfd0dbbf172931688c51448b1",
+        "updated_at": "2025-12-11T07:23:56.621285"
+      },
+      "metrics": {
+        "baseline_p75_ms": 2.4475839138031006,
+        "baseline_throughput.latency_ms": 2.443359982967377,
+        "baseline_throughput.requests_per_s": 26193.438726238855,
+        "baseline_throughput.tokens_per_s": 439452979292.87415,
+        "baseline_time_ms": 2.443359982967377,
+        "best_optimized_p75_ms": 0.08684799820184708,
+        "best_optimized_speedup": 29.081525660541065,
+        "best_optimized_throughput.latency_ms": 0.08401759974658489,
+        "best_optimized_throughput.requests_per_s": 11902.268132108207,
+        "best_optimized_time_ms": 0.08401759974658489,
+        "best_speedup": 29.081525660541065
+      },
+      "type": "python"
+    },
     "micro_tiling_matmul_cuda": {
       "example": "micro_tiling_matmul",
       "metadata": {
@@ -212,12 +262,12 @@
         "best_optimization": "optimized_triton",
         "best_optimization_file": "optimized_triton.py",
         "best_optimization_speedup": 1.163301765443533,
-        "best_optimization_time_ms": 0.046218239925801756,
-        "git_commit": "c5ef1b8b5def5ee5ea8b2fb98ec1b18d0a013456",
-        "updated_at": "2025-12-09T17:34:37.472075"
+        "best_optimization_time_ms": 0.04954143986105919,
+        "git_commit": "838b20d6bf245d2cfd0dbbf172931688c51448b1",
+        "updated_at": "2025-12-11T07:24:43.610575"
       },
       "metrics": {
-        "baseline_p75_ms": 0.05283199995756149,
+        "baseline_p75_ms": 0.06825599819421768,
         "baseline_throughput.latency_ms": 0.053765760101377964,
         "baseline_throughput.requests_per_s": 18599.1976699381,
         "baseline_throughput.tokens_per_s": 18599197669.938103,

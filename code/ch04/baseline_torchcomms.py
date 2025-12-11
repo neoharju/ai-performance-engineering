@@ -79,7 +79,6 @@ class BaselineTorchcommsBenchmark(BaseBenchmark):
             tokens_per_iteration=float(tokens),
         )
         self._bytes_transferred = 0
-        self.jitter_exemption_reason = "Torchcomms benchmark: multi-GPU"
         self.register_workload_metadata(
             requests_per_iteration=float(self.batch),
             tokens_per_iteration=float(tokens),
@@ -195,7 +194,6 @@ def get_benchmark() -> BaseBenchmark:
         class _SkipBenchmark(BaseBenchmark):
             def __init__(self) -> None:
                 super().__init__()
-                self.jitter_exemption_reason = "Skip benchmark: insufficient GPUs"
                 self.register_workload_metadata(requests_per_iteration=1.0)
             def get_config(self) -> BenchmarkConfig:
                 return BenchmarkConfig(iterations=1, warmup=5)

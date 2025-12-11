@@ -34,7 +34,6 @@ class OptimizedIlpBasicBenchmark(BaseBenchmark):
         super().__init__()
         self.input = None
         self.output = None
-        self.jitter_exemption_reason = "ILP benchmark: fixed size for comparison"
         # Target workload size for optimal ILP demonstration
         original_N = 100_000_000  # 100M elements (~400 MB FP32)
         
@@ -169,7 +168,8 @@ class OptimizedIlpBasicBenchmark(BaseBenchmark):
         """Return output tensor for verification comparison."""
         if self.output is None:
             raise RuntimeError("Output not available - run benchmark first")
-        return self.output
+        sample_size = min(1024, self.output.numel())
+        return self.output.reshape(-1)[:sample_size].detach().clone()
 
     def get_input_signature(self) -> dict:
         """Return input signature for verification."""

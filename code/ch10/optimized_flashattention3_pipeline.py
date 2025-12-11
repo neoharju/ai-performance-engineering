@@ -299,7 +299,6 @@ class OptimizedFlashAttention3Benchmark(BaseBenchmark):
             tokens_per_iteration=float(tokens),
         )
         self.output = None
-        self.jitter_exemption_reason = "FlashAttention3 benchmark: fixed dimensions for comparison"
         self.register_workload_metadata(
             requests_per_iteration=float(self.batch_size),
             tokens_per_iteration=float(tokens),

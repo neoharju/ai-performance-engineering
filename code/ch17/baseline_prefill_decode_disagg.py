@@ -64,7 +64,6 @@ class BaselinePrefillDecodeMonolithicBenchmark(BaseBenchmark):
         self._history: Dict[str, List[float]] = {"ttft": [], "tpot": []}
         # Workload dimensions for signature matching
         self.batch_size = 1
-        self.jitter_exemption_reason = "Prefill/decode benchmark: fixed dimensions"
         self.prefill_seq = 256
         self.decode_seq = 16
         self._workload = WorkloadMetadata(

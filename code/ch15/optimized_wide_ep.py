@@ -70,7 +70,6 @@ class WideExpertParallelBenchmark(BaseBenchmark):
             requests_per_iteration=1.0,
             tokens_per_iteration=1024.0,
         )
-        self.jitter_exemption_reason = "Wide expert parallel benchmark: fixed dimensions"
 
     def setup(self) -> None:
         torch.manual_seed(2)

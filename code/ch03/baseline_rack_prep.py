@@ -33,7 +33,6 @@ class BaselineRackPrepBenchmark(BaseBenchmark):
         super().__init__()
         self.seq_len = 4096
         self.hidden_size = 4096
-        self.jitter_exemption_reason = "Rack prep benchmark: fixed dimensions"
         self.host_batch: Optional[torch.Tensor] = None
         self.device_batch: Optional[torch.Tensor] = None
         self.norm: Optional[nn.Module] = None

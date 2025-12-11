@@ -70,7 +70,6 @@ class BaselineMXFP8MoEBenchmark(BaseBenchmark):
         self.m_splits: List[int] = []
         self.weights: Optional[torch.Tensor] = None
         self.matmul_ref: Optional[_NaiveMXFP8Matmul] = None
-        self.jitter_exemption_reason = "MXFP8 MoE benchmark: fixed dimensions"
         self.register_workload_metadata(requests_per_iteration=1.0)
 
     def setup(self) -> None:

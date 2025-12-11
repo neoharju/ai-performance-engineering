@@ -105,7 +105,6 @@ class OptimizedNVFP4TrainingBenchmark(BaseBenchmark):
         self.active_recipe = None
         self.use_nvfp4 = False
         self._probe_error: Optional[Exception] = None
-        self.jitter_exemption_reason = "NVFP4 training benchmark: fixed dimensions"
         self.register_workload_metadata(requests_per_iteration=float(self.micro_batches))
 
     def setup(self) -> None:

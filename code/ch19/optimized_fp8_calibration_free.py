@@ -293,7 +293,6 @@ class _FP8CalibrationFreeBenchmark(BaseBenchmark):
         super().__init__()
         self._impl = OptimizedFP8CalibrationFree()
         self._output = None
-        self.jitter_exemption_reason = "FP8 calibration-free: fixed configuration"
         self.register_workload_metadata(requests_per_iteration=1.0)
 
     def setup(self) -> None:

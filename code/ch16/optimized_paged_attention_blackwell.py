@@ -48,7 +48,6 @@ class PagedAttentionBlackwellBenchmark(BaseBenchmark):
         self.num_heads = 16
         self.head_dim = self.hidden_dim // self.num_heads
         self.dtype = torch.float16
-        self.jitter_exemption_reason = "Paged attention benchmark: fixed dimensions"
         self.register_workload_metadata(
             requests_per_iteration=float(self.batch_size),
             tokens_per_iteration=float(self.batch_size * self.seq_length),

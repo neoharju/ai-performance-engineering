@@ -59,7 +59,6 @@ class OptimizedMoeBenchmark(BaseBenchmark):
             requests_per_iteration=float(self.batch),
             tokens_per_iteration=float(tokens),
         )
-        self.jitter_exemption_reason = "MoE benchmark: fixed dimensions"
 
     def setup(self) -> None:
         torch.manual_seed(1)

@@ -24,7 +24,6 @@ class BaselineQuantizationILPBenchmark(BaseBenchmark):
             tokens_per_iteration=float(self.N),
         )
         # ILP benchmark: fixed dimensions for measurement
-        self.jitter_exemption_reason = "Quantization ILP benchmark: fixed dimensions"
     
     def setup(self) -> None:
         """Setup: Initialize full precision tensors."""

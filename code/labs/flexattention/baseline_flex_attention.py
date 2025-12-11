@@ -36,12 +36,12 @@ class BaselineFlexAttentionBenchmark(BaseBenchmark):
         self.doc_span = 256
         self.inputs = None
         self.score_mod = None
+        self.output: Optional[torch.Tensor] = None
         tokens = self.batch * self.seq_len
         self._workload = WorkloadMetadata(
             requests_per_iteration=float(self.batch),
             tokens_per_iteration=float(tokens),
         )
-        self.jitter_exemption_reason = "FlexAttention benchmark: fixed dimensions"
 
     def setup(self) -> None:
         self.inputs = build_flex_attention_inputs(
@@ -63,7 +63,7 @@ class BaselineFlexAttentionBenchmark(BaseBenchmark):
 
         with self._nvtx_range("flexattention_baseline"):
             with torch.inference_mode():
-                _ = flex_attention(
+                result = flex_attention(
                     self.inputs.q,
                     self.inputs.k,
                     self.inputs.v,
@@ -71,11 +71,14 @@ class BaselineFlexAttentionBenchmark(BaseBenchmark):
                     block_mask=self.inputs.block_mask,
                 )
             self._synchronize()
+            output_tensor = result[0] if isinstance(result, (tuple, list)) else result
+            self.output = output_tensor.detach().float().clone()
 
     def teardown(self) -> None:
         torch.cuda.empty_cache()
         self.inputs = None
         self.score_mod = None
+        self.output = None
 
     def get_config(self) -> BenchmarkConfig:
         return BenchmarkConfig(
@@ -110,11 +113,26 @@ class BaselineFlexAttentionBenchmark(BaseBenchmark):
 
     def get_verify_output(self) -> torch.Tensor:
         """Return output tensor for verification comparison."""
-        return torch.tensor([hash(str(id(self))) % (2**31)], dtype=torch.float32)
+        if self.output is None:
+            raise RuntimeError("benchmark_fn() must be called before verification")
+        return self.output
 
     def get_input_signature(self) -> dict:
         """Return input signature for verification."""
-        return {"batch": self.batch, "seq_len": self.seq_len, "heads": self.heads}
+        return {
+            "batch": self.batch,
+            "seq_len": self.seq_len,
+            "heads": self.heads,
+            "head_dim": self.head_dim,
+            "block_size": self.block_size,
+            "doc_span": self.doc_span,
+            "shapes": {
+                "q": (self.batch, self.heads, self.seq_len, self.head_dim),
+                "k": (self.batch, self.heads, self.seq_len, self.head_dim),
+                "v": (self.batch, self.heads, self.seq_len, self.head_dim),
+            },
+            "dtypes": {"q": str(self.dtype), "k": str(self.dtype), "v": str(self.dtype)},
+        }
 
     def get_output_tolerance(self) -> tuple:
         """Return tolerance for numerical comparison."""

@@ -17,7 +17,6 @@ class BaselineDistributedBenchmark(BaseBenchmark):
         super().__init__()
         self.data: Optional[torch.Tensor] = None
         self.N = 10_000_000
-        self.jitter_exemption_reason = "Distributed benchmark: fixed size for comparison"
         self._workload = WorkloadMetadata(
             requests_per_iteration=1.0,
             tokens_per_iteration=float(self.N),

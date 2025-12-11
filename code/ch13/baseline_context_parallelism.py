@@ -232,7 +232,6 @@ class BaselineContextParallelismBenchmark(BaseBenchmark):
     def __init__(self):
         super().__init__()
         self._metrics: Dict[str, Any] = {}
-        self.jitter_exemption_reason = "Context parallelism benchmark: fixed configuration"
         self.register_workload_metadata(requests_per_iteration=1.0)
 
     def setup(self) -> None:  # noqa: D401 - harness hook

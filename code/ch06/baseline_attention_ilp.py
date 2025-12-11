@@ -30,7 +30,6 @@ class BaselineAttentionILPBenchmark(BaseBenchmark):
         )
         self._last_sum: Optional[torch.Tensor] = None
         # ILP benchmark: fixed dimensions for measurement
-        self.jitter_exemption_reason = "ILP benchmark: fixed dimensions for measurement"
 
     def setup(self) -> None:
         """Setup: Initialize attention model."""

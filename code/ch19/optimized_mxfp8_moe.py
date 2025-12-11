@@ -73,7 +73,6 @@ class OptimizedMXFP8MoEBenchmark(BaseBenchmark):
         self._graph: Optional[torch.cuda.CUDAGraph] = None
         self._graph_out: Optional[torch.Tensor] = None
         self._graph_weight: Optional[torch.Tensor] = None
-        self.jitter_exemption_reason = "MXFP8 MoE benchmark: fixed dimensions"
         self.register_workload_metadata(requests_per_iteration=1.0)
 
     @staticmethod

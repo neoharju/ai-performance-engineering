@@ -77,7 +77,6 @@ class BaselineInferenceMonolithicBenchmark(BaseBenchmark):
             requests_per_iteration=1.0,
             tokens_per_iteration=self.prefill_seq + self.num_tokens,
         )
-        self.jitter_exemption_reason = "Inference monolithic benchmark: fixed dimensions"
     
     def setup(self) -> None:
         """Setup: initialize model and data."""

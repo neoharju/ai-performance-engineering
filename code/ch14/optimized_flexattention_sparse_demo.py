@@ -454,7 +454,6 @@ class FlexAttentionSparseDemoBenchmark(BaseBenchmark):
         super().__init__()
         self.demo_benchmark = None
         self.batch_size = 2
-        self.jitter_exemption_reason = "FlexAttention demo: fixed dimensions"
         self.num_heads = 32
         self.head_dim = 128
         self.seq_len = 2048

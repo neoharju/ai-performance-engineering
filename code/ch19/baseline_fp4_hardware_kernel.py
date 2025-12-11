@@ -26,7 +26,6 @@ class BaselineFP4HardwareKernelBenchmark(BaseBenchmark):
         self.chapter_dir = Path(__file__).parent
         self.bin_path = self.chapter_dir / "baseline_fp4_hardware_kernel"
         # Binary benchmark: no tensor output available
-        self.jitter_exemption_reason = "FP4 hardware binary: workload dimensions compiled into binary"
 
     def setup(self) -> None:
         # Build without arch suffix so we know the binary name deterministically.

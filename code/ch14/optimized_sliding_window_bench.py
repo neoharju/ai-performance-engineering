@@ -86,7 +86,6 @@ class OptimizedSlidingWindowBenchmark(BaseBenchmark):
         self.x = None
         self.batch_size = 4
         self.seq_len = 4096  # Same as baseline for fair comparison
-        self.jitter_exemption_reason = "Sliding window benchmark: fixed dimensions"
         self.embed_dim = 1024
         self.num_heads = 16
         self.dtype = torch.float16  # Flash Attention works best with float16

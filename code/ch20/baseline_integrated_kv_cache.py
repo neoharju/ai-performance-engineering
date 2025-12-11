@@ -78,7 +78,6 @@ class AttentionLayer(nn.Module):
     def __init__(self, hidden_dim: int, num_heads: int, head_dim: int, dtype: torch.dtype = torch.float16):
         super().__init__()
         self.output = None
-        self._verify_input = None
         self.num_heads = num_heads
         self.head_dim = head_dim
         self.qkv = nn.Linear(hidden_dim, hidden_dim * 3, dtype=dtype)
@@ -124,7 +123,6 @@ class BaselineIntegratedKVCacheBenchmark(BaseBenchmark):
         self.hidden_dim = self.num_heads * self.head_dim
         self.batch_size = 1
         self.sequence_lengths = [512, 1024, 2048]
-        self.jitter_exemption_reason = "Integrated KV cache benchmark: fixed dimensions"
         self.register_workload_metadata(requests_per_iteration=1.0)
     
     def setup(self) -> None:

@@ -42,7 +42,6 @@ class OptimizedExpertParallelismBenchmark(BaseBenchmark):
             tokens_per_iteration=float(tokens),
         )
         self.output = None
-        self.jitter_exemption_reason = "Expert parallelism benchmark: fixed dimensions for MoE comparison"
         self.register_workload_metadata(
             requests_per_iteration=1.0,
             tokens_per_iteration=float(tokens),

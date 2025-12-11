@@ -36,7 +36,6 @@ class BaselineMemoryBenchmark(BaseBenchmark):
             tokens_per_iteration=float(tokens),
         )
         self.output = None
-        self.jitter_exemption_reason = "Memory benchmark: fixed dimensions for allocation comparison"
         self.register_workload_metadata(
             requests_per_iteration=float(self.repetitions),
             tokens_per_iteration=float(tokens),

@@ -53,7 +53,6 @@ class OptimizedWarpSpecializationPipelineBenchmark(BaseBenchmark):
         self.compute_stream = torch.cuda.Stream()
         self.consumer_stream = torch.cuda.Stream()
         self.output: Optional[torch.Tensor] = None
-        self.jitter_exemption_reason = "Warp specialization benchmark: fixed dimensions"
 
     def setup(self) -> None:
         """Setup: Initialize model with warp specialization."""

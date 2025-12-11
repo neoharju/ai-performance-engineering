@@ -27,11 +27,11 @@ class BaselinePersistentDecodeBenchmark(BaseBenchmark):
         super().__init__()
         self.device = resolve_device()
         self.inputs = None
+        self.output: Optional[torch.Tensor] = None
         batch, seq_len, _ = resolve_shapes()
         self.seq_len = seq_len
         self.batch = batch
         self.register_workload_metadata(tokens_per_iteration=tokens_per_iteration())
-        self.jitter_exemption_reason = "Persistent decode benchmark: fixed dimensions"
 
     def setup(self) -> None:
         self.inputs = build_inputs(self.device)
@@ -55,10 +55,14 @@ class BaselinePersistentDecodeBenchmark(BaseBenchmark):
             for t in range(self.seq_len):
                 self._decode_step(t)
             self._synchronize()
+            if self.inputs is not None:
+                # Capture a slice of the output tensor
+                self.output = self.inputs.out[:1, : min(8, self.inputs.out.shape[1])].detach().float().clone()
 
     def teardown(self) -> None:
         torch.cuda.empty_cache()
         self.inputs = None
+        self.output = None
 
     def get_config(self) -> BenchmarkConfig:
         # Keep iterations small; focus on relative speedups and profiling
@@ -86,11 +90,22 @@ class BaselinePersistentDecodeBenchmark(BaseBenchmark):
 
     def get_verify_output(self) -> torch.Tensor:
         """Return output tensor for verification comparison."""
-        return torch.tensor([hash(str(id(self))) % (2**31)], dtype=torch.float32)
+        if self.output is None:
+            raise RuntimeError("benchmark_fn() must be called before verification")
+        return self.output
 
     def get_input_signature(self) -> dict:
         """Return input signature for verification."""
-        return {"batch": self.batch, "seq_len": self.seq_len}
+        return {
+            "batch": self.batch,
+            "seq_len": self.seq_len,
+            "shapes": {
+                "q": (self.batch, self.seq_len, self.head_dim if hasattr(self.inputs, 'q') else 1),
+                "k": (self.batch, self.seq_len, self.head_dim if hasattr(self.inputs, 'k') else 1),
+                "v": (self.batch, self.seq_len, self.head_dim if hasattr(self.inputs, 'v') else 1),
+                "out": (self.batch, self.head_dim if hasattr(self.inputs, 'out') else self.seq_len),
+            },
+        }
 
     def get_output_tolerance(self) -> tuple:
         """Return tolerance for numerical comparison."""

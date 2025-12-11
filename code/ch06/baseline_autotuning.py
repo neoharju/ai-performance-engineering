@@ -20,7 +20,6 @@ class BaselineAutotuningBenchmark(BaseBenchmark):
         self.N = 4_000_000
         self.block_size = 2048  # Fixed micro-chunk
         # Autotuning benchmark - fixed input size
-        self.jitter_exemption_reason = "Autotuning benchmark: fixed N to measure parameter tuning impact"
         self._workload = WorkloadMetadata(
             requests_per_iteration=1.0,
             tokens_per_iteration=float(self.N),
