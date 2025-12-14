@@ -333,6 +333,13 @@ def setup(self) -> None:
 - **Exception (rare):** If a benchmark must enable determinism for correctness/debuggability, it MUST include an explicit file-level justification comment so `aisp bench audit` can allowlist it:
   - `# aisp: allow_determinism <short reason>`
 
+## Tests for New Functionality (CRITICAL)
+
+- Any new functionality (new checks, CLI behavior, verification logic, benchmark validity protections) MUST ship with tests.
+- Tests MUST exercise real code paths (no mocking) and must fail without the new functionality.
+  - Prefer: temp files + real imports, subprocess CLI invocations, and end-to-end checks where feasible.
+  - If you believe mocking is unavoidable, STOP and ask for explicit approval first.
+
 ## Harness Verification Architecture (IMPORTANT)
 
 The harness uses **POST-TIMING VERIFICATION** - verification happens AFTER timing runs complete, using the outputs from the already-run benchmarks. This is efficient:

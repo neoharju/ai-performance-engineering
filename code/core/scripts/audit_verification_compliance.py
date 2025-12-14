@@ -33,15 +33,24 @@ def _scan_source_compliance(filepath: Path) -> Dict[str, bool]:
     flags = {
         "no_seed_setting_in_benchmark_fn": True,
         "no_payload_set_in_benchmark_fn": True,
+        # Best-practice checks (see AGENTS.md).
+        # NOTE: This is a *lint-style* signal; it should not run benchmark code.
+        "determinism_toggles_present": False,
+        "no_determinism_enable_without_justification": True,
     }
 
     try:
-        tree = ast.parse(filepath.read_text(encoding="utf-8"), filename=str(filepath))
+        source = filepath.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=str(filepath))
     except Exception:
         # If the file cannot be parsed, treat as non-compliant for source checks.
         flags["no_seed_setting_in_benchmark_fn"] = False
         flags["no_payload_set_in_benchmark_fn"] = False
+        flags["no_determinism_enable_without_justification"] = False
         return flags
+
+    allow_determinism = "aisp: allow_determinism" in source.lower()
+    deterministic_enabled = False
 
     def _is_seed_call(call: ast.Call) -> bool:
         func = call.func
@@ -69,6 +78,20 @@ def _scan_source_compliance(filepath: Path) -> Dict[str, bool]:
         func = call.func
         return isinstance(func, ast.Attribute) and func.attr == "_set_verification_payload"
 
+    def _dotted_name(node: ast.AST) -> str | None:
+        parts: list[str] = []
+        while isinstance(node, ast.Attribute):
+            parts.append(node.attr)
+            node = node.value
+        if isinstance(node, ast.Name):
+            parts.append(node.id)
+        else:
+            return None
+        return ".".join(reversed(parts))
+
+    def _is_constant_bool(node: ast.AST, expected: bool) -> bool:
+        return isinstance(node, ast.Constant) and isinstance(node.value, bool) and node.value is expected
+
     class _Visitor(ast.NodeVisitor):
         def __init__(self) -> None:
             self._stack: List[str] = []
@@ -84,15 +107,40 @@ def _scan_source_compliance(filepath: Path) -> Dict[str, bool]:
             self._stack.pop()
 
         def visit_Call(self, node: ast.Call) -> None:
+            nonlocal deterministic_enabled
             fn = self._stack[-1] if self._stack else ""
             if fn == "benchmark_fn":
                 if _is_seed_call(node):
                     flags["no_seed_setting_in_benchmark_fn"] = False
                 if _is_payload_set_call(node):
                     flags["no_payload_set_in_benchmark_fn"] = False
+            call_name = _dotted_name(node.func)
+            if call_name in {"torch.use_deterministic_algorithms", "torch.set_deterministic_debug_mode"}:
+                flags["determinism_toggles_present"] = True
+                # Treat non-literal args as enabling (benchmarks should not toggle determinism dynamically).
+                if not node.args:
+                    deterministic_enabled = True
+                else:
+                    deterministic_enabled = deterministic_enabled or (not _is_constant_bool(node.args[0], False))
+            self.generic_visit(node)
+
+        def visit_Assign(self, node: ast.Assign) -> None:
+            nonlocal deterministic_enabled
+            for target in node.targets:
+                target_name = _dotted_name(target)
+                if target_name in {
+                    "torch.backends.cudnn.deterministic",
+                    "torch.backends.cudnn.benchmark",
+                }:
+                    flags["determinism_toggles_present"] = True
+                if target_name == "torch.backends.cudnn.deterministic":
+                    # Setting to True (or a non-literal) is considered enabling determinism.
+                    deterministic_enabled = deterministic_enabled or (not _is_constant_bool(node.value, False))
             self.generic_visit(node)
 
     _Visitor().visit(tree)
+    if deterministic_enabled and not allow_determinism:
+        flags["no_determinism_enable_without_justification"] = False
     return flags
 
 
@@ -270,13 +318,21 @@ def audit_directory(directory: Path) -> Dict[str, Dict[str, Any]]:
             "jitter_exemption_reason",
             "no_seed_setting_in_benchmark_fn",
             "no_payload_set_in_benchmark_fn",
+            "no_determinism_enable_without_justification",
         ]
         is_compliant = all(compliance.get(m, False) for m in critical_methods)
-        
+
+        warnings: List[str] = []
+        if compliance.get("determinism_toggles_present", False):
+            warnings.append("Determinism toggles detected in benchmark file.")
+        if not compliance.get("no_determinism_enable_without_justification", True):
+            warnings.append("Determinism enabled without `# aisp: allow_determinism <reason>` justification.")
+
         results[str(filepath)] = {
             "status": "compliant" if is_compliant else "needs_work",
             "class_name": class_name,
             "compliance": compliance,
+            "warnings": warnings,
         }
     
     return results
@@ -308,6 +364,20 @@ def print_summary(results: Dict[str, Dict[str, Any]], title: str) -> Tuple[int, 
             print(f"  {Path(filepath).name}: missing {missing}")
         if len(needs_work) > 10:
             print(f"  ... and {len(needs_work) - 10} more")
+
+    determinism_toggles = [
+        f for f, r in results.items() if r.get("compliance", {}).get("determinism_toggles_present", False)
+    ]
+    if determinism_toggles:
+        print(f"\n--- Determinism toggles (review) ---")
+        print(f"Files with determinism-related toggles: {len(determinism_toggles)}")
+        for filepath in determinism_toggles[:10]:
+            r = results[filepath]
+            warnings = r.get("warnings") or []
+            details = f" ({'; '.join(warnings)})" if warnings else ""
+            print(f"  {Path(filepath).name}{details}")
+        if len(determinism_toggles) > 10:
+            print(f"  ... and {len(determinism_toggles) - 10} more")
     
     return len(compliant), len(needs_work), len(errors)
 

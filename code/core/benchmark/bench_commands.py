@@ -272,7 +272,26 @@ def _execute_benchmarks(
         logger.error(str(exc))
         sys.exit(1)
 
-    logger.info(f"FOUND {len(chapter_dirs)} chapter(s)")
+    def _classify_target_dir(path: Path) -> str:
+        try:
+            rel = path.resolve().relative_to(repo_root.resolve())
+        except Exception:
+            rel = Path(path.name)
+        if rel.parts and rel.parts[0].startswith("ch") and rel.parts[0][2:].isdigit():
+            return "chapter"
+        if rel.parts and rel.parts[0] == "labs":
+            return "lab"
+        return "other"
+
+    chapter_count = sum(1 for p in chapter_dirs if _classify_target_dir(p) == "chapter")
+    lab_count = sum(1 for p in chapter_dirs if _classify_target_dir(p) == "lab")
+    other_count = len(chapter_dirs) - chapter_count - lab_count
+    if other_count:
+        logger.info(
+            f"FOUND {chapter_count} chapter(s), {lab_count} lab(s), {other_count} other target(s)"
+        )
+    else:
+        logger.info(f"FOUND {chapter_count} chapter(s), {lab_count} lab(s)")
 
     enable_profiling = (profile_type or "none").lower() != "none"
 
