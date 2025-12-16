@@ -278,36 +278,29 @@ def extract_from_ncu_report(ncu_rep: Path) -> Dict[str, float]:
     """
     if not ncu_rep.exists():
         return {}
-    
-    metrics = {}
-    
-    # Try to use ncu CLI to export metrics
+
+    # Prefer the unified metrics extractor so we stay consistent across CLI/MCP/dashboard.
     try:
-        # Export as CSV
-        result = subprocess.run(
-            ["ncu", "--csv", "--page", "details", "--import", str(ncu_rep)],
-            capture_output=True,
-            text=True,
-            timeout=60  # 60 second timeout - extraction can be slow for large files
-        )
-        
-        if result.returncode == 0:
-            # Parse CSV output
-            csv_metrics = _parse_ncu_csv(result.stdout)
-            metrics.update(csv_metrics)
-    except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
-        pass
-    
-    # Also check for companion CSV/JSON files
-    companion_csv = ncu_rep.with_suffix(".csv")
-    if companion_csv.exists():
-        try:
-            csv_text = companion_csv.read_text()
-            csv_metrics = _parse_ncu_csv(csv_text)
-            metrics.update(csv_metrics)
-        except (ValueError, KeyError, OSError):
-            pass  # CSV parsing failed
-    
+        from core.profiling.metrics_extractor import extract_ncu_metrics
+    except Exception:
+        return {}
+
+    try:
+        metrics_obj = extract_ncu_metrics(ncu_rep)
+    except Exception:
+        return {}
+
+    metrics: Dict[str, float] = {}
+    if metrics_obj.kernel_time_ms is not None:
+        metrics["kernel_time_ms"] = metrics_obj.kernel_time_ms
+    if metrics_obj.sm_throughput_pct is not None:
+        metrics["sm_throughput_percent"] = metrics_obj.sm_throughput_pct
+    if metrics_obj.dram_throughput_pct is not None:
+        metrics["dram_throughput_percent"] = metrics_obj.dram_throughput_pct
+    if metrics_obj.l2_throughput_pct is not None:
+        metrics["l2_throughput_percent"] = metrics_obj.l2_throughput_pct
+    if metrics_obj.occupancy_pct is not None:
+        metrics["occupancy"] = metrics_obj.occupancy_pct
     return metrics
 
 
@@ -346,25 +339,20 @@ def extract_from_nsys_report(nsys_rep: Path) -> Dict[str, float]:
     """
     if not nsys_rep.exists():
         return {}
-    
-    metrics = {}
-    
-    # Try to use nsys CLI to export stats
+
     try:
-        result = subprocess.run(
-            ["nsys", "stats", "--report", "cuda_gpu_sum", "--format", "csv", str(nsys_rep)],
-            capture_output=True,
-            text=True,
-            timeout=60  # 60 second timeout - extraction can be slow for large files
-        )
-        
-        if result.returncode == 0:
-            # Parse timing information
-            csv_metrics = _parse_nsys_csv(result.stdout)
-            metrics.update(csv_metrics)
-    except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
-        pass
-    
+        from core.profiling.metrics_extractor import extract_nsys_metrics
+    except Exception:
+        return {}
+
+    try:
+        metrics_obj = extract_nsys_metrics(nsys_rep)
+    except Exception:
+        return {}
+
+    metrics: Dict[str, float] = {}
+    if metrics_obj.total_gpu_time_ms is not None:
+        metrics["total_gpu_time_ms"] = metrics_obj.total_gpu_time_ms
     return metrics
 
 

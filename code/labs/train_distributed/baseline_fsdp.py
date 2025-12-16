@@ -19,8 +19,6 @@ from torch.distributed.fsdp import (
 )
 from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
 from torch.utils.data import DataLoader, DistributedSampler
-from transformers import AutoConfig, AutoModelForCausalLM
-from transformers.models.llama.modeling_llama import LlamaDecoderLayer
 
 from labs.train_distributed.training_utils.torchrun_harness import TorchrunScriptBenchmark
 from labs.train_distributed.utils import (
@@ -78,6 +76,10 @@ def _build_dataloader(seq_len: int, micro_batch: int, rank: int, world_size: int
 
 
 def _wrap_fsdp(model: torch.nn.Module) -> FSDP:
+    try:
+        from transformers.models.llama.modeling_llama import LlamaDecoderLayer
+    except ImportError as exc:
+        raise RuntimeError("_wrap_fsdp() requires the `transformers` package") from exc
     auto_wrap = partial(transformer_auto_wrap_policy, transformer_layer_cls={LlamaDecoderLayer})
     mp_policy = MixedPrecision(param_dtype=torch.bfloat16, reduce_dtype=torch.bfloat16, buffer_dtype=torch.bfloat16)
     return FSDP(
@@ -95,6 +97,11 @@ def _wrap_fsdp(model: torch.nn.Module) -> FSDP:
 
 
 def main():
+    try:
+        from transformers import AutoConfig, AutoModelForCausalLM
+    except ImportError as exc:
+        raise RuntimeError("baseline_fsdp requires the `transformers` package") from exc
+
     args = parse_args()
     rank, world_size, local_rank = _init_distributed()
     _set_seed(1337 + rank)

@@ -18,9 +18,10 @@ from ch15.placement_sim import (  # noqa: E402
     PlacementSimulator,
     percentile,
 )
+from ch15.verification_payload_mixin import VerificationPayloadMixin  # noqa: E402
 
 
-class _PlacementBenchmark(BaseBenchmark):
+class _PlacementBenchmark(VerificationPayloadMixin, BaseBenchmark):
     """Shared scaffolding for placement simulations."""
 
     def __init__(self, cfg: PlacementConfig, prefix: str) -> None:
@@ -36,23 +37,9 @@ class _PlacementBenchmark(BaseBenchmark):
             dtype=torch.int64,
         )
 
-    def get_verify_output(self) -> torch.Tensor:
-        """Return simulation metrics as tensor for verification."""
-        return super().get_verify_output()
-
-    def get_input_signature(self) -> dict:
-        """Return input signature for verification."""
-        return super().get_input_signature()
-
-    def get_output_tolerance(self) -> tuple:
-        """Return tolerance for numerical comparison."""
-        return super().get_output_tolerance()
-
     def setup(self) -> None:
-        torch_backend = self.cfg.dtype
-        # Use torch bf16-friendly matmul path on Blackwell; harmless elsewhere.
-        import torch
-        torch.set_default_dtype(torch_backend)  # type: ignore[arg-type]
+        self._previous_default_dtype = torch.get_default_dtype()
+        torch.set_default_dtype(self.cfg.dtype)  # type: ignore[arg-type]
 
     def benchmark_fn(self) -> None:
         run = self.simulator.simulate(self.cfg, sessions=64, seed=17)
@@ -95,6 +82,12 @@ class _PlacementBenchmark(BaseBenchmark):
             },
             output_tolerance=(1e-3, 1e-3),
         )
+
+    def teardown(self) -> None:
+        previous = getattr(self, "_previous_default_dtype", None)
+        if isinstance(previous, torch.dtype):
+            torch.set_default_dtype(previous)
+        super().teardown()
 
     def get_config(self) -> Optional[BenchmarkConfig]:
         return BenchmarkConfig(

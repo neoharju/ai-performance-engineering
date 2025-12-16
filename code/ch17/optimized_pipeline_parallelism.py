@@ -9,6 +9,7 @@ import torch
 import torch.nn as nn
 
 from core.utils.compile_utils import enable_tf32
+from core.benchmark.verification import ToleranceSpec
 from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import (
     BaseBenchmark,
@@ -27,6 +28,9 @@ class OptimizedPipelineParallelismBenchmark(VerificationPayloadMixin, BaseBenchm
     - Autocast for mixed precision
     - Efficient layer execution without pipeline overhead
     """
+
+    _PIPELINE_STAGE_COUNT = 4
+    _PIPELINE_STAGE_BOUNDARIES = [(0, 1), (2, 3), (4, 5), (6, 6)]
 
     def __init__(self, micro_batches: Optional[int] = None):
         super().__init__()
@@ -49,12 +53,12 @@ class OptimizedPipelineParallelismBenchmark(VerificationPayloadMixin, BaseBenchm
         self._verification_payload = None
         tokens = self.batch_size * self.hidden_size
         self._workload = WorkloadMetadata(
-            requests_per_iteration=float(self.micro_batches),
+            samples_per_iteration=float(self.batch_size),
             tokens_per_iteration=float(tokens),
         )
         self.output = None
         self.register_workload_metadata(
-            requests_per_iteration=float(self.micro_batches),
+            samples_per_iteration=float(self.batch_size),
             tokens_per_iteration=float(tokens),
         )
 
@@ -83,17 +87,17 @@ class OptimizedPipelineParallelismBenchmark(VerificationPayloadMixin, BaseBenchm
                 nn.Linear(self.hidden_size * 2, self.hidden_size),
             ).to(self.device, dtype=torch.bfloat16).eval()
             self.parameter_count = sum(p.numel() for p in model.parameters())
-            
-            # Compile for kernel fusion and optimization
-            try:
-                self._compiled_model = torch.compile(model, mode="reduce-overhead")
-            except Exception:
-                self._compiled_model = model
-            
+
             self._input_data = torch.randn(
                 self.batch_size, self.hidden_size, 
                 device=self.device, dtype=torch.bfloat16
             )
+
+            # Compile for kernel fusion and optimization. Run once in setup so
+            # verification stream-auditing sees steady-state execution only.
+            self._compiled_model = torch.compile(model, mode="reduce-overhead")
+            with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
+                _ = self._compiled_model(self._input_data)
         else:
             # Multi-GPU: use pipeline parallelism
             layers_per_stage = [
@@ -109,9 +113,10 @@ class OptimizedPipelineParallelismBenchmark(VerificationPayloadMixin, BaseBenchm
                 stage = nn.Sequential(*layer_stack).to(torch.device(f"cuda:{gpu_id}"), dtype=torch.bfloat16).eval()
                 self.pipeline_stages.append(stage)
 
-            self.microbatch_inputs = torch.randn(
+            self._input_data = torch.randn(
                 self.batch_size, self.hidden_size, device=torch.device("cuda:0"), dtype=torch.bfloat16
-            ).chunk(self.micro_batches, dim=0)
+            )
+            self.microbatch_inputs = list(self._input_data.chunk(self.micro_batches, dim=0))
 
             self.stage_streams = [torch.cuda.Stream(priority=-1) for _ in self.pipeline_stages]
             self.stage_events = [
@@ -122,7 +127,7 @@ class OptimizedPipelineParallelismBenchmark(VerificationPayloadMixin, BaseBenchm
         # Refresh workload metadata
         tokens = self.batch_size * self.hidden_size
         self._workload = WorkloadMetadata(
-            requests_per_iteration=float(self.micro_batches),
+            samples_per_iteration=float(self.batch_size),
             tokens_per_iteration=float(tokens),
         )
         self._synchronize()
@@ -199,28 +204,31 @@ class OptimizedPipelineParallelismBenchmark(VerificationPayloadMixin, BaseBenchm
         if self.output is None:
             raise RuntimeError("benchmark_fn() must be called before capture_verification_payload()")
         dtype = self.output.dtype
-        if self._single_gpu_mode:
-            if self._input_data is None:
-                raise RuntimeError("Single-GPU inputs not initialized")
-            inputs = {"input": self._input_data}
-            batch_size = int(self._input_data.shape[0])
-        else:
-            if not self.microbatch_inputs:
-                raise RuntimeError("Pipeline inputs not initialized")
-            inputs = {"input": self.microbatch_inputs[0]}
-            batch_size = int(self.output.shape[0])
+        if self._input_data is None:
+            raise RuntimeError("Inputs not initialized")
+        inputs = {"input": self._input_data}
+        batch_size = int(self._input_data.shape[0])
+        signature_overrides = {
+            "pipeline_stages": self._PIPELINE_STAGE_COUNT,
+            "pipeline_stage_boundaries": self._PIPELINE_STAGE_BOUNDARIES,
+        }
         self._set_verification_payload(
             inputs=inputs,
             output=self.output,
             batch_size=batch_size,
             parameter_count=self.parameter_count,
+            output_tolerance=ToleranceSpec(
+                rtol=1e-3,
+                atol=1e-3,
+                justification="torch.compile fusion can change bf16 rounding vs eager execution",
+            ),
             precision_flags={
                 "fp16": dtype == torch.float16,
                 "bf16": dtype == torch.bfloat16,
                 "fp8": False,
                 "tf32": torch.backends.cuda.matmul.allow_tf32,
             },
-            output_tolerance=(0.5, 5.0),
+            signature_overrides=signature_overrides,
         )
 
     def get_custom_streams(self):

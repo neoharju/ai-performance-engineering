@@ -71,7 +71,8 @@ class BaselinePerformanceBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self._verify_input = None
         self._verify_output = None
         self.parameter_count = 0
-        self._workload_registered = False
+        samples = float(self.batch_size * self.num_microbatches)
+        self.register_workload_metadata(samples_per_iteration=samples)
     
     def setup(self) -> None:
         """Setup: initialize model, fixed inputs, and verification output."""
@@ -122,9 +123,6 @@ class BaselinePerformanceBenchmark(VerificationPayloadMixin, BaseBenchmark):
         if self.device.type == "cuda":
             torch.cuda.synchronize()
         self.optimizer.zero_grad(set_to_none=True)
-        samples = float(self.batch_size * self.num_microbatches)
-        self.register_workload_metadata(samples_per_iteration=samples)
-        self._workload_registered = True
     
     def benchmark_fn(self) -> None:
         """Function to benchmark."""

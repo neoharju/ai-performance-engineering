@@ -33,7 +33,7 @@ def _scan_source_compliance(filepath: Path) -> Dict[str, bool]:
     flags = {
         "no_seed_setting_in_benchmark_fn": True,
         "no_payload_set_in_benchmark_fn": True,
-        # Best-practice checks (see AGENTS.md).
+        # Best-practice checks.
         # NOTE: This is a *lint-style* signal; it should not run benchmark code.
         "determinism_toggles_present": False,
         "no_determinism_enable_without_justification": True,
@@ -244,6 +244,9 @@ def check_compliance(benchmark: Any) -> Dict[str, bool]:
         try:
             tol = benchmark.get_output_tolerance()
             compliance["get_output_tolerance"] = tol is not None
+        except RuntimeError:
+            # Payload-backed benchmarks raise until capture_verification_payload() runs.
+            compliance["get_output_tolerance"] = True
         except Exception:
             pass
     
@@ -253,12 +256,10 @@ def check_compliance(benchmark: Any) -> Dict[str, bool]:
     # Jitter exemptions are no longer permitted.
     if hasattr(benchmark, "jitter_exemption_reason"):
         reason = getattr(benchmark, "jitter_exemption_reason")
-        if reason:
-            compliance["jitter_exemption_reason"] = False
+        compliance["jitter_exemption_reason"] = not bool(reason)
     elif hasattr(benchmark, "non_jitterable_reason"):
         reason = getattr(benchmark, "non_jitterable_reason")
-        if reason:
-            compliance["jitter_exemption_reason"] = False
+        compliance["jitter_exemption_reason"] = not bool(reason)
     else:
         compliance["jitter_exemption_reason"] = True
     
@@ -315,6 +316,8 @@ def audit_directory(directory: Path) -> Dict[str, Dict[str, Any]]:
         critical_methods = [
             "get_verify_output",
             "get_input_signature",
+            "get_output_tolerance",
+            "validate_result",
             "jitter_exemption_reason",
             "no_seed_setting_in_benchmark_fn",
             "no_payload_set_in_benchmark_fn",
@@ -365,8 +368,17 @@ def print_summary(results: Dict[str, Dict[str, Any]], title: str) -> Tuple[int, 
         if len(needs_work) > 10:
             print(f"  ... and {len(needs_work) - 10} more")
 
+    if errors:
+        print(f"\n--- Errors (failed to load) ---")
+        for filepath in errors[:10]:  # Show first 10
+            r = results[filepath]
+            err = r.get("error") or "Unknown error"
+            print(f"  {Path(filepath).name}: {err}")
+        if len(errors) > 10:
+            print(f"  ... and {len(errors) - 10} more")
+
     determinism_toggles = [
-        f for f, r in results.items() if r.get("compliance", {}).get("determinism_toggles_present", False)
+        f for f, r in results.items() if (r.get("compliance") or {}).get("determinism_toggles_present", False)
     ]
     if determinism_toggles:
         print(f"\n--- Determinism toggles (review) ---")

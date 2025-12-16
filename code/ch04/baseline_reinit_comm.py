@@ -67,6 +67,8 @@ class BaselineReinitCommBenchmark(VerificationPayloadMixin, BaseBenchmark):
         torch.cuda.set_device(self.device)
         torch.manual_seed(42)
         torch.cuda.manual_seed_all(42)
+        # Intentionally tiny payload: this benchmark isolates communicator reinit overhead,
+        # not bandwidth. Larger tensors would dilute the init/destroy cost.
         self.input_tensor = torch.randn(1, 1, device=self.device, dtype=torch.float32)
         self.tensor = torch.empty_like(self.input_tensor)
         self._synchronize()

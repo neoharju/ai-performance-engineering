@@ -1,170 +1,136 @@
 """Integration tests for profiling workflows (nsys/ncu).
 
-Tests that profiling workflows work correctly, handle tool unavailability
-gracefully, and produce valid artifacts.
+These tests intentionally run real Nsight tools (nsys/ncu) and verify that the
+profiling runner can profile a benchmark imported as a dotted module name.
+
+That exercises wrapper sys.path handling (a common failure mode for profiling
+subprocesses).
 """
 
-import pytest
+from __future__ import annotations
+
+import importlib.util
 import sys
 from pathlib import Path
-from unittest.mock import patch, Mock
-
-# Add repo root to path
-repo_root = Path(__file__).parent.parent.parent
-if str(repo_root) not in sys.path:
-    sys.path.insert(0, str(repo_root))
-
-from core.env import apply_env_defaults
-apply_env_defaults()
+from types import ModuleType
 
 import torch
-from core.harness.benchmark_harness import BaseBenchmark, BenchmarkHarness, BenchmarkMode, BenchmarkConfig
-from core.utils.chapter_compare_template import discover_benchmarks, load_benchmark
-from core.discovery import discover_all_chapters
+
+from core.harness.benchmark_harness import BenchmarkConfig
 from core.profiling.profiling_runner import (
-    check_nsys_available,
     check_ncu_available,
-    run_nsys_profiling,
+    check_nsys_available,
     run_ncu_profiling,
+    run_nsys_profiling,
 )
 
 
-# Skip tests if CUDA is not available
-pytestmark = pytest.mark.skipif(
-    not torch.cuda.is_available(),
-    reason="CUDA required - NVIDIA GPU and tools must be available"
-)
+def _load_temp_benchmark_module(tmp_path: Path) -> ModuleType:
+    """Create and import a tiny CUDA benchmark as a package module."""
+    package_root = tmp_path / "benchpkg"
+    package_root.mkdir(parents=True, exist_ok=True)
+    module_path = package_root / "tiny_bench.py"
+    module_path.write_text(
+        "import torch\n"
+        "from core.harness.benchmark_harness import BaseBenchmark\n"
+        "\n"
+        "\n"
+        "class TinyMatmulBenchmark(BaseBenchmark):\n"
+        "    def __init__(self):\n"
+        "        super().__init__()\n"
+        "        self.x = None\n"
+        "        self.y = None\n"
+        "        self.output = None\n"
+        "\n"
+        "    def setup(self) -> None:\n"
+        "        torch.manual_seed(42)\n"
+        "        torch.cuda.manual_seed_all(42)\n"
+        "        self.x = torch.randn(512, 512, device=self.device)\n"
+        "        self.y = torch.randn(512, 512, device=self.device)\n"
+        "        torch.cuda.synchronize()\n"
+        "\n"
+        "    def benchmark_fn(self) -> None:\n"
+        "        self.output = self.x @ self.y\n"
+        "\n"
+        "\n"
+        "def get_benchmark():\n"
+        "    return TinyMatmulBenchmark()\n"
+    )
+
+    module_name = "benchpkg.tiny_bench"
+    spec = importlib.util.spec_from_file_location(module_name, module_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Failed to create import spec for {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
-class TestProfilingWorkflowIntegration:
-    """Integration tests for profiling workflows."""
-    
-    def test_profiling_tool_availability_checks(self):
-        """Test that profiling tool availability checks work."""
-        # These should not crash even if tools are unavailable
-        nsys_available = check_nsys_available()
-        ncu_available = check_ncu_available()
-        
-        assert isinstance(nsys_available, bool)
-        assert isinstance(ncu_available, bool)
-    
-    def test_benchmark_with_profiling_disabled(self):
-        """Test that benchmarks run correctly with profiling disabled."""
-        # Find a real benchmark
-        chapters = discover_all_chapters(repo_root)
-        if not chapters:
-            pytest.skip("No chapters found")
-        
-        pairs = None
-        for chapter_dir in chapters:
-            chapter_pairs = discover_benchmarks(chapter_dir)
-            if chapter_pairs:
-                pairs = chapter_pairs
-                break
-        
-        if not pairs:
-            pytest.skip("No benchmark pairs found")
-        
-        baseline_path, _, _ = pairs[0]
-        benchmark = load_benchmark(baseline_path)
-        if benchmark is None:
-            pytest.skip("Failed to load benchmark")
-        
-        config = BenchmarkConfig(
-            iterations=5,
-            warmup=5,
-            enable_profiling=False,  # Profiling disabled
-            enable_nsys=False,
-            enable_ncu=False,
-            adaptive_iterations=False,
-        )
-        harness = BenchmarkHarness(mode=BenchmarkMode.CUSTOM, config=config)
-        
-        result = harness.benchmark(benchmark)
-        
-        # Should complete successfully without profiling
-        assert result.timing.iterations == 5
-        # Profiling artifacts should be None
-        assert result.artifacts is None or (
-            result.artifacts.nsys_rep is None and
-            result.artifacts.ncu_rep is None
-        )
-    
-    def test_profiling_graceful_degradation(self):
-        """Test that profiling gracefully degrades when tools are unavailable."""
-        # Find a real benchmark
-        chapters = discover_all_chapters(repo_root)
-        if not chapters:
-            pytest.skip("No chapters found")
-        
-        pairs = None
-        for chapter_dir in chapters:
-            chapter_pairs = discover_benchmarks(chapter_dir)
-            if chapter_pairs:
-                pairs = chapter_pairs
-                break
-        
-        if not pairs:
-            pytest.skip("No benchmark pairs found")
-        
-        baseline_path, _, _ = pairs[0]
-        benchmark = load_benchmark(baseline_path)
-        if benchmark is None:
-            pytest.skip("Failed to load benchmark")
-        
-        # Enable profiling even if tools might not be available
-        config = BenchmarkConfig(
-            iterations=5,
-            warmup=5,
-            enable_profiling=True,
-            enable_nsys=True,
-            enable_ncu=True,
-            adaptive_iterations=False,
-        )
-        harness = BenchmarkHarness(mode=BenchmarkMode.CUSTOM, config=config)
-        
-        # Should not crash even if profiling tools are unavailable
-        result = harness.benchmark(benchmark)
-        
-        # Should still produce valid timing results
-        assert result.timing.iterations == 5
-    
-    @pytest.mark.skipif(not check_nsys_available(), reason="nsys not available")
-    def test_nsys_profiling_workflow(self, tmp_path):
-        """Test nsys profiling workflow if tool is available."""
-        # Find a real benchmark
-        chapters = discover_all_chapters(repo_root)
-        if not chapters:
-            pytest.skip("No chapters found")
-        
-        pairs = None
-        for chapter_dir in chapters:
-            chapter_pairs = discover_benchmarks(chapter_dir)
-            if chapter_pairs:
-                pairs = chapter_pairs
-                break
-        
-        if not pairs:
-            pytest.skip("No benchmark pairs found")
-        
-        baseline_path, _, _ = pairs[0]
-        benchmark = load_benchmark(baseline_path)
-        if benchmark is None:
-            pytest.skip("Failed to load benchmark")
-        
-        output_dir = tmp_path / "profiles"
-        output_dir.mkdir()
-        
-        # This is a simplified test - actual profiling would take longer
-        # We're just testing that the workflow doesn't crash
-        config = BenchmarkConfig(
-            iterations=3,  # Minimal iterations for profiling test
-            warmup=5,
-            enable_profiling=True,
-            enable_nsys=True,
-            profiling_output_dir=str(output_dir),
-        )
-        
-        # Note: Full profiling test would require running actual nsys,
-        # which is slow and may not be available in test environment
-        # This test verifies the integration path exists and doesn't crash
+def test_nsys_profiling_workflow(tmp_path: Path) -> None:
+    assert torch.cuda.is_available(), "CUDA required - NVIDIA GPU and tools must be available"
+    assert check_nsys_available(), "nsys must be available for profiling workflow tests"
+
+    benchmark_module = _load_temp_benchmark_module(tmp_path)
+    benchmark = benchmark_module.get_benchmark()
+
+    output_dir = tmp_path / "profiles_nsys"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    config = BenchmarkConfig(
+        iterations=2,
+        warmup=5,
+        enable_profiling=True,
+        enable_nsys=True,
+        profiling_output_dir=str(output_dir),
+        adaptive_iterations=False,
+    )
+
+    result = run_nsys_profiling(
+        benchmark=benchmark,
+        benchmark_module=benchmark_module,
+        benchmark_class="TinyMatmulBenchmark",
+        output_dir=output_dir,
+        config=config,
+        timeout_seconds=180,
+    )
+    assert result is not None
+    nsys_rep = Path(result["profiling_outputs"]["nsys_rep"])
+    assert nsys_rep.exists()
+    assert result["metrics"].total_gpu_time_ms is not None
+    assert result["metrics"].total_gpu_time_ms > 0.0
+
+
+def test_ncu_profiling_workflow(tmp_path: Path) -> None:
+    assert torch.cuda.is_available(), "CUDA required - NVIDIA GPU and tools must be available"
+    assert check_ncu_available(), "ncu must be available for profiling workflow tests"
+
+    benchmark_module = _load_temp_benchmark_module(tmp_path)
+    benchmark = benchmark_module.get_benchmark()
+
+    output_dir = tmp_path / "profiles_ncu"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    config = BenchmarkConfig(
+        iterations=1,
+        warmup=5,
+        enable_profiling=True,
+        enable_ncu=True,
+        profiling_output_dir=str(output_dir),
+        adaptive_iterations=False,
+        ncu_metric_set="minimal",
+    )
+
+    result = run_ncu_profiling(
+        benchmark=benchmark,
+        benchmark_module=benchmark_module,
+        benchmark_class="TinyMatmulBenchmark",
+        output_dir=output_dir,
+        config=config,
+        timeout_seconds=180,
+    )
+    assert result is not None
+    ncu_rep = Path(result["profiling_outputs"]["ncu_rep"])
+    assert ncu_rep.exists()
+    assert result["metrics"].kernel_time_ms is not None
+    assert result["metrics"].kernel_time_ms > 0.0

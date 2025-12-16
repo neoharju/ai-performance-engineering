@@ -28,6 +28,7 @@ from typing import Optional, List, Tuple, Dict, Any
 import random
 import time
 
+from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import (
     BaseBenchmark,
     BenchmarkConfig,
@@ -187,7 +188,7 @@ class ManualKernelVerifier:
         return len(errors) == 0, errors
 
 
-class BaselineKernelVerificationBenchmark(BaseBenchmark):
+class BaselineKernelVerificationBenchmark(VerificationPayloadMixin, BaseBenchmark):
     """Baseline: Manual kernel verification approach.
     
     Demonstrates the traditional, labor-intensive approach to GPU kernel
@@ -207,6 +208,8 @@ class BaselineKernelVerificationBenchmark(BaseBenchmark):
         self.test_kernel = None
         self.reference_fn = None
         self.shape = (1024, 1024)
+        self._verify_input: Optional[torch.Tensor] = None
+        self.output: Optional[torch.Tensor] = None
         self._workload = WorkloadMetadata(
             requests_per_iteration=1.0,
             tokens_per_iteration=float(self.shape[0] * self.shape[1]),
@@ -233,6 +236,11 @@ class BaselineKernelVerificationBenchmark(BaseBenchmark):
         
         self.test_kernel = test_gelu_kernel
         self.reference_fn = reference_gelu
+        self._verify_input = torch.arange(
+            self.shape[0] * self.shape[1],
+            device=self.device,
+            dtype=torch.float32,
+        ).reshape(self.shape)
         
         torch.cuda.synchronize(self.device)
     
@@ -270,8 +278,30 @@ class BaselineKernelVerificationBenchmark(BaseBenchmark):
                 "edge_cases": {"passed": edge_pass, "errors": edge_errors},
                 "boundary_tests": {"passed": boundary_pass, "errors": boundary_errors},
             }
+
+            if self._verify_input is None:
+                raise RuntimeError("setup() must initialize verification input")
+            if self.test_kernel is None:
+                raise RuntimeError("setup() must initialize test kernel")
+            self.output = self.test_kernel(self._verify_input)[:32, :32].contiguous()
         
         self._synchronize()
+
+    def capture_verification_payload(self) -> None:
+        if self._verify_input is None or self.output is None:
+            raise RuntimeError("benchmark_fn() must run before capture_verification_payload()")
+        self._set_verification_payload(
+            inputs={"input": self._verify_input},
+            output=self.output,
+            batch_size=int(self.shape[0]),
+            parameter_count=0,
+            precision_flags={
+                "fp16": False,
+                "bf16": False,
+                "fp8": False,
+                "tf32": torch.backends.cuda.matmul.allow_tf32 if torch.cuda.is_available() else False,
+            },
+        )
     
     def teardown(self) -> None:
         """Teardown: Clean up resources."""
@@ -315,39 +345,6 @@ class BaselineKernelVerificationBenchmark(BaseBenchmark):
         if not self._verification_results:
             return "Verification not completed"
         return None
-
-    def get_verify_output(self) -> torch.Tensor:
-        """Return output tensor for verification comparison."""
-        import torch
-        if not self._verification_results:
-            raise RuntimeError("benchmark_fn() must be called before verification")
-        random_pass = float(bool(self._verification_results.get("random_tests", {}).get("passed", False)))
-        edge_pass = float(bool(self._verification_results.get("edge_cases", {}).get("passed", False)))
-        boundary_pass = float(bool(self._verification_results.get("boundary_tests", {}).get("passed", False)))
-        return torch.tensor([
-            random_pass,
-            edge_pass,
-            boundary_pass,
-        ], dtype=torch.float32)
-
-    def get_input_signature(self) -> dict:
-        """Return input signature for verification."""
-        return {
-            "shapes": {"input": self.shape},
-            "dtypes": {"input": "torch.float32"},
-            "batch_size": int(self.shape[0]),
-            "parameter_count": 0,
-            "precision_flags": {
-                "fp16": False,
-                "bf16": False,
-                "fp8": False,
-                "tf32": torch.backends.cuda.matmul.allow_tf32 if torch.cuda.is_available() else False,
-            },
-        }
-
-    def get_output_tolerance(self) -> tuple:
-        """Return tolerance for numerical comparison."""
-        return (0.1, 1.0)
 
 
 def get_benchmark() -> BaseBenchmark:

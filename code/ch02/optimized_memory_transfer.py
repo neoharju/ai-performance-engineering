@@ -44,7 +44,6 @@ class OptimizedMemoryTransferBenchmark(VerificationPayloadMixin, BaseBenchmark):
         assert self.host_data is not None and self.device_data is not None
         with self._nvtx_range("memory_transfer_optimized"):
             self.device_data.copy_(self.host_data, non_blocking=True)
-            self._synchronize()
 
         self.output = self.device_data[:1000].detach()
 

@@ -86,6 +86,9 @@ class InputSignature:
     ranks: Optional[List[int]] = None
     shards: Optional[int] = None
     pipeline_stages: Optional[int] = None
+    # Required when pipeline_stages > 1: contiguous [start_layer, end_layer] ranges per stage.
+    # This prevents pipeline-parallel benchmarks from silently changing stage boundaries.
+    pipeline_stage_boundaries: Optional[List[Tuple[int, int]]] = None
     per_rank_batch_size: Optional[int] = None
     collective_type: Optional[str] = None
     
@@ -131,6 +134,10 @@ class InputSignature:
             result["shards"] = self.shards
         if self.pipeline_stages is not None:
             result["pipeline_stages"] = self.pipeline_stages
+        if self.pipeline_stage_boundaries is not None:
+            result["pipeline_stage_boundaries"] = [
+                [int(start), int(end)] for start, end in self.pipeline_stage_boundaries
+            ]
         if self.per_rank_batch_size is not None:
             result["per_rank_batch_size"] = self.per_rank_batch_size
         if self.collective_type is not None:
@@ -153,6 +160,16 @@ class InputSignature:
         """Deserialize from dictionary."""
         shapes = {k: tuple(v) for k, v in data.get("shapes", {}).items()}
         precision_data = data.get("precision_flags", {})
+        stage_boundaries_raw = data.get("pipeline_stage_boundaries")
+        stage_boundaries: Optional[List[Tuple[int, int]]] = None
+        if stage_boundaries_raw is not None:
+            if not isinstance(stage_boundaries_raw, list):
+                raise TypeError("pipeline_stage_boundaries must be a list of [start, end] pairs")
+            stage_boundaries = []
+            for entry in stage_boundaries_raw:
+                if not isinstance(entry, (list, tuple)) or len(entry) != 2:
+                    raise TypeError("pipeline_stage_boundaries entries must be [start, end] pairs")
+                stage_boundaries.append((int(entry[0]), int(entry[1])))
         
         return cls(
             shapes=shapes,
@@ -164,6 +181,7 @@ class InputSignature:
             ranks=data.get("ranks"),
             shards=data.get("shards"),
             pipeline_stages=data.get("pipeline_stages"),
+            pipeline_stage_boundaries=stage_boundaries,
             per_rank_batch_size=data.get("per_rank_batch_size"),
             collective_type=data.get("collective_type"),
             num_streams=data.get("num_streams"),
@@ -205,6 +223,44 @@ class InputSignature:
             errors.append("batch_size cannot be negative")
         if self.parameter_count < 0:
             errors.append("parameter_count cannot be negative")
+
+        if self.pipeline_stages is not None:
+            if self.pipeline_stages < 1:
+                errors.append("pipeline_stages must be >= 1 when provided")
+            if self.pipeline_stages > 1:
+                if self.pipeline_stage_boundaries is None:
+                    errors.append("pipeline_stage_boundaries is required when pipeline_stages > 1")
+                else:
+                    boundaries = self.pipeline_stage_boundaries
+                    if not isinstance(boundaries, list):
+                        errors.append("pipeline_stage_boundaries must be a list of (start, end) pairs")
+                    elif len(boundaries) != self.pipeline_stages:
+                        errors.append(
+                            f"pipeline_stage_boundaries must have length {self.pipeline_stages}, got {len(boundaries)}"
+                        )
+                    else:
+                        prev_end: Optional[int] = None
+                        for idx, entry in enumerate(boundaries):
+                            if not isinstance(entry, (list, tuple)) or len(entry) != 2:
+                                errors.append("pipeline_stage_boundaries entries must be (start, end) pairs")
+                                break
+                            start, end = int(entry[0]), int(entry[1])
+                            if start < 0:
+                                errors.append("pipeline_stage_boundaries start must be >= 0")
+                                break
+                            if start > end:
+                                errors.append("pipeline_stage_boundaries start must be <= end")
+                                break
+                            if idx == 0:
+                                if start != 0:
+                                    errors.append("pipeline_stage_boundaries must start at layer 0")
+                                    break
+                            else:
+                                assert prev_end is not None
+                                if start != prev_end + 1:
+                                    errors.append("pipeline_stage_boundaries must be contiguous and non-overlapping")
+                                    break
+                            prev_end = end
             
         return errors
 
@@ -390,6 +446,17 @@ def coerce_input_signature(sig: Union[InputSignature, Dict[str, Any]]) -> InputS
             tf32=bool(sig.get("tf32", True)),
         )
     
+    stage_boundaries_raw = sig.get("pipeline_stage_boundaries")
+    stage_boundaries: Optional[List[Tuple[int, int]]] = None
+    if stage_boundaries_raw is not None:
+        if not isinstance(stage_boundaries_raw, list):
+            raise TypeError("pipeline_stage_boundaries must be a list of [start, end] pairs")
+        stage_boundaries = []
+        for entry in stage_boundaries_raw:
+            if not isinstance(entry, (list, tuple)) or len(entry) != 2:
+                raise TypeError("pipeline_stage_boundaries entries must be [start, end] pairs")
+            stage_boundaries.append((int(entry[0]), int(entry[1])))
+
     signature = InputSignature(
         shapes=shapes,
         dtypes=dtypes,
@@ -400,6 +467,7 @@ def coerce_input_signature(sig: Union[InputSignature, Dict[str, Any]]) -> InputS
         ranks=sig.get("ranks"),
         shards=sig.get("shards"),
         pipeline_stages=sig.get("pipeline_stages"),
+        pipeline_stage_boundaries=stage_boundaries,
         per_rank_batch_size=sig.get("per_rank_batch_size"),
         collective_type=sig.get("collective_type"),
         num_streams=sig.get("num_streams"),
@@ -799,6 +867,7 @@ class DistributedTopology:
     ranks: List[int]
     shards: Optional[int] = None
     pipeline_stages: Optional[int] = None
+    pipeline_stage_boundaries: Optional[List[Tuple[int, int]]] = None
     per_rank_batch_size: Optional[int] = None
     collective_type: Optional[str] = None  # allreduce, allgather, etc.
     
@@ -812,6 +881,10 @@ class DistributedTopology:
             result["shards"] = self.shards
         if self.pipeline_stages is not None:
             result["pipeline_stages"] = self.pipeline_stages
+        if self.pipeline_stage_boundaries is not None:
+            result["pipeline_stage_boundaries"] = [
+                [int(start), int(end)] for start, end in self.pipeline_stage_boundaries
+            ]
         if self.per_rank_batch_size is not None:
             result["per_rank_batch_size"] = self.per_rank_batch_size
         if self.collective_type is not None:
@@ -821,11 +894,22 @@ class DistributedTopology:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "DistributedTopology":
         """Deserialize from dictionary."""
+        stage_boundaries_raw = data.get("pipeline_stage_boundaries")
+        stage_boundaries: Optional[List[Tuple[int, int]]] = None
+        if stage_boundaries_raw is not None:
+            if not isinstance(stage_boundaries_raw, list):
+                raise TypeError("pipeline_stage_boundaries must be a list of [start, end] pairs")
+            stage_boundaries = []
+            for entry in stage_boundaries_raw:
+                if not isinstance(entry, (list, tuple)) or len(entry) != 2:
+                    raise TypeError("pipeline_stage_boundaries entries must be [start, end] pairs")
+                stage_boundaries.append((int(entry[0]), int(entry[1])))
         return cls(
             world_size=data.get("world_size", 1),
             ranks=data.get("ranks", [0]),
             shards=data.get("shards"),
             pipeline_stages=data.get("pipeline_stages"),
+            pipeline_stage_boundaries=stage_boundaries,
             per_rank_batch_size=data.get("per_rank_batch_size"),
             collective_type=data.get("collective_type"),
         )
@@ -850,6 +934,7 @@ def extract_distributed_topology(signature: InputSignature) -> Optional[Distribu
         ranks=ranks,
         shards=signature.shards,
         pipeline_stages=signature.pipeline_stages,
+        pipeline_stage_boundaries=signature.pipeline_stage_boundaries,
         per_rank_batch_size=signature.per_rank_batch_size,
         collective_type=signature.collective_type,
     )
@@ -887,6 +972,14 @@ def compare_topologies(
     # Compare pipeline stages
     if baseline_topo.pipeline_stages != optimized_topo.pipeline_stages:
         return False, f"Pipeline stages mismatch: {baseline_topo.pipeline_stages} vs {optimized_topo.pipeline_stages}"
+
+    # Compare pipeline stage boundaries (only when set; required for PP benchmarks by InputSignature.validate()).
+    if baseline_topo.pipeline_stage_boundaries != optimized_topo.pipeline_stage_boundaries:
+        return (
+            False,
+            "Pipeline stage boundaries mismatch: "
+            f"{baseline_topo.pipeline_stage_boundaries} vs {optimized_topo.pipeline_stage_boundaries}",
+        )
     
     return True, None
 

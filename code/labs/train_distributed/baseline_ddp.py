@@ -3,22 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import os
 from time import perf_counter
-
-import torch
-import torch.nn.functional as F
-import torch.distributed as dist
-from accelerate import PartialState
-from torch.nn.parallel import DistributedDataParallel as DDP
 from pathlib import Path
 
-from labs.train_distributed.training_utils.utils import (
-    build_dataloader,
-    build_text_model,
-    build_tokenizer,
-    get_dataset,
-    set_seed,
-)
 from labs.train_distributed.training_utils.torchrun_harness import TorchrunScriptBenchmark
 
 
@@ -31,11 +19,33 @@ def parse_args():
 
 
 def main():
+    import torch
+    import torch.distributed as dist
+    from torch.nn.parallel import DistributedDataParallel as DDP
+
+    from labs.train_distributed.training_utils.utils import (
+        build_dataloader,
+        build_text_model,
+        build_tokenizer,
+        get_dataset,
+        set_seed,
+    )
+
     args = parse_args()
     set_seed(1234)
 
-    state = PartialState()
-    device = state.device
+    if not dist.is_initialized() and "RANK" in os.environ and "WORLD_SIZE" in os.environ:
+        dist.init_process_group(backend="nccl")
+
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    if torch.cuda.is_available():
+        torch.cuda.set_device(local_rank)
+        device = torch.device("cuda", local_rank)
+    else:
+        device = torch.device("cpu")
+
+    rank = dist.get_rank() if dist.is_initialized() else 0
+    is_main = rank == 0
 
     tokenizer = build_tokenizer()
     dataset = get_dataset()["train"]
@@ -45,7 +55,7 @@ def main():
         batch_size=args.batch_size,
         shuffle=True,
         drop_last=True,
-        distributed=True,
+        distributed=dist.is_initialized() and dist.get_world_size() > 1,
         num_workers=2,
         prefetch_factor=2,
     )
@@ -54,12 +64,14 @@ def main():
     model.to(device)
     model.train()
 
-    ddp_model = DDP(
-        model,
-        device_ids=[device],
-        gradient_as_bucket_view=True,
-        find_unused_parameters=False,
-    )
+    ddp_model = model
+    if dist.is_initialized() and dist.get_world_size() > 1:
+        ddp_model = DDP(
+            model,
+            device_ids=[local_rank] if device.type == "cuda" else None,
+            gradient_as_bucket_view=True,
+            find_unused_parameters=False,
+        )
 
     optimizer = torch.optim.AdamW(ddp_model.parameters(), lr=args.learning_rate)
 
@@ -83,12 +95,13 @@ def main():
 
         total_tokens += batch["input_ids"].numel()
 
-        if state.is_main_process and step % 10 == 0:
+        if is_main and step % 10 == 0:
             print(f"[baseline-ddp] step {step}/{num_steps} | loss={loss.item():.4f}")
 
-    torch.cuda.synchronize(device)
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
     elapsed = perf_counter() - start
-    if state.is_main_process:
+    if is_main:
         toks_per_sec = total_tokens / elapsed if elapsed > 0 else 0.0
         print(f"[baseline-ddp] finished {num_steps} steps in {elapsed:.1f}s "
               f"({toks_per_sec:,.0f} toks/s per rank)")

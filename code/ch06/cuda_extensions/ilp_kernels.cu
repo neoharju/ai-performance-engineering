@@ -5,26 +5,22 @@
 #include <cuda_runtime.h>
 #include "profiling_helpers.cuh"
 
+constexpr int kIlpSteps = 10;
+
 // Baseline: Sequential operations (low ILP)
 __global__ void sequential_ops_kernel(float* output, const float* input, int N) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    
-    if (idx < N) {
-        // Dependent chain (intentionally non-linear so the compiler can't
-        // trivially collapse it into a single fused op).
-        float val = input[idx];
-        val = val * val + 0.10f;
-        val = val * val + 0.11f;
-        val = val * val + 0.12f;
-        val = val * val + 0.13f;
-        val = val * val + 0.14f;
-        val = val * val + 0.15f;
-        val = val * val + 0.16f;
-        val = val * val + 0.17f;
-        val = val * val + 0.18f;
-        val = val * val + 0.19f;
-        output[idx] = val;
+    if (idx >= N) return;
+
+    // Dependent chain (intentionally non-linear so the compiler can't
+    // trivially collapse it into a single fused op).
+    float val = input[idx];
+    #pragma unroll
+    for (int step = 0; step < kIlpSteps; ++step) {
+        const float c = 0.10f + 0.01f * static_cast<float>(step);
+        val = val * val + c;
     }
+    output[idx] = val;
 }
 
 // Optimized: unroll + multiple independent registers per thread (higher ILP).
@@ -39,16 +35,14 @@ __global__ void independent_ops_kernel(float* output, const float* input, int N)
     float v3 = (base_idx + 3 < N) ? input[base_idx + 3] : 0.0f;
 
     // Interleave dependent chains across 4 independent values.
-    v0 = v0 * v0 + 0.10f; v1 = v1 * v1 + 0.10f; v2 = v2 * v2 + 0.10f; v3 = v3 * v3 + 0.10f;
-    v0 = v0 * v0 + 0.11f; v1 = v1 * v1 + 0.11f; v2 = v2 * v2 + 0.11f; v3 = v3 * v3 + 0.11f;
-    v0 = v0 * v0 + 0.12f; v1 = v1 * v1 + 0.12f; v2 = v2 * v2 + 0.12f; v3 = v3 * v3 + 0.12f;
-    v0 = v0 * v0 + 0.13f; v1 = v1 * v1 + 0.13f; v2 = v2 * v2 + 0.13f; v3 = v3 * v3 + 0.13f;
-    v0 = v0 * v0 + 0.14f; v1 = v1 * v1 + 0.14f; v2 = v2 * v2 + 0.14f; v3 = v3 * v3 + 0.14f;
-    v0 = v0 * v0 + 0.15f; v1 = v1 * v1 + 0.15f; v2 = v2 * v2 + 0.15f; v3 = v3 * v3 + 0.15f;
-    v0 = v0 * v0 + 0.16f; v1 = v1 * v1 + 0.16f; v2 = v2 * v2 + 0.16f; v3 = v3 * v3 + 0.16f;
-    v0 = v0 * v0 + 0.17f; v1 = v1 * v1 + 0.17f; v2 = v2 * v2 + 0.17f; v3 = v3 * v3 + 0.17f;
-    v0 = v0 * v0 + 0.18f; v1 = v1 * v1 + 0.18f; v2 = v2 * v2 + 0.18f; v3 = v3 * v3 + 0.18f;
-    v0 = v0 * v0 + 0.19f; v1 = v1 * v1 + 0.19f; v2 = v2 * v2 + 0.19f; v3 = v3 * v3 + 0.19f;
+    #pragma unroll
+    for (int step = 0; step < kIlpSteps; ++step) {
+        const float c = 0.10f + 0.01f * static_cast<float>(step);
+        v0 = v0 * v0 + c;
+        v1 = v1 * v1 + c;
+        v2 = v2 * v2 + c;
+        v3 = v3 * v3 + c;
+    }
 
     output[base_idx] = v0;
     if (base_idx + 1 < N) output[base_idx + 1] = v1;
@@ -67,16 +61,14 @@ __global__ void unrolled_ilp_kernel(float* output, const float* input, int N) {
         float val2 = input[base_idx + 2];
         float val3 = input[base_idx + 3];
         
-        val0 = val0 * val0 + 0.10f; val1 = val1 * val1 + 0.10f; val2 = val2 * val2 + 0.10f; val3 = val3 * val3 + 0.10f;
-        val0 = val0 * val0 + 0.11f; val1 = val1 * val1 + 0.11f; val2 = val2 * val2 + 0.11f; val3 = val3 * val3 + 0.11f;
-        val0 = val0 * val0 + 0.12f; val1 = val1 * val1 + 0.12f; val2 = val2 * val2 + 0.12f; val3 = val3 * val3 + 0.12f;
-        val0 = val0 * val0 + 0.13f; val1 = val1 * val1 + 0.13f; val2 = val2 * val2 + 0.13f; val3 = val3 * val3 + 0.13f;
-        val0 = val0 * val0 + 0.14f; val1 = val1 * val1 + 0.14f; val2 = val2 * val2 + 0.14f; val3 = val3 * val3 + 0.14f;
-        val0 = val0 * val0 + 0.15f; val1 = val1 * val1 + 0.15f; val2 = val2 * val2 + 0.15f; val3 = val3 * val3 + 0.15f;
-        val0 = val0 * val0 + 0.16f; val1 = val1 * val1 + 0.16f; val2 = val2 * val2 + 0.16f; val3 = val3 * val3 + 0.16f;
-        val0 = val0 * val0 + 0.17f; val1 = val1 * val1 + 0.17f; val2 = val2 * val2 + 0.17f; val3 = val3 * val3 + 0.17f;
-        val0 = val0 * val0 + 0.18f; val1 = val1 * val1 + 0.18f; val2 = val2 * val2 + 0.18f; val3 = val3 * val3 + 0.18f;
-        val0 = val0 * val0 + 0.19f; val1 = val1 * val1 + 0.19f; val2 = val2 * val2 + 0.19f; val3 = val3 * val3 + 0.19f;
+        #pragma unroll
+        for (int step = 0; step < kIlpSteps; ++step) {
+            const float c = 0.10f + 0.01f * static_cast<float>(step);
+            val0 = val0 * val0 + c;
+            val1 = val1 * val1 + c;
+            val2 = val2 * val2 + c;
+            val3 = val3 * val3 + c;
+        }
 
         output[base_idx] = val0;
         output[base_idx + 1] = val1;
@@ -86,16 +78,11 @@ __global__ void unrolled_ilp_kernel(float* output, const float* input, int N) {
         // Handle remainder elements
         for (int i = 0; i < 4 && base_idx + i < N; ++i) {
             float val = input[base_idx + i];
-            val = val * val + 0.10f;
-            val = val * val + 0.11f;
-            val = val * val + 0.12f;
-            val = val * val + 0.13f;
-            val = val * val + 0.14f;
-            val = val * val + 0.15f;
-            val = val * val + 0.16f;
-            val = val * val + 0.17f;
-            val = val * val + 0.18f;
-            val = val * val + 0.19f;
+            #pragma unroll
+            for (int step = 0; step < kIlpSteps; ++step) {
+                const float c = 0.10f + 0.01f * static_cast<float>(step);
+                val = val * val + c;
+            }
             output[base_idx + i] = val;
         }
     }
@@ -124,11 +111,6 @@ void sequential_ops(torch::Tensor output, torch::Tensor input) {
         if (err != cudaSuccess) {
             TORCH_CHECK(false, "CUDA kernel launch failed: ", cudaGetErrorString(err));
         }
-        // Synchronize to catch kernel execution errors
-        err = cudaStreamSynchronize(stream);
-        if (err != cudaSuccess) {
-            TORCH_CHECK(false, "CUDA kernel execution failed: ", cudaGetErrorString(err));
-        }
     }
 }
 
@@ -156,11 +138,6 @@ void independent_ops(torch::Tensor output, torch::Tensor input) {
         if (err != cudaSuccess) {
             TORCH_CHECK(false, "CUDA kernel launch failed: ", cudaGetErrorString(err));
         }
-        // Synchronize to catch kernel execution errors
-        err = cudaStreamSynchronize(stream);
-        if (err != cudaSuccess) {
-            TORCH_CHECK(false, "CUDA kernel execution failed: ", cudaGetErrorString(err));
-        }
     }
 }
 
@@ -186,11 +163,6 @@ void unrolled_ilp(torch::Tensor output, torch::Tensor input) {
         cudaError_t err = cudaGetLastError();
         if (err != cudaSuccess) {
             TORCH_CHECK(false, "CUDA kernel launch failed: ", cudaGetErrorString(err));
-        }
-        // Synchronize to catch kernel execution errors
-        err = cudaStreamSynchronize(stream);
-        if (err != cudaSuccess) {
-            TORCH_CHECK(false, "CUDA kernel execution failed: ", cudaGetErrorString(err));
         }
     }
 }

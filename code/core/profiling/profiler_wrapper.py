@@ -8,9 +8,13 @@ from __future__ import annotations
 import inspect
 import tempfile
 from pathlib import Path
-from typing import Optional, Protocol
+from typing import TYPE_CHECKING, Any, Optional, Protocol
 
-from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig
+if TYPE_CHECKING:
+    from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig
+else:
+    BaseBenchmark = Any  # type: ignore[assignment,misc]
+    BenchmarkConfig = Any  # type: ignore[assignment,misc]
 
 
 def create_benchmark_wrapper(
@@ -55,6 +59,24 @@ def create_benchmark_wrapper(
             return None
         
         module_dir = module_path.parent
+
+        # Ensure the import root for the module is on sys.path so `import <module_name>`
+        # works for both simple modules ("foo") and package-style modules ("pkg.foo").
+        # For namespace packages (no __init__.py), the parent directory containing the
+        # top-level package must be present on sys.path.
+        module_parts = module_name.split(".")
+        up_levels = len(module_parts) - 1
+        if module_path.name == "__init__.py":
+            up_levels = len(module_parts)
+        try:
+            import_root = module_path.parents[max(up_levels, 0)]
+        except Exception:
+            import_root = module_dir
+
+        # Repo code root (the directory containing `core/`). Needed because the
+        # wrapper runs as a standalone script whose sys.path does not include the
+        # current working directory by default.
+        code_root = Path(__file__).resolve().parents[2]
         
         # Create temporary wrapper script
         wrapper_script = tempfile.NamedTemporaryFile(
@@ -90,8 +112,11 @@ if benchmark is None:
         wrapper_content = f'''import sys
 from pathlib import Path
 
-# Add module directory to path
-sys.path.insert(0, r"{module_dir}")
+# Add repo code root so `import core` works inside the wrapper process.
+sys.path.insert(0, r"{code_root}")
+
+# Add benchmark module import root so dotted imports work.
+sys.path.insert(0, r"{import_root}")
 
 # Import the benchmark module
 import {module_name}

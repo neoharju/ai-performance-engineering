@@ -40,34 +40,13 @@ enable_tf32()
 
 # Import modules to test
 try:
-    from ch19.native_fp8_training import FP8Linear, FP8ScalingManager
     from ch16.inference_optimizations_blackwell import (
         DynamicQuantizedKVCache,
         OptimizedDecoderLayer,
     )
-    FP8_AVAILABLE = True
 except (ImportError, AttributeError):
-    FP8_AVAILABLE = False
-
-if not FP8_AVAILABLE:
-    class FP8Linear(nn.Linear):
-        """Fallback FP8Linear using FP16 math for environments without FP8 support."""
-
-        def forward(self, x):
-            out = super().forward(x.half())
-            return out.to(x.dtype)
-
-    class FP8ScalingManager:
-        """No-op scaling manager used in fallback mode."""
-
-        def __init__(self, *args, **kwargs):
-            pass
-
-        def to(self, *args, **kwargs):
-            return self
-
     class DynamicQuantizedKVCache:
-        """Lightweight KV cache fallback that stores tensors without quantization."""
+        """Fallback KV cache that stores tensors without quantization."""
 
         def __init__(self, num_layers, max_batch_size, max_seq_len, num_heads, head_dim, device="cuda", **kwargs):
             self.num_layers = num_layers
@@ -87,8 +66,25 @@ if not FP8_AVAILABLE:
 
         def forward(self, hidden_states):
             return self.proj(hidden_states)
-    
-    FP8_AVAILABLE = True
+
+
+class FP8Linear(nn.Linear):
+    """FP8 Linear layer shim.
+
+    This suite focuses on exercising the real inference components. The FP8
+    path is validated via availability gating rather than relying on a
+    separate training-only module.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Keep parameters in fp16 so the shim can run anywhere CUDA supports fp16.
+        self.to(dtype=torch.float16)
+
+    def forward(self, x):
+        x_cast = x.to(dtype=self.weight.dtype)
+        out = super().forward(x_cast)
+        return out.to(dtype=x.dtype)
 
 # Check CUDA availability
 CUDA_AVAILABLE = torch.cuda.is_available()
@@ -98,8 +94,12 @@ if CUDA_AVAILABLE:
 else:
     IS_BLACKWELL = False
 
-# Force-run tests even on non-Blackwell by relaxing the feature flag.
-IS_BLACKWELL = True
+# Consider FP8 available on Hopper+ / Blackwell-class GPUs.
+if CUDA_AVAILABLE:
+    props = torch.cuda.get_device_properties(0)
+    FP8_AVAILABLE = hasattr(torch, "float8_e4m3fn") and int(getattr(props, "major", 0)) >= 9
+else:
+    FP8_AVAILABLE = False
 
 
 # ============================================================================
@@ -531,8 +531,6 @@ class TestPerformanceRegression:
     @pytest.mark.slow
     def test_fp8_linear_regression(self):
         """Test FP8 linear doesn't regress in performance"""
-        if os.environ.get("PYTEST_CURRENT_TEST"):
-            return
         device = "cuda"
         in_features, out_features = 2048, 2048
         batch_size = 64
@@ -586,8 +584,6 @@ class TestPerformanceRegression:
     @pytest.mark.slow
     def test_torch_compile_regression(self):
         """Test torch.compile doesn't regress"""
-        if os.environ.get("PYTEST_CURRENT_TEST"):
-            return
         device = "cuda"
         
         # Simple model
@@ -646,8 +642,6 @@ class TestPerformanceRegression:
                         reason="Requires CUDA and FP8")
     def test_kv_cache_memory_regression(self):
         """Test KV cache memory usage doesn't regress"""
-        if os.environ.get("PYTEST_CURRENT_TEST"):
-            return
         device = "cuda"
         batch_size, seq_len, num_heads, head_dim = 8, 2048, 32, 128
         
@@ -738,8 +732,6 @@ class TestStress:
     @pytest.mark.slow
     def test_long_sequence_inference(self):
         """Test inference on very long sequences"""
-        if os.environ.get("PYTEST_CURRENT_TEST"):
-            return
         device = "cuda"
         
         # Simulate long-context inference (64K tokens)
@@ -856,8 +848,6 @@ class TestEndToEnd:
     @pytest.mark.slow
     def test_complete_training_pipeline(self):
         """Test complete training pipeline with all optimizations"""
-        if os.environ.get("PYTEST_CURRENT_TEST"):
-            return
         device = "cuda"
         
         print(f"\nComplete Training Pipeline Test:")
@@ -914,8 +904,6 @@ class TestEndToEnd:
                         reason="Requires CUDA and FP8")
     def test_complete_inference_pipeline(self):
         """Test complete inference pipeline with all optimizations"""
-        if os.environ.get("PYTEST_CURRENT_TEST"):
-            return
         device = "cuda"
         
         print(f"\nComplete Inference Pipeline Test:")

@@ -20,7 +20,7 @@ except ImportError:
 
 from typing import Optional
 
-from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, BenchmarkHarness, BenchmarkMode, WorkloadMetadata
+from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig
 from core.benchmark.verification_mixin import VerificationPayloadMixin
 from ch01.workload_config import WORKLOAD
 
@@ -40,20 +40,14 @@ class OptimizedPerformanceBatchBenchmark(VerificationPayloadMixin, BaseBenchmark
         self._verify_input = None
         self._verify_output = None
         self.parameter_count = 0
-        self._workload_registered = False
-        tokens = self.batch_size * self.workload.performance_microbatches * 256
-        self._workload = WorkloadMetadata(
-            requests_per_iteration=float(self.workload.performance_microbatches),
-            tokens_per_iteration=float(tokens),
-        )
+        samples = float(self.batch_size * self.workload.performance_microbatches)
+        self.register_workload_metadata(samples_per_iteration=samples)
     
     def setup(self) -> None:
         """Setup: initialize model, fixed inputs, and verification output."""
         # Seed FIRST for deterministic verification
         torch.manual_seed(42)
         torch.cuda.manual_seed_all(42)
-        
-        from core.utils.compile_utils import compile_model
         
         self.model = torch.nn.Sequential(
             torch.nn.Linear(256, 256),
@@ -111,9 +105,6 @@ class OptimizedPerformanceBatchBenchmark(VerificationPayloadMixin, BaseBenchmark
             target = torch.cat(self.targets[start : start + self.fusion], dim=0)
             self._fused_batches.append(batch)
             self._fused_targets.append(target)
-        samples = float(self.batch_size * self.workload.performance_microbatches)
-        self.register_workload_metadata(samples_per_iteration=samples)
-        self._workload_registered = True
     
     def benchmark_fn(self) -> None:
         """Function to benchmark."""
@@ -163,9 +154,6 @@ class OptimizedPerformanceBatchBenchmark(VerificationPayloadMixin, BaseBenchmark
             iterations=5,
             warmup=10,
         )
-    
-    def get_workload_metadata(self) -> Optional[WorkloadMetadata]:
-        return self._workload
     
     def get_custom_metrics(self) -> Optional[dict]:
         """Return domain-specific metrics using standardized helper."""

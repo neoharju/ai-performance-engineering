@@ -3,6 +3,7 @@
 
 #include <torch/extension.h>
 #include <cuda_runtime.h>
+#include <ATen/cuda/CUDAContext.h>
 #include "profiling_helpers.cuh"
 
 // Simple memory copy kernel
@@ -39,9 +40,7 @@ void separate_kernel_launches(torch::Tensor dst, torch::Tensor src, int iteratio
     int threads_per_block = 256;
     int num_blocks = (n + threads_per_block - 1) / threads_per_block;
     
-    // Use default stream (nullptr) - this is the legacy default stream
-    // PyTorch operations on default stream will be properly synchronized
-    cudaStream_t stream = nullptr;
+    cudaStream_t stream = at::cuda::getDefaultCUDAStream(device_id).stream();
     
     {
         PROFILE_KERNEL_LAUNCH("separate_kernel_launches");
@@ -65,6 +64,7 @@ struct GraphCache {
     const float* src_ptr = nullptr;
     cudaStream_t stream = nullptr;
     cudaGraphExec_t exec = nullptr;
+    cudaEvent_t completion_event = nullptr;
 };
 
 static GraphCache g_graph_cache;
@@ -73,6 +73,9 @@ static void destroy_graph_cache() {
     if (g_graph_cache.initialized) {
         cudaGraphExecDestroy(g_graph_cache.exec);
         cudaStreamDestroy(g_graph_cache.stream);
+        if (g_graph_cache.completion_event != nullptr) {
+            cudaEventDestroy(g_graph_cache.completion_event);
+        }
         g_graph_cache = {};
     }
 }
@@ -105,6 +108,7 @@ void graph_kernel(torch::Tensor dst, torch::Tensor src, int iterations) {
         cudaStream_t stream = nullptr;
         cudaGraph_t graph = nullptr;
         cudaGraphExec_t exec = nullptr;
+        cudaEvent_t completion_event = nullptr;
         try {
             CHECK_CUDA(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
             CHECK_CUDA(cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal));
@@ -116,7 +120,11 @@ void graph_kernel(torch::Tensor dst, torch::Tensor src, int iterations) {
             CHECK_CUDA(cudaGetLastError());
             CHECK_CUDA(cudaStreamEndCapture(stream, &graph));
             CHECK_CUDA(cudaGraphInstantiate(&exec, graph, nullptr, nullptr, 0));
+            CHECK_CUDA(cudaEventCreateWithFlags(&completion_event, cudaEventDisableTiming));
         } catch (...) {
+            if (completion_event != nullptr) {
+                cudaEventDestroy(completion_event);
+            }
             if (exec != nullptr) {
                 cudaGraphExecDestroy(exec);
             }
@@ -137,6 +145,7 @@ void graph_kernel(torch::Tensor dst, torch::Tensor src, int iterations) {
         g_graph_cache.src_ptr = src_ptr;
         g_graph_cache.stream = stream;
         g_graph_cache.exec = exec;
+        g_graph_cache.completion_event = completion_event;
     }
     
     {
@@ -145,8 +154,10 @@ void graph_kernel(torch::Tensor dst, torch::Tensor src, int iterations) {
             CHECK_CUDA(cudaGraphLaunch(g_graph_cache.exec, g_graph_cache.stream));
         }
     }
-    
-    CHECK_CUDA(cudaStreamSynchronize(g_graph_cache.stream));
+
+    cudaStream_t default_stream = at::cuda::getDefaultCUDAStream(device_id).stream();
+    CHECK_CUDA(cudaEventRecord(g_graph_cache.completion_event, g_graph_cache.stream));
+    CHECK_CUDA(cudaStreamWaitEvent(default_stream, g_graph_cache.completion_event, 0));
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {

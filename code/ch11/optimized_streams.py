@@ -45,6 +45,13 @@ class OptimizedStreamsBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.N = 5_000_000  # Elements per chunk - balanced for H2D/compute overlap
         self.num_chunks = 20  # More chunks to amortize pipeline startup
         # Stream benchmark - fixed dimensions for overlap measurement
+        processed = float(self.N * self.num_chunks)
+        # Register at init time so pre-run compliance checks pass; setup() may update
+        # this if the workload is adjusted before allocation.
+        self.register_workload_metadata(
+            tokens_per_iteration=processed,
+            requests_per_iteration=float(self.num_chunks),
+        )
     
     def setup(self) -> None:
         """Setup: Initialize streams, pinned memory, and device buffers."""

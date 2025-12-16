@@ -4,9 +4,7 @@ Tests for the auto-optimizer module.
 Run with: pytest tests/test_optimize.py -v
 """
 
-import tempfile
 from pathlib import Path
-from unittest.mock import Mock, patch
 
 import pytest
 
@@ -263,6 +261,5 @@ def tmp_benchmark_file(tmp_path, sample_benchmark_code):
     file_path = tmp_path / "benchmark.py"
     file_path.write_text(sample_benchmark_code)
     return file_path
-
 
 

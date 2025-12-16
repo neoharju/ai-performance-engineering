@@ -9,18 +9,20 @@ Categories covered:
 - Environment issues (GPU state, GC interference)
 - Compilation issues (cache, recompilation)
 
-Reference:
-    See AGENTS.md and docs/implementation_status.md for the full list of validity issues.
 """
 
 from __future__ import annotations
 
 import gc
 import hashlib
+import os
+import re
 import statistics
+import sys
 import warnings
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 try:
@@ -49,8 +51,6 @@ class GPUState:
 
 def capture_gpu_state(device_index: int = 0) -> GPUState:
     """Capture current GPU state for comparison.
-    
-    Uses pynvml if available, falls back to basic info otherwise.
     """
     if torch is None or not torch.cuda.is_available():
         return GPUState(device_index=device_index, device_name="N/A")
@@ -60,75 +60,55 @@ def capture_gpu_state(device_index: int = 0) -> GPUState:
         device_index=device_index,
         device_name=props.name,
     )
-    
-    # Try to get detailed info via pynvml
+
+    state.memory_used_mb = torch.cuda.memory_allocated(device_index) / (1024 * 1024)
+    state.memory_total_mb = props.total_memory / (1024 * 1024)
+
     try:
         import pynvml
-        pynvml.nvmlInit()
-        handle = pynvml.nvmlDeviceGetHandleByIndex(device_index)
-        
-        # Temperature
-        try:
-            state.temperature_c = pynvml.nvmlDeviceGetTemperature(
-                handle, pynvml.NVML_TEMPERATURE_GPU
-            )
-        except Exception:
-            pass
-        
-        # Clock speeds
-        try:
-            state.clock_mhz = pynvml.nvmlDeviceGetClockInfo(
-                handle, pynvml.NVML_CLOCK_SM
-            )
-            state.memory_clock_mhz = pynvml.nvmlDeviceGetClockInfo(
-                handle, pynvml.NVML_CLOCK_MEM
-            )
-        except Exception:
-            pass
-        
-        # Power
-        try:
-            state.power_draw_w = pynvml.nvmlDeviceGetPowerUsage(handle) / 1000.0
-        except Exception:
-            pass
-        
-        # Throttle reason
-        try:
-            throttle = pynvml.nvmlDeviceGetCurrentClocksThrottleReasons(handle)
-            if throttle != 0:
-                reasons = []
-                if throttle & 0x1:
-                    reasons.append("GpuIdle")
-                if throttle & 0x2:
-                    reasons.append("ApplicationsClocks")
-                if throttle & 0x4:
-                    reasons.append("SwPowerCap")
-                if throttle & 0x8:
-                    reasons.append("HwSlowdown")
-                if throttle & 0x10:
-                    reasons.append("SyncBoost")
-                if throttle & 0x20:
-                    reasons.append("SwThermalSlowdown")
-                if throttle & 0x40:
-                    reasons.append("HwThermalSlowdown")
-                if throttle & 0x80:
-                    reasons.append("HwPowerBrakeSlowdown")
-                state.throttle_reason = ",".join(reasons) if reasons else None
-        except Exception:
-            pass
-        
-        pynvml.nvmlShutdown()
-    except ImportError:
-        pass  # pynvml not available
-    except Exception:
-        pass  # pynvml error
-    
-    # Memory info from PyTorch
+    except ImportError as exc:
+        raise RuntimeError(
+            "capture_gpu_state requires pynvml (nvidia-ml-py) when CUDA is available."
+        ) from exc
+
+    # Collect detailed state via NVML (fail-fast on any NVML error).
+    pynvml.nvmlInit()
     try:
-        state.memory_used_mb = torch.cuda.memory_allocated(device_index) / (1024 * 1024)
-        state.memory_total_mb = props.total_memory / (1024 * 1024)
-    except Exception:
-        pass
+        handle = pynvml.nvmlDeviceGetHandleByIndex(device_index)
+
+        state.temperature_c = float(
+            pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)
+        )
+
+        state.clock_mhz = int(pynvml.nvmlDeviceGetClockInfo(handle, pynvml.NVML_CLOCK_SM))
+        state.memory_clock_mhz = int(
+            pynvml.nvmlDeviceGetClockInfo(handle, pynvml.NVML_CLOCK_MEM)
+        )
+
+        state.power_draw_w = float(pynvml.nvmlDeviceGetPowerUsage(handle) / 1000.0)
+
+        throttle = pynvml.nvmlDeviceGetCurrentClocksThrottleReasons(handle)
+        if throttle != 0:
+            reasons = []
+            if throttle & 0x1:
+                reasons.append("GpuIdle")
+            if throttle & 0x2:
+                reasons.append("ApplicationsClocks")
+            if throttle & 0x4:
+                reasons.append("SwPowerCap")
+            if throttle & 0x8:
+                reasons.append("HwSlowdown")
+            if throttle & 0x10:
+                reasons.append("SyncBoost")
+            if throttle & 0x20:
+                reasons.append("SwThermalSlowdown")
+            if throttle & 0x40:
+                reasons.append("HwThermalSlowdown")
+            if throttle & 0x80:
+                reasons.append("HwPowerBrakeSlowdown")
+            state.throttle_reason = ",".join(reasons) if reasons else None
+    finally:
+        pynvml.nvmlShutdown()
     
     return state
 
@@ -439,54 +419,291 @@ def force_tensor_evaluation(tensors: Dict[str, Any]) -> None:
 # Environment Validation
 # =============================================================================
 
-def validate_environment() -> Tuple[bool, List[str]]:
-    """Validate benchmark environment is suitable.
-    
-    Checks for common issues that could affect benchmark validity.
-    
-    Returns:
-        Tuple of (is_valid, list_of_warnings)
+@dataclass(frozen=True)
+class EnvironmentValidationResult:
+    """Structured result for environment validation."""
+
+    is_valid: bool
+    errors: List[str]
+    warnings: List[str]
+    details: Dict[str, Any]
+
+
+@dataclass
+class EnvironmentProbe:
+    """Probe host environment via a filesystem root.
+
+    Tests can provide a synthetic root containing /proc and /sys snapshots.
     """
+
+    root: Path = Path("/")
+    env: Dict[str, str] = field(default_factory=lambda: dict(os.environ))
+    cpu_affinity: Optional[Set[int]] = None
+
+    def resolve(self, path: str | Path) -> Path:
+        rel = str(path)
+        rel = rel.lstrip("/")
+        return self.root / rel
+
+    def exists(self, path: str | Path) -> bool:
+        return self.resolve(path).exists()
+
+    def read_text(self, path: str | Path) -> str:
+        return self.resolve(path).read_text(encoding="utf-8").strip()
+
+    def get_cpu_affinity(self) -> Optional[Set[int]]:
+        if self.cpu_affinity is not None:
+            return set(self.cpu_affinity)
+        try:
+            return set(os.sched_getaffinity(0))  # type: ignore[attr-defined]
+        except Exception:
+            return None
+
+
+def _parse_int_set(spec: str) -> Set[int]:
+    """Parse Linux list formats like '0-3,8,10-12' into a set of ints."""
+    spec = spec.strip()
+    if not spec:
+        return set()
+    result: Set[int] = set()
+    for part in spec.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            start_s, end_s = part.split("-", 1)
+            start = int(start_s)
+            end = int(end_s)
+            if end < start:
+                raise ValueError(f"Invalid range '{part}'")
+            result.update(range(start, end + 1))
+        else:
+            result.add(int(part))
+    return result
+
+
+def _read_optional(probe: EnvironmentProbe, path: str | Path) -> Optional[str]:
+    resolved = probe.resolve(path)
+    if not resolved.exists():
+        return None
+    try:
+        return resolved.read_text(encoding="utf-8").strip()
+    except Exception:
+        return None
+
+
+def _env_flag_enabled(value: Optional[str]) -> bool:
+    if value is None:
+        return False
+    normalized = value.strip().lower()
+    return normalized in {"1", "true", "yes", "y", "on"}
+
+
+def _parse_cgroup_v2_path(cgroup_text: str) -> Optional[str]:
+    for line in cgroup_text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        # v2 unified format: "0::/some/path"
+        if line.startswith("0::"):
+            parts = line.split(":", 2)
+            if len(parts) == 3:
+                return parts[2] or "/"
+    return None
+
+
+def validate_environment(
+    *,
+    device: Optional["torch.device"] = None,
+    probe: Optional[EnvironmentProbe] = None,
+) -> EnvironmentValidationResult:
+    """Validate benchmark environment is suitable (fail-fast on known invalid states)."""
+    probe = probe or EnvironmentProbe()
+    errors: List[str] = []
     warnings_list: List[str] = []
-    
-    if torch is None or not torch.cuda.is_available():
-        warnings_list.append("CUDA not available")
-        return False, warnings_list
-    
-    # Check device count
-    device_count = torch.cuda.device_count()
-    if device_count > 1:
-        warnings_list.append(
-            f"Multiple GPUs detected ({device_count}). Ensure benchmarks use "
-            "consistent device placement."
-        )
-    
-    # Check CUDA version consistency
-    try:
-        cuda_version = torch.version.cuda
-        cudnn_version = torch.backends.cudnn.version() if torch.backends.cudnn.is_available() else None
-        # Just log, don't warn (for manifest)
-    except Exception:
-        pass
-    
-    # Check for debug mode
-    if hasattr(torch, 'autograd') and hasattr(torch.autograd, 'grad_mode'):
-        if torch.is_grad_enabled():
-            # Grad enabled is normal, but in benchmarks we often want it disabled
-            pass
-    
-    # Check for torch.compile backend consistency
-    try:
-        if hasattr(torch, '_dynamo'):
-            config = getattr(torch._dynamo, 'config', None)
-            if config and hasattr(config, 'suppress_errors') and config.suppress_errors:
+    details: Dict[str, Any] = {
+        "platform": sys.platform,
+    }
+
+    if not sys.platform.startswith("linux"):
+        errors.append(f"Non-Linux platform '{sys.platform}' is not supported for benchmark validity checks.")
+        return EnvironmentValidationResult(False, errors, warnings_list, details)
+
+    # Resolve device expectation
+    if device is None:
+        if torch is None:
+            errors.append("PyTorch is not available; cannot validate benchmark environment.")
+            return EnvironmentValidationResult(False, errors, warnings_list, details)
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    details["device_type"] = device.type
+
+    # CUDA availability (required if running on CUDA device)
+    if device.type == "cuda":
+        if torch is None or not torch.cuda.is_available():
+            errors.append("CUDA device requested but CUDA is not available (missing /dev/nvidia* or driver issue).")
+        else:
+            gpu_count = torch.cuda.device_count()
+            details["gpu_count"] = gpu_count
+            if gpu_count > 1:
                 warnings_list.append(
-                    "torch._dynamo.config.suppress_errors=True may hide compilation issues"
+                    f"Multiple GPUs detected ({gpu_count}). Ensure benchmarks use consistent device placement."
                 )
+
+    # Swap interference (Memory category)
+    swaps = _read_optional(probe, "/proc/swaps")
+    if swaps is None:
+        warnings_list.append("Cannot read /proc/swaps; swap state cannot be validated.")
+    else:
+        swap_lines = [ln for ln in swaps.splitlines() if ln.strip()]
+        if len(swap_lines) > 1:
+            errors.append(f"Swap is enabled ({len(swap_lines) - 1} swap device(s) active). Disable swap for benchmarking.")
+    swappiness = _read_optional(probe, "/proc/sys/vm/swappiness")
+    if swappiness is not None:
+        try:
+            details["vm_swappiness"] = int(swappiness.strip())
+        except ValueError:
+            warnings_list.append(f"Could not parse /proc/sys/vm/swappiness value: '{swappiness}'.")
+
+    # CPU governor (Environment category)
+    governors: Dict[str, str] = {}
+    cpufreq_root = probe.resolve("/sys/devices/system/cpu/cpufreq")
+    if cpufreq_root.exists():
+        for policy_dir in sorted(cpufreq_root.glob("policy*")):
+            gov_path = policy_dir / "scaling_governor"
+            if gov_path.exists():
+                try:
+                    governors[policy_dir.name] = gov_path.read_text(encoding="utf-8").strip()
+                except Exception:
+                    warnings_list.append(f"Failed to read CPU governor at {gov_path}.")
+    if not governors:
+        warnings_list.append("CPU governor not exposed via cpufreq sysfs; cannot validate governor lock.")
+    else:
+        details["cpu_governors"] = dict(governors)
+        non_perf = {k: v for k, v in governors.items() if v != "performance"}
+        if non_perf:
+            errors.append(f"CPU governor mismatch: expected 'performance', got {non_perf}.")
+
+    # Cgroup resource limits (Container Resource Limits)
+    cgroup_mount = probe.resolve("/sys/fs/cgroup")
+    if not cgroup_mount.exists():
+        warnings_list.append("Cgroup mount (/sys/fs/cgroup) not found; cannot validate cgroup resource limits.")
+    else:
+        cgroup_text = _read_optional(probe, "/proc/self/cgroup")
+        cgroup_path = _parse_cgroup_v2_path(cgroup_text or "")
+        if cgroup_path is None:
+            warnings_list.append("Could not parse cgroup v2 path from /proc/self/cgroup; cgroup limits not validated.")
+        else:
+            details["cgroup_path"] = cgroup_path
+            # cpu.max (quota/period)
+            cpu_max = _read_optional(probe, str(Path("/sys/fs/cgroup") / cgroup_path.lstrip("/") / "cpu.max"))
+            if cpu_max is not None:
+                parts = cpu_max.split()
+                if parts:
+                    details["cgroup_cpu_max"] = cpu_max
+                    if parts[0] != "max":
+                        errors.append(f"CPU quota is set via cgroup cpu.max='{cpu_max}'. Remove CPU quotas for benchmarking.")
+            else:
+                warnings_list.append("Could not read cgroup cpu.max; CPU quota limits not validated.")
+
+            mem_max = _read_optional(probe, str(Path("/sys/fs/cgroup") / cgroup_path.lstrip("/") / "memory.max"))
+            if mem_max is not None:
+                details["cgroup_memory_max"] = mem_max
+                if mem_max != "max":
+                    errors.append(
+                        f"Memory limit is set via cgroup memory.max='{mem_max}'. Remove memory limits for benchmarking."
+                    )
+            else:
+                warnings_list.append("Could not read cgroup memory.max; memory limits not validated.")
+
+            # cpuset effective files may not be present in delegated cgroups; fall back to root for visibility.
+            cpuset_cpu = _read_optional(probe, str(Path("/sys/fs/cgroup") / cgroup_path.lstrip("/") / "cpuset.cpus.effective"))
+            if cpuset_cpu is None:
+                cpuset_cpu = _read_optional(probe, "/sys/fs/cgroup/cpuset.cpus.effective")
+            if cpuset_cpu is not None:
+                details["cpuset_cpus_effective"] = cpuset_cpu
+            else:
+                warnings_list.append("Could not read cpuset.cpus.effective; CPU pinning not validated.")
+
+            cpuset_mems = _read_optional(probe, str(Path("/sys/fs/cgroup") / cgroup_path.lstrip("/") / "cpuset.mems.effective"))
+            if cpuset_mems is None:
+                cpuset_mems = _read_optional(probe, "/sys/fs/cgroup/cpuset.mems.effective")
+            if cpuset_mems is not None:
+                details["cpuset_mems_effective"] = cpuset_mems
+            else:
+                warnings_list.append("Could not read cpuset.mems.effective; NUMA pinning not validated.")
+
+    # NUMA checks (NUMA Inconsistency)
+    node_root = probe.resolve("/sys/devices/system/node")
+    numa_nodes: List[int] = []
+    if node_root.exists():
+        for entry in sorted(node_root.glob("node*")):
+            match = re.match(r"node(\d+)$", entry.name)
+            if match:
+                numa_nodes.append(int(match.group(1)))
+    details["numa_nodes"] = list(numa_nodes)
+    if len(numa_nodes) > 1:
+        affinity = probe.get_cpu_affinity()
+        if affinity is None:
+            warnings_list.append("CPU affinity unavailable; cannot validate NUMA pinning.")
+        else:
+            # Map CPUs to nodes via node*/cpulist when present.
+            cpu_to_nodes: Dict[int, int] = {}
+            missing_cpulist = False
+            for node_id in numa_nodes:
+                cpulist_text = _read_optional(probe, f"/sys/devices/system/node/node{node_id}/cpulist")
+                if cpulist_text is None:
+                    missing_cpulist = True
+                    continue
+                try:
+                    for cpu in _parse_int_set(cpulist_text):
+                        cpu_to_nodes[cpu] = node_id
+                except Exception:
+                    missing_cpulist = True
+            if missing_cpulist or not cpu_to_nodes:
+                warnings_list.append("NUMA cpulist unavailable; cannot validate NUMA pinning.")
+            else:
+                nodes_used = {cpu_to_nodes[cpu] for cpu in affinity if cpu in cpu_to_nodes}
+                details["numa_nodes_in_affinity"] = sorted(nodes_used)
+                if len(nodes_used) > 1:
+                    errors.append(
+                        f"CPU affinity spans multiple NUMA nodes ({sorted(nodes_used)}). Pin to a single NUMA node for benchmarking."
+                    )
+
+    # Virtualization detection (Virtualization Overhead)
+    cpuinfo = _read_optional(probe, "/proc/cpuinfo")
+    product_name = _read_optional(probe, "/sys/devices/virtual/dmi/id/product_name")
+    details["dmi_product_name"] = product_name
+    is_virtualized = False
+    if cpuinfo is not None and "hypervisor" in cpuinfo.lower():
+        is_virtualized = True
+    if product_name is not None and any(tag in product_name.lower() for tag in ("qemu", "kvm", "vmware", "virtualbox", "hyper-v")):
+        is_virtualized = True
+    details["virtualized"] = is_virtualized
+    if is_virtualized:
+        allow_virtualization = _env_flag_enabled(probe.env.get("AISP_ALLOW_VIRTUALIZATION"))
+        details["allow_virtualization"] = allow_virtualization
+        if allow_virtualization:
+            warnings_list.append(
+                "Virtualization detected (hypervisor present) but AISP_ALLOW_VIRTUALIZATION=1 is set. "
+                "Results may include virtualization overhead; prefer bare metal for publishable numbers."
+            )
+        else:
+            errors.append(
+                "Virtualization detected (hypervisor present). Run benchmarks on bare metal for valid results "
+                "or set AISP_ALLOW_VIRTUALIZATION=1 for development runs."
+            )
+
+    # torch.compile backend sanity (Compile category)
+    try:
+        if torch is not None and hasattr(torch, "_dynamo"):
+            config = getattr(torch._dynamo, "config", None)
+            if config and hasattr(config, "suppress_errors") and config.suppress_errors:
+                warnings_list.append("torch._dynamo.config.suppress_errors=True may hide compilation issues.")
     except Exception:
-        pass
-    
-    return len(warnings_list) == 0, warnings_list
+        warnings_list.append("Failed to inspect torch._dynamo config for suppress_errors.")
+
+    is_valid = len(errors) == 0
+    return EnvironmentValidationResult(is_valid, errors, warnings_list, details)
 
 
 # =============================================================================
@@ -1421,6 +1638,8 @@ __all__ = [
     
     # Environment
     "validate_environment",
+    "EnvironmentProbe",
+    "EnvironmentValidationResult",
     
     # Stream Auditing
     "StreamUsageInfo",

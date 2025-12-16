@@ -653,8 +653,6 @@ def test_correctness(enwik8_small):
 @pytest.mark.slow
 def test_training_performance(enwik8_large):
     """Use a bigger dataset and compare the training speed of the optimized tokenizers (Python, Rust, HuggingFace)."""
-    if os.environ.get("PYTEST_CURRENT_TEST"):
-        return
     text = enwik8_large
     vocab_size = 2048
     print(f"\nText length: {len(text)}")
@@ -687,8 +685,6 @@ def test_training_performance(enwik8_large):
 
 def test_interface(enwik8_small):
     """Test the RustBPETokenizer interface for training, encoding, decoding, and serialization."""
-    if os.environ.get("PYTEST_CURRENT_TEST"):
-        return
     import tempfile
     from nanochat.tokenizer import RustBPETokenizer
 

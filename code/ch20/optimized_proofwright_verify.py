@@ -30,6 +30,7 @@ from enum import Enum
 import json
 import hashlib
 
+from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import (
     BaseBenchmark,
     BenchmarkConfig,
@@ -320,7 +321,7 @@ class ProofWrightAgent:
         }
 
 
-class OptimizedProofwrightBenchmark(BaseBenchmark):
+class OptimizedProofwrightBenchmark(VerificationPayloadMixin, BaseBenchmark):
     """Optimized: Agentic formal verification with ProofWright-style approach.
     
     Demonstrates automated verification that provides:
@@ -345,6 +346,8 @@ class OptimizedProofwrightBenchmark(BaseBenchmark):
         self.test_kernel = None
         self.reference_fn = None
         self.shape = (1024, 1024)
+        self._verify_input: Optional[torch.Tensor] = None
+        self.output: Optional[torch.Tensor] = None
         self._workload = WorkloadMetadata(
             requests_per_iteration=1.0,
             tokens_per_iteration=float(self.shape[0] * self.shape[1]),
@@ -371,6 +374,11 @@ class OptimizedProofwrightBenchmark(BaseBenchmark):
         
         self.test_kernel = test_gelu_kernel
         self.reference_fn = reference_gelu
+        self._verify_input = torch.arange(
+            self.shape[0] * self.shape[1],
+            device=self.device,
+            dtype=torch.float32,
+        ).reshape(self.shape)
         
         # Simulated kernel source for analysis
         self.kernel_source = '''
@@ -430,8 +438,30 @@ class OptimizedProofwrightBenchmark(BaseBenchmark):
                 "postconditions": len(spec.postconditions),
                 "invariants": len(spec.invariants),
             }
+
+            if self._verify_input is None:
+                raise RuntimeError("setup() must initialize verification input")
+            if self.test_kernel is None:
+                raise RuntimeError("setup() must initialize test kernel")
+            self.output = self.test_kernel(self._verify_input)[:32, :32].contiguous()
         
         self._synchronize()
+
+    def capture_verification_payload(self) -> None:
+        if self._verify_input is None or self.output is None:
+            raise RuntimeError("benchmark_fn() must run before capture_verification_payload()")
+        self._set_verification_payload(
+            inputs={"input": self._verify_input},
+            output=self.output,
+            batch_size=int(self.shape[0]),
+            parameter_count=0,
+            precision_flags={
+                "fp16": False,
+                "bf16": False,
+                "fp8": False,
+                "tf32": torch.backends.cuda.matmul.allow_tf32 if torch.cuda.is_available() else False,
+            },
+        )
     
     def teardown(self) -> None:
         """Teardown: Clean up resources."""
@@ -486,29 +516,6 @@ class OptimizedProofwrightBenchmark(BaseBenchmark):
         if not self._verification_report.get("verification_complete", False):
             return "Not all properties proven"
         return None
-
-    def get_verify_output(self) -> torch.Tensor:
-        """Return output tensor for verification comparison."""
-        raise RuntimeError("Verification benchmark - no tensor comparison")
-
-    def get_input_signature(self) -> dict:
-        """Return input signature for verification."""
-        return {
-            "shapes": {"input": self.shape},
-            "dtypes": {"input": "torch.float32"},
-            "batch_size": int(self.shape[0]),
-            "parameter_count": 0,
-            "precision_flags": {
-                "fp16": False,
-                "bf16": False,
-                "fp8": False,
-                "tf32": torch.backends.cuda.matmul.allow_tf32 if torch.cuda.is_available() else False,
-            },
-        }
-
-    def get_output_tolerance(self) -> tuple:
-        """Return tolerance for numerical comparison."""
-        return (0.1, 1.0)
 
 
 def get_benchmark() -> BaseBenchmark:

@@ -25,7 +25,7 @@ class OptimizedILPBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self._buf0: Optional[torch.Tensor] = None
         self._buf1: Optional[torch.Tensor] = None
         self.output: Optional[torch.Tensor] = None
-        self.N = 10_000_000
+        self.N = 50_000_000
         self._extension = None
         self.repeats = 4  # Same as baseline for fair comparison
         # ILP benchmark - fixed input size to measure instruction-level parallelism
@@ -58,7 +58,7 @@ class OptimizedILPBenchmark(VerificationPayloadMixin, BaseBenchmark):
             buf1: torch.Tensor = self._buf1
             dst: torch.Tensor = buf0
             for _ in range(self.repeats):
-                self._extension.independent_ops(dst, src)
+                self._extension.unrolled_ilp(dst, src)
                 src, dst = dst, (buf1 if dst is buf0 else buf0)
             self._synchronize()
 

@@ -65,7 +65,7 @@ DOMAIN TOOLS (organized by 10-domain model):
     Inference (2 tools):
         aisp_inference_vllm, aisp_inference_quantization
 
-    Benchmark (5 tools):
+    Benchmark (6 tools):
         aisp_run_benchmarks, aisp_benchmark_targets, aisp_benchmark_report,
         aisp_benchmark_export, aisp_benchmark_compare_runs, aisp_benchmark_triage
 
@@ -78,7 +78,14 @@ DOMAIN TOOLS (organized by 10-domain model):
     HuggingFace (1 tool):
         aisp_hf (search/trending/download via action param)
 
-HARDWARE MICRO-BENCHMARKS (8 tools):
+BENCHMARKS VS DIAGNOSTICS:
+    - `aisp_run_benchmarks` runs harness benchmarks (comparative `baseline_*.py` vs
+      `optimized_*.py`) and includes the full validity protections.
+    - `aisp_hw_*` tools run diagnostic microbenchmarks for quick hardware sanity
+      checks and intentionally bypass the benchmark harness protections. Do not
+      use them to claim baseline-vs-optimized speedups.
+
+HARDWARE MICRO-BENCHMARKS (10 tools):
     aisp_hw_speed, aisp_hw_roofline, aisp_hw_disk, aisp_hw_pcie,
     aisp_hw_cache, aisp_hw_tc, aisp_hw_ib, aisp_hw_nccl, aisp_hw_p2p,
     aisp_hw_network

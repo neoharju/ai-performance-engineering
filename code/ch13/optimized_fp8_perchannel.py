@@ -25,6 +25,7 @@ from core.harness.benchmark_harness import (
     BenchmarkMode,
     WorkloadMetadata,
 )
+from core.utils.compile_utils import configure_tf32, restore_tf32
 
 
 class FP8PerChannelLinear(nn.Module):
@@ -40,6 +41,9 @@ class FP8PerChannelLinear(nn.Module):
         self.in_features = in_features
         self.out_features = out_features
         self.fp8_max = 448.0  # E4M3 max value
+        self._weight_fp8 = None
+        self._scale_b = None
+        self._bias_bf16 = None
         
         self.weight = nn.Parameter(torch.empty(out_features, in_features))
         if bias:
@@ -53,36 +57,57 @@ class FP8PerChannelLinear(nn.Module):
         nn.init.kaiming_uniform_(self.weight, a=5**0.5)
         if self.bias is not None:
             nn.init.zeros_(self.bias)
-    
+
+    def prepare_fp8_weights(self) -> None:
+        if not torch.cuda.is_available():
+            raise RuntimeError("CUDA required for fp8_perchannel optimized benchmark")
+        if not hasattr(torch, "_scaled_mm"):
+            raise RuntimeError("torch._scaled_mm is required for fp8_perchannel optimized benchmark")
+        if not hasattr(torch, "float8_e4m3fn"):
+            raise RuntimeError("torch.float8_e4m3fn is required for fp8_perchannel optimized benchmark")
+        with torch.no_grad():
+            weight_amax = self.weight.abs().amax(dim=1)  # [out_features]
+            weight_scale = torch.clamp(weight_amax / self.fp8_max, min=1e-12).to(torch.float32)  # [out_features]
+            self._scale_b = weight_scale.unsqueeze(0).contiguous()  # [1, out_features]
+            weight_fp8 = (self.weight / weight_scale.unsqueeze(1)).to(torch.float8_e4m3fn)
+            self._weight_fp8 = weight_fp8.contiguous()  # [out_features, in_features]
+            if self.bias is not None:
+                self._bias_bf16 = self.bias.to(torch.bfloat16).contiguous()
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Per-channel FP8 quantized forward pass.
         
         Uses per-tensor scaling for input (standard) and per-output-channel
         scaling for weights (the key improvement).
         """
-        # Per-tensor quantization of input
-        input_amax = x.abs().max()
-        input_scale = torch.clamp(input_amax / self.fp8_max, min=1e-12)
-        x_q = torch.clamp(x / input_scale, -self.fp8_max, self.fp8_max).round()
+        if self._weight_fp8 is None or self._scale_b is None:
+            raise RuntimeError("prepare_fp8_weights() must be called before forward()")
+        if x.device.type != "cuda":
+            raise RuntimeError("CUDA required for fp8_perchannel optimized benchmark")
+        if not hasattr(torch, "_scaled_mm"):
+            raise RuntimeError("torch._scaled_mm is required for fp8_perchannel optimized benchmark")
+        if not hasattr(torch, "float8_e4m3fn"):
+            raise RuntimeError("torch.float8_e4m3fn is required for fp8_perchannel optimized benchmark")
+
+        batch_size, seq_len, hidden = x.shape
+        x_2d = x.reshape(-1, hidden)
+
+        input_amax = x_2d.abs().max()
+        input_scale = torch.clamp(input_amax / self.fp8_max, min=1e-12).to(torch.float32)
+        x_fp8 = (x_2d / input_scale).to(torch.float8_e4m3fn)
+        scale_a = input_scale.reshape(1, 1).expand(x_fp8.size(0), 1).contiguous()
+
+        output_2d = torch._scaled_mm(
+            x_fp8,
+            self._weight_fp8.T,
+            scale_a,
+            self._scale_b,
+            out_dtype=torch.bfloat16,
+        )
+        output = output_2d.reshape(batch_size, seq_len, -1)
         
-        # Per-output-channel quantization of weights
-        # Each row gets its own scale factor
-        weight_amax = self.weight.abs().amax(dim=1)  # [out_features]
-        weight_scale = torch.clamp(weight_amax / self.fp8_max, min=1e-12)  # [out_features]
-        weight_q = torch.clamp(
-            self.weight / weight_scale.unsqueeze(1),
-            -self.fp8_max, self.fp8_max
-        ).round()
-        
-        # Simulated FP8 GEMM
-        output_q = torch.nn.functional.linear(x_q, weight_q, bias=None)
-        
-        # Dequantize with per-channel weight scales
-        combined_scale = input_scale * weight_scale  # [out_features]
-        output = (output_q * combined_scale).to(x.dtype)
-        
-        if self.bias is not None:
-            output = output + self.bias
+        if self._bias_bf16 is not None:
+            output = output + self._bias_bf16
         
         return output
 
@@ -99,6 +124,8 @@ class OptimizedFP8PerChannelBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.in_features = 4096
         self.out_features = 4096
         self.dtype = torch.float32
+        self._tf32_state = None
+        self._prev_precision: Optional[str] = None
         self._last = 0.0
         self._error_sum = 0.0
         self._verify_input: Optional[torch.Tensor] = None
@@ -120,6 +147,10 @@ class OptimizedFP8PerChannelBenchmark(VerificationPayloadMixin, BaseBenchmark):
         torch.manual_seed(42)
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(42)
+
+        self._prev_precision = torch.get_float32_matmul_precision()
+        self._tf32_state = configure_tf32(enable_matmul=True, enable_cudnn=True)
+        torch.set_float32_matmul_precision("high")
         
         # Create model with per-channel FP8
         self.model = FP8PerChannelLinear(
@@ -143,6 +174,8 @@ class OptimizedFP8PerChannelBenchmark(VerificationPayloadMixin, BaseBenchmark):
             device=self.device, dtype=self.dtype
         )
         self._verify_input = self.x.detach().clone()
+
+        self.model.prepare_fp8_weights()
         
         # Warmup
         for _ in range(3):
@@ -153,21 +186,15 @@ class OptimizedFP8PerChannelBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def benchmark_fn(self) -> None:
         """Benchmark: Per-channel FP8 forward pass."""
         with torch.no_grad():
-            output = self.model(self.x)
-            ref_output = self.ref_model(self.x)
-            
-            # Track error for accuracy comparison
-            error = (output - ref_output).abs().mean() / ref_output.abs().mean()
-            self._error_sum = error.item()
-            self._last = float(output.sum())
-            self.output = output.detach().clone()
-            self._synchronize()
+            self.output = self.model(self.x)
         if self._verify_input is None:
             raise RuntimeError("Verification input not initialized")
         dtype = self._verify_input.dtype
         self._payload_dtype = dtype
 
     def capture_verification_payload(self) -> None:
+        if self.output is None:
+            raise RuntimeError("benchmark_fn() must run before capture_verification_payload()")
         dtype = self._payload_dtype
         self._set_verification_payload(
             inputs={"input": self._verify_input},
@@ -188,6 +215,11 @@ class OptimizedFP8PerChannelBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.model = None
         self.ref_model = None
         self.x = None
+        if self._tf32_state is not None:
+            restore_tf32(self._tf32_state)
+            self._tf32_state = None
+        if self._prev_precision is not None:
+            torch.set_float32_matmul_precision(self._prev_precision)  # type: ignore[arg-type]
         torch.cuda.empty_cache()
 
     def get_config(self) -> BenchmarkConfig:

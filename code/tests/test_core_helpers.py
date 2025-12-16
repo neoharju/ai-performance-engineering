@@ -1,4 +1,5 @@
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -103,20 +104,98 @@ def test_profile_insights_ncu_comparison_and_recommendations(tmp_path: Path):
     assert recs, "Recommendations should be produced from comparison data"
 
 
-def test_profile_insights_nsys_comparison_monkeypatch(tmp_path: Path, monkeypatch):
-    dummy_module_name = "core.profiling.extract_nsys_summary"
-    import types
-    dummy_mod = types.ModuleType(dummy_module_name)
+def test_profile_insights_nsys_comparison(tmp_path: Path):
+    script = tmp_path / "nvtx_script.py"
+    script.write_text(
+        (
+            "import torch\n"
+            "assert torch.cuda.is_available(), 'CUDA required for nsys test'\n"
+            "x = torch.randn(1024, device='cuda')\n"
+            "with torch.cuda.nvtx.range('nsys_test_range'):\n"
+            "    y = x * 2\n"
+            "torch.cuda.synchronize()\n"
+            "print(float(y[0].item()))\n"
+        ),
+        encoding="utf-8",
+    )
 
-    def harvest(path):  # noqa: ANN001
-        return [{"metric": "sm__throughput", "value": "10"}, {"metric": "dram_util", "value": "5"}]
+    baseline_prefix = tmp_path / "baseline_test"
+    subprocess.run(
+        [
+            "nsys",
+            "profile",
+            "--force-overwrite=true",
+            "-t",
+            "cuda,nvtx,osrt",
+            "-o",
+            str(baseline_prefix),
+            sys.executable,
+            str(script),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
 
-    dummy_mod.harvest = harvest  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, dummy_module_name, dummy_mod)
-
-    (tmp_path / "a_baseline.nsys-rep").write_text("")
-    (tmp_path / "a_optimized.nsys-rep").write_text("")
+    baseline_rep = baseline_prefix.with_suffix(".nsys-rep")
+    assert baseline_rep.exists()
+    optimized_rep = tmp_path / "optimized_test.nsys-rep"
+    optimized_rep.write_bytes(baseline_rep.read_bytes())
 
     comparison = profile_insights.compare_nsys_files(tmp_path)
     assert comparison is not None
-    assert comparison.get("metrics"), "Mocked nsys comparison should yield metrics"
+    assert comparison.get("metrics"), "nsys comparison should yield metrics when NVTX ranges exist"
+
+
+def test_profile_insights_ncu_comparison_from_rep(tmp_path: Path):
+    script = tmp_path / "ncu_script.py"
+    script.write_text(
+        (
+            "import torch\n"
+            "assert torch.cuda.is_available(), 'CUDA required for ncu test'\n"
+            "x = torch.randn(512, 512, device='cuda')\n"
+            "y = torch.randn(512, 512, device='cuda')\n"
+            "z = x @ y\n"
+            "torch.cuda.synchronize()\n"
+            "print(float(z[0, 0]))\n"
+        ),
+        encoding="utf-8",
+    )
+
+    metrics = ",".join(
+        [
+            "gpu__time_duration.avg",
+            "sm__throughput.avg.pct_of_peak_sustained_elapsed",
+            "gpu__dram_throughput.avg.pct_of_peak_sustained_elapsed",
+            "lts__throughput.avg.pct_of_peak_sustained_elapsed",
+            "sm__warps_active.avg.pct_of_peak_sustained_active",
+        ]
+    )
+
+    out_prefix = tmp_path / "ncu_test"
+    subprocess.run(
+        [
+            "ncu",
+            "--metrics",
+            metrics,
+            "--force-overwrite",
+            "-o",
+            str(out_prefix),
+            sys.executable,
+            str(script),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+
+    rep = out_prefix.with_suffix(".ncu-rep")
+    assert rep.exists()
+    (tmp_path / "baseline_test.ncu-rep").write_bytes(rep.read_bytes())
+    (tmp_path / "optimized_test.ncu-rep").write_bytes(rep.read_bytes())
+
+    comparison = profile_insights.compare_ncu_files(tmp_path)
+    assert comparison is not None
+    assert comparison.get("kernel_comparison"), "ncu comparison should yield kernel comparisons"

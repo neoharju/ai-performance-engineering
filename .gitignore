@@ -26,6 +26,8 @@ build/
 run_report_*.md
 build_report_*.md
 __pycache__/
+# Binary dumps emitted by the Chapter 19 FP4 harness wrappers (untracked artifacts).
+code/ch19/fp4_hardware_kernel_*_output.bin
 UPDATE_SUMMARY.md
 UPDATES_SUMMARY.md
 code2/

@@ -110,6 +110,9 @@ class OptimizedNUMAAwareBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def get_config(self) -> BenchmarkConfig:
         return BenchmarkConfig(iterations=15, warmup=5)
 
+    def get_custom_streams(self) -> list["torch.cuda.Stream"]:
+        return [self.copy_stream]
+
     def get_custom_metrics(self) -> Optional[dict]:
         """Return domain-specific metrics using standardized helper."""
         from core.benchmark.metrics import compute_system_config_metrics

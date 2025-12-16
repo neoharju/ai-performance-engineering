@@ -25,8 +25,9 @@ class OptimizedKVCacheManagementBenchmark(VerificationPayloadMixin, BaseBenchmar
         self.k_cache: Optional[torch.Tensor] = None
         self.v_cache: Optional[torch.Tensor] = None
         # Match baseline batch_size for fair comparison
-        self.batch_size = 128
-        self.hidden_dim = 256
+        self.batch_size = 64
+        # Use a moderately large hidden dim so K/V projection reuse is measurable.
+        self.hidden_dim = 1024
         self.num_heads = 8
         self.head_dim = self.hidden_dim // self.num_heads
         self.steps = 256

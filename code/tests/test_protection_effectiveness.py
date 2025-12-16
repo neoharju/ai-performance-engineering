@@ -15,7 +15,6 @@ import random
 import threading
 import time
 from pathlib import Path
-from unittest.mock import Mock, patch
 from contextlib import contextmanager
 
 import pytest
@@ -760,4 +759,3 @@ class TestMetaTestValidity:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])
-

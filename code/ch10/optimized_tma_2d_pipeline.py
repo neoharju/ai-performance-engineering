@@ -51,6 +51,8 @@ class OptimizedTma2DPipelineBenchmark(CudaBinaryBenchmark):
         ).to_dict()
 
     def get_output_tolerance(self) -> tuple[float, float]:
+        # The VERIFY mode checksum matches exactly between baseline-only and TMA
+        # paths, so keep tolerance strict.
         return (0.0, 0.0)
 
 def get_benchmark() -> CudaBinaryBenchmark:

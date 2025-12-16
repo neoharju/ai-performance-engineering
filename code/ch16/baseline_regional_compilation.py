@@ -126,15 +126,16 @@ class BaselineRegionalCompilationBenchmark(VerificationPayloadMixin, BaseBenchma
         enable_nvtx = get_nvtx_enabled(config) if config else False
         with nvtx_range("baseline_regional_compilation", enable=enable_nvtx):
             with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
-                self.output = self.model(self.inputs).float().clone()
-            torch.cuda.synchronize(self.device)
+                self.output = self.model(self.inputs)
         if self._verify_input is None:
             raise RuntimeError("Verification input not initialized")
 
     def capture_verification_payload(self) -> None:
+        if self.output is None:
+            raise RuntimeError("benchmark_fn() must run before capture_verification_payload()")
         self._set_verification_payload(
             inputs={"input": self._verify_input},
-            output=self.output.detach().clone(),
+            output=self.output.detach().float().clone(),
             batch_size=self._verify_input.shape[0],
             parameter_count=self.parameter_count,
             precision_flags={

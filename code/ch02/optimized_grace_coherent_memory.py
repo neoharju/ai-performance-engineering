@@ -10,7 +10,7 @@ Demonstrates optimized coherent memory patterns:
 
 import torch
 import time
-from typing import Dict, Any, Optional
+from typing import Any, Dict, List, Optional
 import sys
 from pathlib import Path
 import os
@@ -309,10 +309,22 @@ class OptimizedGraceCoherentMemoryBenchmark(VerificationPayloadMixin, BaseBenchm
         super().teardown()
 
     def get_config(self) -> BenchmarkConfig:
+        # This benchmark does substantial work inside benchmark_fn() (it runs an
+        # internal loop of coherent-memory transfers). A single harness iteration
+        # is intentional and still yields stable timings (the harness also has
+        # adaptive-iterations enabled by default).
         return BenchmarkConfig(iterations=1, warmup=5, enable_memory_tracking=False)
 
     def get_workload_metadata(self) -> Optional[WorkloadMetadata]:
         return self._workload
+
+    def get_custom_streams(self) -> List["torch.cuda.Stream"]:
+        streams: List["torch.cuda.Stream"] = []
+        for name in ("stream", "copy_stream"):
+            stream = getattr(self._impl, name, None)
+            if stream is not None:
+                streams.append(stream)
+        return streams
 
     def get_custom_metrics(self) -> Optional[dict]:
         """Return memory transfer metrics for grace_coherent_memory."""

@@ -36,7 +36,7 @@ class BaselineGemmBenchmark(VerificationPayloadMixin, BaseBenchmark):
         
         # Register workload metadata in __init__ for compliance checks
         self.register_workload_metadata(
-            requests_per_iteration=float(self.num_blocks),
+            requests_per_iteration=1.0,
             tokens_per_iteration=float(self.m * self.n),
         )
 

@@ -27,6 +27,7 @@ from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import (
     BaseBenchmark,
     BenchmarkConfig,
+    WorkloadMetadata,
 )
 from core.profiling.nvtx_helper import nvtx_range, get_nvtx_enabled
 from ch16.baseline_regional_compilation import DummyTransformer
@@ -115,7 +116,15 @@ class OptimizedRegionalCompilationBenchmark(VerificationPayloadMixin, BaseBenchm
         self.graph_cache: Dict[int, GraphCacheEntry] = {}
         self._verify_input: Optional[torch.Tensor] = None
         self.parameter_count: int = 0
-        self.register_workload_metadata(requests_per_iteration=1.0)
+        tokens = self.max_seq_len * self.d_model
+        self._workload = WorkloadMetadata(
+            requests_per_iteration=1.0,
+            tokens_per_iteration=float(tokens),
+        )
+        self.register_workload_metadata(
+            requests_per_iteration=1.0,
+            tokens_per_iteration=float(tokens),
+        )
 
     def setup(self) -> None:
         torch.manual_seed(42)
@@ -143,10 +152,17 @@ class OptimizedRegionalCompilationBenchmark(VerificationPayloadMixin, BaseBenchm
         )
         self._prepare_cuda_graphs()
         tokens = self.max_seq_len * self.d_model
+        self._workload = WorkloadMetadata(
+            requests_per_iteration=1.0,
+            tokens_per_iteration=float(tokens),
+        )
         self.register_workload_metadata(
             requests_per_iteration=1.0,
             tokens_per_iteration=float(tokens),
         )
+
+    def get_workload_metadata(self) -> Optional[WorkloadMetadata]:
+        return self._workload
 
     def setup_with_custom_regions(self, config: BenchmarkConfig, layer_indices: Optional[list[int]] = None) -> None:
         """Compatibility shim: reuse standard setup for demo purposes."""
@@ -220,9 +236,11 @@ class OptimizedRegionalCompilationBenchmark(VerificationPayloadMixin, BaseBenchm
 
     def capture_verification_payload(self) -> None:
         verify_input = self._payload_verify_input
+        if self.output is None:
+            raise RuntimeError("benchmark_fn() must run before capture_verification_payload()")
         self._set_verification_payload(
             inputs={"input": verify_input},
-            output=self.output,
+            output=self.output.detach().float().clone(),
             batch_size=1,
             parameter_count=self.parameter_count,
             precision_flags={
@@ -260,8 +278,7 @@ class OptimizedRegionalCompilationBenchmark(VerificationPayloadMixin, BaseBenchm
         graph, _static_input, static_output = entry
         with nvtx_range("regional_compilation[cuda_graph]", enable=enable_nvtx):
             graph.replay()
-        torch.cuda.synchronize()
-        self.output = static_output.detach().float().clone()
+        self.output = static_output
         return True
 
     def get_config(self) -> BenchmarkConfig:

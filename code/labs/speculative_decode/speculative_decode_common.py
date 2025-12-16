@@ -42,7 +42,7 @@ def default_workload(*, dtype: torch.dtype = torch.bfloat16) -> SpecDecodeWorklo
         draft_hidden=1024,
         speculative_k=64,
         total_tokens=256,
-        tail_scale=0.02,
+        tail_scale=0.01,
         dtype=dtype,
     )
 
@@ -157,4 +157,3 @@ def build_draft_from_target(target: TokenMLP, draft_hidden: int) -> TokenMLP:
             draft.out.bias.copy_(target.out.bias)
 
     return draft
-

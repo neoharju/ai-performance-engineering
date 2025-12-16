@@ -36,6 +36,7 @@ class BaselineTensorCoresBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.A = None
         self.B = None
         self.size = 4096
+        self.output_buffer = None
         self._workload = WorkloadMetadata(
             requests_per_iteration=1.0,
             tokens_per_iteration=float(self.size * self.size),
@@ -50,11 +51,19 @@ class BaselineTensorCoresBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def setup(self) -> None:
         """Setup: Initialize matrices in FP32."""
         torch.manual_seed(42)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(42)
+            # The harness enables TF32 globally as a "quick win". Disable it for
+            # this baseline so we measure true FP32 (non-TF32) GEMM behavior.
+            torch.backends.cuda.matmul.allow_tf32 = False
+            torch.backends.cudnn.allow_tf32 = False
+            torch.set_float32_matmul_precision("highest")
         # Baseline: FP32 operations without tensor cores
         # Tensor cores accelerate FP16/BF16 matrix operations
         # This baseline uses FP32 which doesn't use tensor cores
         self.A = torch.randn(self.size, self.size, device=self.device, dtype=torch.float32)
         self.B = torch.randn(self.size, self.size, device=self.device, dtype=torch.float32)
+        self.output_buffer = torch.empty((self.size, self.size), device=self.device, dtype=torch.float32)
         self._synchronize()
         self.register_workload_metadata(
             requests_per_iteration=self._workload.requests_per_iteration,
@@ -66,8 +75,10 @@ class BaselineTensorCoresBenchmark(VerificationPayloadMixin, BaseBenchmark):
         # Baseline: FP32 matmul without tensor cores
         # Tensor cores accelerate FP16/BF16 operations
         with self._nvtx_range("baseline_tensor_cores"):
-            self.output = torch.matmul(self.A, self.B)
-        self._synchronize()
+            if self.output_buffer is None:
+                raise RuntimeError("Output buffer not initialized")
+            torch.matmul(self.A, self.B, out=self.output_buffer)
+            self.output = self.output_buffer
         if self.output is None or self.A is None or self.B is None:
             raise RuntimeError("benchmark_fn() must produce output")
 

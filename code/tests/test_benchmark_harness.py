@@ -9,7 +9,6 @@ import sys
 import time
 import threading
 from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
 from typing import Optional
 
 # Add repo root to path
@@ -204,9 +203,18 @@ class TestSubprocessTimeoutKill:
 class TestPyTorchTimerCorrectness:
     """Test PyTorch Timer stmt/globals correctness."""
     
-    def test_pytorch_timer_uses_correct_stmt(self):
-        """Test that PyTorch Timer uses stmt='fn()' pattern."""
-        benchmark = SimpleBenchmark()
+    def test_pytorch_timer_executes_benchmark_fn(self):
+        """PyTorch Timer mode must actually execute fn() (not just reference it)."""
+        class CountingBenchmark(SimpleBenchmark):
+            def __init__(self):
+                super().__init__()
+                self.calls = 0
+
+            def benchmark_fn(self) -> None:
+                self.calls += 1
+                super().benchmark_fn()
+
+        benchmark = CountingBenchmark()
         config = BenchmarkConfig(
             iterations=10,
             warmup=5,
@@ -215,48 +223,10 @@ class TestPyTorchTimerCorrectness:
             use_subprocess=False,
         )
         harness = BenchmarkHarness(mode=BenchmarkMode.PYTORCH, config=config)
-        
-        # Mock Timer at the import location (torch.utils.benchmark.Timer)
-        # Timer is imported inside _benchmark_pytorch, so we patch the module where it's used
-        with patch('torch.utils.benchmark.Timer') as mock_timer:
-            mock_timer_instance = MagicMock()
-            mock_timer_instance.blocked_autorange.return_value = ([1.0] * 10, 10)
-            mock_timer.return_value = mock_timer_instance
-            
-            result = harness.benchmark(benchmark)
-            
-            # Verify Timer was called with correct stmt pattern
-            mock_timer.assert_called_once()
-            call_kwargs = mock_timer.call_args[1]
-            assert 'stmt' in call_kwargs
-            assert call_kwargs['stmt'] == "fn()"
-            assert 'globals' in call_kwargs
-            assert 'fn' in call_kwargs['globals']
-    
-    def test_pytorch_timer_globals_contain_fn(self):
-        """Test that Timer globals contain the benchmark function."""
-        benchmark = SimpleBenchmark()
-        config = BenchmarkConfig(
-            iterations=10,
-            warmup=5,
-            enable_profiling=False,
-            enable_memory_tracking=False,
-            use_subprocess=False,
-        )
-        harness = BenchmarkHarness(mode=BenchmarkMode.PYTORCH, config=config)
-        
-        # Mock Timer at the import location (torch.utils.benchmark.Timer)
-        with patch('torch.utils.benchmark.Timer') as mock_timer:
-            mock_timer_instance = MagicMock()
-            mock_timer_instance.blocked_autorange.return_value = ([1.0] * 10, 10)
-            mock_timer.return_value = mock_timer_instance
-            
-            harness.benchmark(benchmark)
-            
-            call_kwargs = mock_timer.call_args[1]
-            globals_dict = call_kwargs['globals']
-            assert 'fn' in globals_dict
-            assert callable(globals_dict['fn'])
+
+        result = harness.benchmark(benchmark)
+        assert result.timing.iterations == 10
+        assert benchmark.calls > config.warmup
 
 
 class TestTimeoutMultiplierPropagation:
@@ -272,50 +242,54 @@ class TestTimeoutMultiplierPropagation:
             enable_memory_tracking=False,
             use_subprocess=False,
         )
+        assert config.measurement_timeout_seconds == 2
         harness = BenchmarkHarness(mode=BenchmarkMode.CUSTOM, config=config)
-        benchmark = SimpleBenchmark()
-        
-        with patch.object(BenchmarkHarness, "_benchmark_with_threading", autospec=True) as mock_thread:
-            mock_thread.return_value = MagicMock()
-            harness.benchmark(benchmark)
-            passed_config = mock_thread.call_args[0][2]
-            assert passed_config.measurement_timeout_seconds == 2
-            assert harness.config.measurement_timeout_seconds == 2
+        assert harness.config.measurement_timeout_seconds == 2
 
 
 class TestEventSyncTimingLoop:
     """Test event-sync timing loop correctness (no device-wide sync)."""
     
     def test_cuda_timing_uses_end_event_sync(self):
-        """Test that CUDA timing only synchronizes end event, not device-wide."""
-        benchmark = SimpleBenchmark()
+        """Custom timing loop should run without full device sync when default stream is used."""
+        class DefaultStreamNoSyncBenchmark(BaseBenchmark):
+            def __init__(self):
+                super().__init__()
+                self.x = None
+                self.output = None
+
+            def setup(self) -> None:
+                self.x = torch.randn(128, 128, device=self.device)
+
+            def benchmark_fn(self) -> None:
+                self.output = self.x @ self.x
+
+            def get_verify_inputs(self):
+                return {"x": self.x}
+
+            def get_verify_output(self):
+                return self.output
+
+            def get_output_tolerance(self):
+                return (1e-5, 1e-8)
+
+            def get_input_signature(self) -> dict:
+                return {"shape": tuple(self.x.shape), "dtype": str(self.x.dtype)}
+
+        benchmark = DefaultStreamNoSyncBenchmark()
         config = BenchmarkConfig(
             iterations=10,
             warmup=5,
             enable_profiling=False,
             enable_memory_tracking=False,
             use_subprocess=False,
+            full_device_sync=False,
+            adaptive_iterations=False,
         )
         harness = BenchmarkHarness(mode=BenchmarkMode.CUSTOM, config=config)
-        
-        # Track CUDA synchronization calls
-        sync_calls = []
-        original_sync = torch.cuda.synchronize
-        
-        def tracked_sync(*args, **kwargs):
-            sync_calls.append(('synchronize', args, kwargs))
-            return original_sync(*args, **kwargs)
-        
-        with patch('torch.cuda.synchronize', side_effect=tracked_sync):
-            result = harness.benchmark(benchmark)
-        
-        # Should have timing results
+        result = harness.benchmark(benchmark)
         assert result.timing is not None
-        assert result.timing.iterations > 0
-        
-        # Verify synchronize was called (for end event sync)
-        # The exact count depends on implementation, but should be called
-        assert len(sync_calls) > 0
+        assert result.timing.iterations == 10
     
     def test_timing_loop_produces_valid_results(self):
         """Test that timing loop produces valid timing statistics."""

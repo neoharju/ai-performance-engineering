@@ -25,7 +25,6 @@ import sys
 import tempfile
 import warnings
 from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
 from contextlib import contextmanager
 
 import pytest
@@ -567,10 +566,11 @@ class TestCUDAProtections:
         """
         from core.harness.validity_checks import validate_environment
         
-        env = validate_environment()
+        result = validate_environment(device=torch.device("cuda"))
         
         # Should report GPU count
-        assert "gpu_count" in env or "cuda_device_count" in env or True
+        assert isinstance(result.details.get("gpu_count"), int)
+        assert result.details["gpu_count"] == torch.cuda.device_count()
     
     def test_context_switch_handling(self):
         """Test that CUDA context is properly managed.
@@ -697,10 +697,11 @@ class TestEnvironmentProtections:
         """
         from core.harness.validity_checks import validate_environment
         
-        env = validate_environment()
+        result = validate_environment(device=torch.device("cuda"))
         
         # Should capture device info
-        assert env is not None
+        assert result.details.get("device_type") == "cuda"
+        assert isinstance(result.details.get("gpu_count"), int)
     
     def test_frequency_boost_clock_locking(self):
         """Test that GPU clocks can be locked.
@@ -715,9 +716,15 @@ class TestEnvironmentProtections:
         try:
             with lock_gpu_clocks():
                 x = torch.randn(100, device="cuda")
-        except (RuntimeError, PermissionError):
-            # Expected if no pynvml or no permissions
-            pass
+        except (RuntimeError, PermissionError) as exc:
+            message = str(exc).lower()
+            assert (
+                "permission" in message
+                or "insufficient permissions" in message
+                or "failed to lock gpu clocks" in message
+                or "clock lock failed" in message
+                or "nvidia-smi" in message
+            ), f"Unexpected lock_gpu_clocks failure: {exc}"
     
     def test_thermal_throttling_monitoring(self):
         """Test that thermal state is monitored.
@@ -729,8 +736,9 @@ class TestEnvironmentProtections:
         
         state = capture_gpu_state()
         
-        # Should capture temperature if available
+        # Should capture temperature via NVML (fail-fast if not available).
         assert state is not None
+        assert state.temperature_c is not None
     
     def test_power_limit_monitoring(self):
         """Test that power state is monitored.
@@ -742,8 +750,9 @@ class TestEnvironmentProtections:
         
         state = capture_gpu_state()
         
-        # Should capture power info if available
+        # Should capture power info via NVML (fail-fast if not available).
         assert state is not None
+        assert state.power_draw_w is not None
 
 
 # =============================================================================
@@ -1478,9 +1487,65 @@ class TestDistributedProtectionsExtended:
         Protection: Bubble time tracking
         Attack: Pipeline bubbles not counted
         """
-        # Pipeline bubbles would be tracked in distributed timing
-        # Single GPU has no bubbles
-        pass
+        # Trigger timing cross-validation by launching work on a non-default stream
+        # while CUDA events are recorded on the (per-thread) default stream.
+        # The wall clock includes full-device sync, but CUDA event timing under-reports,
+        # which should raise a TIMING CROSS-VALIDATION FAILURE for chapter/lab benchmarks.
+        import importlib.util
+        import sys
+        import textwrap
+
+        from core.harness.benchmark_harness import BenchmarkConfig, BenchmarkHarness
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            module_path = Path(tempdir) / "ch_fake_pipeline_bubble.py"
+            module_path.write_text(
+                textwrap.dedent(
+                    """
+                    import torch
+                    from core.harness.benchmark_harness import BaseBenchmark
+
+                    class PipelineBubbleTimingBenchmark(BaseBenchmark):
+                        def __init__(self):
+                            super().__init__()
+                            self.stream = None
+
+                        def setup(self) -> None:
+                            self.stream = torch.cuda.Stream()
+
+                        def get_custom_streams(self):
+                            return [self.stream]
+
+                        def benchmark_fn(self) -> None:
+                            # Launch GPU work on a non-default stream and return without
+                            # synchronizing that stream. The harness uses CUDA events
+                            # on the default stream + full-device sync, so wall clock
+                            # should be much larger than CUDA event timing.
+                            with torch.cuda.stream(self.stream):
+                                torch.cuda._sleep(10_000_000)
+                    """
+                ).strip()
+                + "\n",
+                encoding="utf-8",
+            )
+
+            spec = importlib.util.spec_from_file_location("ch_fake_pipeline_bubble", module_path)
+            assert spec and spec.loader
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[spec.name] = module
+            spec.loader.exec_module(module)
+
+            bench = module.PipelineBubbleTimingBenchmark()
+            harness = BenchmarkHarness()
+            config = BenchmarkConfig(
+                iterations=1,
+                warmup=5,
+                use_subprocess=False,
+                timing_method="cuda_event",
+                adaptive_iterations=False,
+            )
+            result = harness._benchmark_with_threading(bench, config)
+            assert any("TIMING CROSS-VALIDATION FAILURE" in err for err in result.errors), result.errors
     
     def test_shard_size_mismatch_detection(self):
         """Test that shard size mismatches are detected.
@@ -1560,9 +1625,63 @@ class TestEnvironmentProtectionsExtended:
         Protection: Governor lock
         Attack: Different CPU frequency scaling
         """
-        # CPU governor affects CPU-side timing
-        # GPU timing is independent
-        pass
+        import importlib.util
+        import sys
+        import textwrap
+
+        from core.harness.benchmark_harness import BenchmarkConfig, BenchmarkHarness
+        from core.harness.validity_checks import EnvironmentProbe
+
+        with tempfile.TemporaryDirectory() as env_dir, tempfile.TemporaryDirectory() as mod_dir:
+            # Create a synthetic sysfs/procfs snapshot that violates governor=performance.
+            env_root = Path(env_dir)
+            (env_root / "proc").mkdir(parents=True, exist_ok=True)
+            (env_root / "proc" / "swaps").write_text("Filename\tType\tSize\tUsed\tPriority\n", encoding="utf-8")
+            (env_root / "proc" / "cpuinfo").write_text("processor\t: 0\n", encoding="utf-8")
+            (env_root / "proc" / "sys" / "vm").mkdir(parents=True, exist_ok=True)
+            (env_root / "proc" / "sys" / "vm" / "swappiness").write_text("0\n", encoding="utf-8")
+            (env_root / "sys" / "devices" / "virtual" / "dmi" / "id").mkdir(parents=True, exist_ok=True)
+            (env_root / "sys" / "devices" / "virtual" / "dmi" / "id" / "product_name").write_text(
+                "BareMetal\n",
+                encoding="utf-8",
+            )
+            gov_path = env_root / "sys" / "devices" / "system" / "cpu" / "cpufreq" / "policy0"
+            gov_path.mkdir(parents=True, exist_ok=True)
+            (gov_path / "scaling_governor").write_text("powersave\n", encoding="utf-8")
+
+            module_path = Path(mod_dir) / "ch_fake_cpu_governor.py"
+            module_path.write_text(
+                textwrap.dedent(
+                    """
+                    import torch
+                    from core.harness.benchmark_harness import BaseBenchmark
+
+                    class GovernorMismatchBenchmark(BaseBenchmark):
+                        def __init__(self):
+                            super().__init__()
+                            self.x = None
+
+                        def setup(self) -> None:
+                            self.x = torch.randn(1, device=self.device)
+
+                        def benchmark_fn(self) -> None:
+                            self.x.add_(1)
+                    """
+                ).strip()
+                + "\n",
+                encoding="utf-8",
+            )
+            spec = importlib.util.spec_from_file_location("ch_fake_cpu_governor", module_path)
+            assert spec and spec.loader
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[spec.name] = module
+            spec.loader.exec_module(module)
+
+            bench = module.GovernorMismatchBenchmark()
+            harness = BenchmarkHarness(environment_probe=EnvironmentProbe(root=env_root))
+            config = BenchmarkConfig(iterations=1, warmup=5, use_subprocess=False)
+            result = harness._benchmark_with_threading(bench, config)
+            assert any("ENVIRONMENT INVALID" in err and "CPU governor mismatch" in err for err in result.errors), result.errors
     
     def test_driver_version_mismatch_detection(self):
         """Test that driver version mismatches are detected.
@@ -1790,8 +1909,9 @@ class TestReproducibilityProtections:
         """
         from core.harness.validity_checks import validate_environment
         
-        env = validate_environment()
-        assert env is not None
+        result = validate_environment(device=torch.device("cuda"))
+        assert isinstance(result.details, dict)
+        assert "platform" in result.details
     
     def test_run_manifest_completeness(self):
         """Test that run manifest captures all needed info.

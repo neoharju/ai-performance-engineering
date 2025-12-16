@@ -62,7 +62,7 @@ __global__ void simple_warp_specialized_kernel(const float* __restrict__ A,
 
 void run_optimized() {
     constexpr int batches = 4096;
-    constexpr int num_streams = 3;
+    constexpr int num_streams = 8;
     const size_t bytes = TILE_ELEMS * sizeof(float);
 
     // Use pinned host memory so H2D/D2H can overlap with compute.

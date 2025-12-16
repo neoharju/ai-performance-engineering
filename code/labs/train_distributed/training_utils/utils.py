@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
+import os
 import random
 from typing import Callable
 
 import numpy as np
 import torch
 import torch.distributed as dist
-from datasets import load_dataset
 from torch.utils.data import DataLoader, DistributedSampler
-from transformers import AutoModelForCausalLM, AutoTokenizer
 
 # Modern, lighter causal LM for training demos (open weights).
 MODEL_NAME = "TinyLlama/TinyLlama-1.1B-intermediate-step-1431k-3T"
@@ -18,6 +17,10 @@ MODEL_NAME = "TinyLlama/TinyLlama-1.1B-intermediate-step-1431k-3T"
 
 def build_text_model(model_id: str = MODEL_NAME, dtype: torch.dtype = torch.bfloat16):
     """Return a small causal LM we can shard/replicate (eager attention)."""
+    try:
+        from transformers import AutoModelForCausalLM
+    except ImportError as exc:
+        raise RuntimeError("build_text_model() requires the `transformers` package") from exc
     return AutoModelForCausalLM.from_pretrained(
         model_id, torch_dtype=dtype, attn_implementation="eager"
     )
@@ -25,6 +28,10 @@ def build_text_model(model_id: str = MODEL_NAME, dtype: torch.dtype = torch.bflo
 
 def build_text_model_flash(model_id: str = MODEL_NAME, dtype: torch.dtype = torch.bfloat16):
     """Return a small causal LM using flash attention (requires compatible kernels)."""
+    try:
+        from transformers import AutoModelForCausalLM
+    except ImportError as exc:
+        raise RuntimeError("build_text_model_flash() requires the `transformers` package") from exc
     return AutoModelForCausalLM.from_pretrained(
         model_id, torch_dtype=dtype, attn_implementation="flash_attention_2"
     )
@@ -41,6 +48,10 @@ def build_smol_model_flash(model_id: str = MODEL_NAME, dtype: torch.dtype = torc
 
 
 def build_tokenizer(model_id: str = MODEL_NAME):
+    try:
+        from transformers import AutoTokenizer
+    except ImportError as exc:
+        raise RuntimeError("build_tokenizer() requires the `transformers` package") from exc
     tokenizer = AutoTokenizer.from_pretrained(model_id)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
@@ -94,6 +105,10 @@ def get(key, dm: dist.device_mesh.DeviceMesh | None = None):
 
 def get_dataset():
     """Tokenize a tiny MRPC slice for quick training/debug cycles."""
+    try:
+        from datasets import load_dataset
+    except ImportError as exc:
+        raise RuntimeError("get_dataset() requires the `datasets` package") from exc
     dataset = load_dataset("glue", "mrpc")
     tokenizer = build_tokenizer()
 

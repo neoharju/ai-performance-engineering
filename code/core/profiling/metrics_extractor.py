@@ -5,6 +5,8 @@ Provides functions for extracting metrics from profiling reports and returning P
 
 from __future__ import annotations
 
+import csv
+import io
 import json
 import re
 import subprocess
@@ -82,7 +84,7 @@ def get_ncu_metric_description(metric_key: str, fallback_to_key: bool = True) ->
     return metric_key
 
 
-def extract_nsys_metrics(nsys_rep_path: Path, timeout: int = 60) -> NsysMetrics:
+def extract_nsys_metrics(nsys_rep_path: Path, timeout: int = 180) -> NsysMetrics:
     """Extract metrics from nsys report file.
     
     Args:
@@ -104,7 +106,16 @@ def extract_nsys_metrics(nsys_rep_path: Path, timeout: int = 60) -> NsysMetrics:
     # Try using nsys stats command
     try:
         result = subprocess.run(
-            ["nsys", "stats", "--report", "cuda_gpu_sum", "--format", "csv", str(nsys_rep_path)],
+            [
+                "nsys",
+                "stats",
+                "--force-export=true",
+                "--report",
+                "cuda_gpu_sum",
+                "--format",
+                "csv",
+                str(nsys_rep_path),
+            ],
             capture_output=True,
             text=True,
             timeout=timeout
@@ -182,8 +193,17 @@ def extract_ncu_metrics(ncu_rep_path: Path, timeout: int = 60) -> NcuMetrics:
     
     # Try using ncu CLI to export metrics
     try:
+        # Use --page details (Metric Name/Unit/Value rows) so we can honor units
+        # while keeping output small via --metrics filtering.
+        metrics = [
+            "gpu__time_duration.avg",
+            "sm__throughput.avg.pct_of_peak_sustained_elapsed",
+            "gpu__dram_throughput.avg.pct_of_peak_sustained_elapsed",
+            "lts__throughput.avg.pct_of_peak_sustained_elapsed",
+            "sm__warps_active.avg.pct_of_peak_sustained_active",
+        ]
         result = subprocess.run(
-            ["ncu", "--csv", "--page", "details", "--import", str(ncu_rep_path)],
+            ["ncu", "--csv", "--page", "details", "--metrics", ",".join(metrics), "--import", str(ncu_rep_path)],
             capture_output=True,
             text=True,
             timeout=timeout
@@ -346,47 +366,25 @@ def _parse_nsys_csv(csv_text: str) -> Dict[str, float]:
     """
     metrics = {}
     
-    lines = csv_text.strip().split("\n")
-    if len(lines) < 2:
-        # Try regex fallback for older format
-        match = re.search(r"Total GPU Time.*?,(\d+\.?\d*)", csv_text, re.IGNORECASE)
-        if match:
-            try:
-                metrics["nsys_total_gpu_time_ms"] = float(match.group(1))
-            except (ValueError, IndexError):
-                pass
+    lines = [ln for ln in csv_text.splitlines() if ln.strip()]
+    if not lines:
         return metrics
-    
-    # Parse CSV with header
-    header = lines[0].split(",")
-    if len(header) < 2 or header[0].strip().lower() != "metric":
-        # Fallback to regex
-        match = re.search(r"Total GPU Time.*?,(\d+\.?\d*)", csv_text, re.IGNORECASE)
-        if match:
+
+    # Format A (legacy): "Metric,Value" with rows like "Total GPU Time,123.45"
+    header = [c.strip() for c in lines[0].split(",")]
+    if len(header) >= 2 and header[0].strip().lower() == "metric":
+        for line in lines[1:]:
+            parts = [p.strip() for p in line.split(",")]
+            if len(parts) < 2:
+                continue
+            metric_name = parts[0]
+            value_str = parts[1]
+            if not metric_name or not value_str:
+                continue
             try:
-                metrics["nsys_total_gpu_time_ms"] = float(match.group(1))
-            except (ValueError, IndexError):
-                pass
-        return metrics
-    
-    # Parse data rows
-    for line in lines[1:]:
-        line = line.strip()
-        if not line:
-            continue
-        
-        parts = line.split(",")
-        if len(parts) < 2:
-            continue
-        
-        metric_name = parts[0].strip()
-        value_str = parts[1].strip()
-        
-        if not metric_name or not value_str:
-            continue
-        
-        try:
-            value = float(value_str)
+                value = float(value_str)
+            except ValueError:
+                continue
             clean_name = (
                 metric_name.lower()
                 .replace(" ", "_")
@@ -399,8 +397,37 @@ def _parse_nsys_csv(csv_text: str) -> Dict[str, float]:
                 continue
             for target in mapped_keys:
                 metrics[target] = value
-        except ValueError:
-            pass
+        return metrics
+
+    # Format B (current): cuda_gpu_sum table CSV with header like:
+    # "Time (%),Total Time (ns),Instances,...,Category,Operation"
+    header_idx = None
+    for idx, line in enumerate(lines):
+        if "Total Time (ns)" in line and "Category" in line and "Operation" in line:
+            header_idx = idx
+            break
+    if header_idx is None:
+        return metrics
+
+    table_lines = lines[header_idx:]
+    try:
+        reader = csv.DictReader(io.StringIO("\n".join(table_lines)))
+        total_time_ns = 0.0
+        kernel_time_ns = 0.0
+        for row in reader:
+            try:
+                time_ns = float(row.get("Total Time (ns)", "") or 0.0)
+            except ValueError:
+                continue
+            total_time_ns += time_ns
+            if (row.get("Category") or "").strip() == "CUDA_KERNEL":
+                kernel_time_ns += time_ns
+        if total_time_ns > 0:
+            metrics["nsys_total_gpu_time_ms"] = total_time_ns / 1e6
+        if kernel_time_ns > 0:
+            metrics["nsys_kernel_time_ms"] = kernel_time_ns / 1e6
+    except Exception:
+        return metrics
     
     return metrics
 
@@ -420,41 +447,124 @@ def _parse_ncu_csv(csv_text: str) -> Dict[str, float]:
         Dictionary of metric identifiers to values
     """
     metrics: Dict[str, float] = {}
-    
-    # Parse CSV lines
-    lines = csv_text.strip().split("\n")
+
+    lines = [ln for ln in csv_text.splitlines() if ln.strip()]
     if not lines:
         return metrics
-    
-    # NCU CSV format: "metric","value" per line (no header)
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-        
-        # Parse CSV line (handles quoted values)
-        # Format: "metric_name","value"
-        parts = line.split(",")
-        if len(parts) < 2:
-            continue
-        
-        # Extract metric name (first column, remove quotes)
-        metric_name = parts[0].strip().strip('"')
-        if not metric_name:
-            continue
-        
-        # Extract value (second column, remove quotes)
-        value_str = parts[1].strip().strip('"')
-        if not value_str:
-            continue
-        
+
+    # Format A (legacy): "metric","value" per line (no header)
+    if len(lines) >= 1 and lines[0].count(",") == 1 and lines[0].startswith('"') and lines[0].endswith('"'):
+        for line in lines:
+            try:
+                row = next(csv.reader(io.StringIO(line)))
+            except Exception:
+                continue
+            if len(row) < 2:
+                continue
+            metric_name = (row[0] or "").strip()
+            value_str = (row[1] or "").strip()
+            if not metric_name or not value_str:
+                continue
+            try:
+                metrics[metric_name] = float(value_str)
+            except ValueError:
+                continue
+        return metrics
+
+    def _parse_float(text: str) -> Optional[float]:
+        stripped = (text or "").strip().replace(",", "")
+        if not stripped:
+            return None
+        if stripped.endswith("%"):
+            stripped = stripped[:-1]
+        match = re.match(r"^[+-]?\d*\.?\d+(?:[eE][+-]?\d+)?", stripped)
+        if not match:
+            return None
         try:
-            value = float(value_str)
-            metrics[metric_name] = value
+            return float(match.group(0))
         except ValueError:
-            # Skip non-numeric values
-            pass
-    
+            return None
+
+    def _time_to_ms(value: float, unit: str) -> float:
+        u = (unit or "").strip().lower()
+        if u.endswith("ns"):
+            return value / 1e6
+        if u.endswith("us"):
+            return value / 1e3
+        if u.endswith("ms"):
+            return value
+        if u.endswith("s"):
+            return value * 1e3
+        # Nsight Compute CSV usually uses base units; treat unknown as-is.
+        return value
+
+    # Format B (current): header + rows (ncu --page details/raw --import ...)
+    try:
+        reader = csv.DictReader(io.StringIO("\n".join(lines)))
+    except Exception:
+        return metrics
+
+    fieldnames = reader.fieldnames or []
+    has_metric_name = "Metric Name" in fieldnames and "Metric Value" in fieldnames
+
+    # B1) Details page: one row per (kernel, metric) with units.
+    if has_metric_name:
+        per_kernel: Dict[str, Dict[str, float]] = {}
+        per_kernel_time: Dict[str, float] = {}
+
+        for row in reader:
+            kernel_id = (row.get("ID") or "").strip()
+            if not kernel_id.isdigit():
+                continue
+            metric_name = (row.get("Metric Name") or "").strip()
+            metric_value_raw = (row.get("Metric Value") or "").strip()
+            if not metric_name or not metric_value_raw:
+                continue
+            value = _parse_float(metric_value_raw)
+            if value is None:
+                continue
+            unit = (row.get("Metric Unit") or "").strip()
+            if metric_name.startswith("gpu__time_duration"):
+                value = _time_to_ms(value, unit)
+            per_kernel.setdefault(kernel_id, {})[metric_name] = value
+            if metric_name == "gpu__time_duration.avg":
+                per_kernel_time[kernel_id] = value
+
+        if not per_kernel:
+            return metrics
+
+        # Choose the kernel with the highest avg duration (dominant kernel).
+        best_kernel_id = max(per_kernel_time, key=per_kernel_time.get) if per_kernel_time else sorted(per_kernel.keys())[0]
+        metrics.update(per_kernel[best_kernel_id])
+        return metrics
+
+    # B2) Raw page: one row per kernel with metrics as columns (no units).
+    best_row: Optional[Dict[str, str]] = None
+    best_time = -1.0
+    for row in reader:
+        row_id = (row.get("ID") or "").strip()
+        if not row_id.isdigit():
+            continue
+        time_val = _parse_float((row.get("gpu__time_duration.avg") or "").strip() if row.get("gpu__time_duration.avg") else "")
+        time_val_num = time_val if time_val is not None else 0.0
+        if best_row is None or time_val_num > best_time:
+            best_row = row
+            best_time = time_val_num
+
+    if best_row is None:
+        return metrics
+
+    for key, value_str in best_row.items():
+        if not key:
+            continue
+        value = _parse_float(str(value_str))
+        if value is None:
+            continue
+        # Heuristic: gpu__time_duration.* is usually printed in microseconds in CSV mode.
+        if key.startswith("gpu__time_duration"):
+            value = value / 1e3
+        metrics[key] = value
+
     return metrics
 
 

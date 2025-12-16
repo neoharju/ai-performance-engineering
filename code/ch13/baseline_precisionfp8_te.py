@@ -75,11 +75,6 @@ class BaselineTEFP8Benchmark(VerificationPayloadMixin, BaseBenchmark):
     """Baseline Transformer Engine run in float16 precision."""
 
     def __init__(self):
-        if not TE_AVAILABLE:
-            raise RuntimeError(
-                "Transformer Engine is required for baseline_precisionfp8_te. "
-                f"(import error: {TE_IMPORT_ERROR})"
-            )
         super().__init__()
         self.model: Optional[nn.Module] = None
         self.inputs: Optional[torch.Tensor] = None
@@ -102,6 +97,11 @@ class BaselineTEFP8Benchmark(VerificationPayloadMixin, BaseBenchmark):
         )
         self._verify_input: Optional[torch.Tensor] = None
     def setup(self) -> None:
+        if not TE_AVAILABLE:
+            raise RuntimeError(
+                "Transformer Engine is required for baseline_precisionfp8_te. "
+                f"(import error: {TE_IMPORT_ERROR})"
+            )
         self._tf32_state = configure_tf32(enable_matmul=False, enable_cudnn=False)
 
         torch.manual_seed(42)

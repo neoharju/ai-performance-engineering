@@ -141,8 +141,8 @@ class OptimizedRackPrepBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def capture_verification_payload(self) -> None:
         self._set_verification_payload(
             inputs={
-                "host_buffer": self.host_buffers[self.cur_slot],
-                "device_buffer": self.device_buffers[self.cur_slot],
+                "host_batch": self.host_buffers[self.cur_slot],
+                "device_batch": self.device_buffers[self.cur_slot],
             },
             output=self.output.detach().clone(),
             batch_size=self.host_buffers[self.cur_slot].shape[0],
@@ -165,6 +165,9 @@ class OptimizedRackPrepBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
     def get_config(self) -> BenchmarkConfig:
         return BenchmarkConfig(iterations=12, warmup=10)
+
+    def get_custom_streams(self) -> list["torch.cuda.Stream"]:
+        return [self.copy_stream]
 
     def validate_result(self) -> Optional[str]:
         if not self.host_buffers or self.norm is None:

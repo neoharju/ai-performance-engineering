@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import argparse
 import math
+import os
 from time import perf_counter
 from contextlib import nullcontext
 
 import torch
 import torch.nn.functional as F
 import torch.distributed as dist
-from accelerate import PartialState
 from torch.nn.parallel import DistributedDataParallel as DDP
 from pathlib import Path
 
@@ -61,20 +61,31 @@ def _maybe_fused_adamw(params, lr):
 
 def main():
     args = parse_args()
-    state = PartialState()
-    device = state.device
+    if not dist.is_initialized():
+        if "RANK" in os.environ and "WORLD_SIZE" in os.environ:
+            dist.init_process_group(backend="nccl")
+        else:
+            raise RuntimeError("DDP optimized run requires torch.distributed process group to be initialized.")
 
-    set_seed(2025 + state.process_index)
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    if not torch.cuda.is_available():
+        raise RuntimeError("DDP optimized run requires CUDA GPUs.")
+
+    torch.cuda.set_device(local_rank)
+    device = torch.device("cuda", local_rank)
+
+    rank = dist.get_rank()
+    set_seed(2025 + rank)
     if enable_tf32 is not None:
         enable_tf32(set_global_precision=True)
     else:
-            torch.set_float32_matmul_precision("high")
-            matmul_backend = getattr(torch.backends.cuda, "matmul", None)
-            if matmul_backend is not None and hasattr(matmul_backend, "fp32_precision"):
-                matmul_backend.fp32_precision = "high"  # type: ignore[attr-defined]
-            cudnn_conv = getattr(torch.backends.cudnn, "conv", None)
-            if cudnn_conv is not None and hasattr(cudnn_conv, "fp32_precision"):
-                cudnn_conv.fp32_precision = "tf32"  # type: ignore[attr-defined]
+        torch.set_float32_matmul_precision("high")
+        matmul_backend = getattr(torch.backends.cuda, "matmul", None)
+        if matmul_backend is not None and hasattr(matmul_backend, "fp32_precision"):
+            matmul_backend.fp32_precision = "high"  # type: ignore[attr-defined]
+        cudnn_conv = getattr(torch.backends.cudnn, "conv", None)
+        if cudnn_conv is not None and hasattr(cudnn_conv, "fp32_precision"):
+            cudnn_conv.fp32_precision = "tf32"  # type: ignore[attr-defined]
     torch.backends.cudnn.benchmark = True
 
     tokenizer = build_tokenizer()
@@ -96,12 +107,9 @@ def main():
     model.to(device)
     model.train()
 
-    if not torch.distributed.is_initialized():
-        raise RuntimeError("DDP optimized run requires torch.distributed process group to be initialized.")
-
     ddp_model = DDP(
         model,
-        device_ids=[device],
+        device_ids=[local_rank],
         static_graph=True,
         bucket_cap_mb=50,
         gradient_as_bucket_view=True,

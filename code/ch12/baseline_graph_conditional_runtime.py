@@ -43,9 +43,14 @@ class BaselineGraphBenchmark(VerificationPayloadMixin, BaseBenchmark):
     
     def __init__(self):
         super().__init__()
-        self.batch_size = 32
-        self.seq_len = 512
-        self.hidden_dim = 2048
+        # Keep the tensor small enough that kernel launch overhead is visible.
+        # The optimized variant uses CUDA graph replay to amortize those launches.
+        self.batch_size = 16
+        self.seq_len = 128
+        self.hidden_dim = 512
+        # Increase the number of tiny ops so the workload is launch-bound and
+        # CUDA graph replay shows a clear steady-state speedup.
+        self.num_loops = 64
         
         self.data: Optional[torch.Tensor] = None
         self._verify_input: Optional[torch.Tensor] = None
@@ -60,7 +65,7 @@ class BaselineGraphBenchmark(VerificationPayloadMixin, BaseBenchmark):
         """Same operations as optimized, but fresh launches each time."""
         # Each of these triggers a kernel launch
         self.data.mul_(0.99)
-        for _ in range(16):  # 16 loops × 2 ops = 32 kernel launches
+        for _ in range(self.num_loops):  # num_loops × 2 ops = 2*num_loops launches
             self.data.add_(0.001)
             self.data.mul_(1.0001)
         self.data.relu_()
@@ -113,12 +118,13 @@ class BaselineGraphBenchmark(VerificationPayloadMixin, BaseBenchmark):
         from core.benchmark.metrics import compute_graph_metrics
         
         # Baseline has full launch overhead per iteration
-        baseline_launch_us = 8.0 * 35  # ~35 ops × 8us each
+        num_nodes = (2 * self.num_loops) + 3
+        baseline_launch_us = 8.0 * num_nodes  # ~8us per tiny launch
         
         metrics = compute_graph_metrics(
             baseline_launch_overhead_us=baseline_launch_us,
             graph_launch_overhead_us=baseline_launch_us,  # Same as baseline (no graph)
-            num_nodes=35,
+            num_nodes=num_nodes,
             num_iterations=100,
         )
         metrics["graph.uses_cuda_graph"] = 0.0

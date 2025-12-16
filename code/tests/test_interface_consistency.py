@@ -13,7 +13,6 @@ import os
 import sys
 import pytest
 from pathlib import Path
-from unittest.mock import patch, MagicMock
 
 # Add code root to path
 CODE_ROOT = Path(__file__).resolve().parents[1]
@@ -357,4 +356,3 @@ class TestAsyncJobHandling:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
-

@@ -100,7 +100,6 @@ class BaselineFlashSDPBenchmark(VerificationPayloadMixin, BaseBenchmark):
         enable_nvtx = get_nvtx_enabled(config) if config else False
         with nvtx_range("naive_attention_baseline", enable=enable_nvtx):
             self.output = self.model(self.inputs)
-        torch.cuda.synchronize(self.device)
         if self._verify_input is None:
             raise RuntimeError("Verification input missing")
 
@@ -131,7 +130,7 @@ class BaselineFlashSDPBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
     def get_config(self) -> BenchmarkConfig:
         return BenchmarkConfig(
-            iterations=1,
+            iterations=10,
             warmup=5,
             measurement_timeout_seconds=90,
             setup_timeout_seconds=90,

@@ -14,9 +14,9 @@ measurement, and VerifyRunner calls it after verify runs.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import inspect
-from typing import Dict, Optional, Tuple, Union
+from typing import Any, Dict, Optional, Tuple, Union
 
 import torch
 
@@ -39,10 +39,26 @@ class VerificationPayload:
     parameter_count: int
     precision_flags: PrecisionFlags
     output_tolerance: Optional[ToleranceSpec] = None
+    signature_overrides: Dict[str, Any] = field(default_factory=dict)
 
 
 class VerificationPayloadMixin:
     """Mixin that supplies strict verification methods."""
+
+    _ALLOWED_SIGNATURE_OVERRIDE_KEYS = {
+        "world_size",
+        "ranks",
+        "shards",
+        "pipeline_stages",
+        "pipeline_stage_boundaries",
+        "per_rank_batch_size",
+        "collective_type",
+        "num_streams",
+        "graph_capture_enabled",
+        "pruning_enabled",
+        "sparsity_ratio",
+        "quantization_mode",
+    }
 
     def _called_from_capture_hook(self) -> bool:
         frame = inspect.currentframe()
@@ -74,6 +90,48 @@ class VerificationPayloadMixin:
             return ToleranceSpec(rtol=float(tolerance[0]), atol=float(tolerance[1]))
         return get_tolerance_for_dtype(output.dtype)
 
+    def _normalize_signature_overrides(self, overrides: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        if overrides is None:
+            return {}
+        if not isinstance(overrides, dict):
+            raise TypeError(f"signature_overrides must be a dict, got {type(overrides)}")
+        unknown = set(overrides.keys()) - self._ALLOWED_SIGNATURE_OVERRIDE_KEYS
+        if unknown:
+            raise ValueError(
+                f"signature_overrides contains unsupported keys: {sorted(unknown)}. "
+                f"Allowed: {sorted(self._ALLOWED_SIGNATURE_OVERRIDE_KEYS)}"
+            )
+        normalized: Dict[str, Any] = dict(overrides)
+        if "pipeline_stages" in normalized and normalized["pipeline_stages"] is not None:
+            normalized["pipeline_stages"] = int(normalized["pipeline_stages"])
+        if "world_size" in normalized and normalized["world_size"] is not None:
+            normalized["world_size"] = int(normalized["world_size"])
+        if "shards" in normalized and normalized["shards"] is not None:
+            normalized["shards"] = int(normalized["shards"])
+        if "per_rank_batch_size" in normalized and normalized["per_rank_batch_size"] is not None:
+            normalized["per_rank_batch_size"] = int(normalized["per_rank_batch_size"])
+        if "num_streams" in normalized and normalized["num_streams"] is not None:
+            normalized["num_streams"] = int(normalized["num_streams"])
+        if "sparsity_ratio" in normalized and normalized["sparsity_ratio"] is not None:
+            normalized["sparsity_ratio"] = float(normalized["sparsity_ratio"])
+        if "ranks" in normalized and normalized["ranks"] is not None:
+            ranks = normalized["ranks"]
+            if not isinstance(ranks, list) or not all(isinstance(r, int) for r in ranks):
+                raise TypeError("signature_overrides['ranks'] must be a list[int]")
+        if "pipeline_stage_boundaries" in normalized and normalized["pipeline_stage_boundaries"] is not None:
+            boundaries = normalized["pipeline_stage_boundaries"]
+            if not isinstance(boundaries, list):
+                raise TypeError("signature_overrides['pipeline_stage_boundaries'] must be a list of (start, end) pairs")
+            normalized_boundaries = []
+            for entry in boundaries:
+                if not isinstance(entry, (list, tuple)) or len(entry) != 2:
+                    raise TypeError(
+                        "signature_overrides['pipeline_stage_boundaries'] entries must be (start, end) pairs"
+                    )
+                normalized_boundaries.append((int(entry[0]), int(entry[1])))
+            normalized["pipeline_stage_boundaries"] = normalized_boundaries
+        return normalized
+
     def _set_verification_payload(
         self,
         *,
@@ -83,6 +141,7 @@ class VerificationPayloadMixin:
         parameter_count: int = 0,
         precision_flags: Optional[Dict[str, bool] | PrecisionFlags] = None,
         output_tolerance: Optional[Union[ToleranceSpec, Tuple[float, float]]] = None,
+        signature_overrides: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Populate verification payload in a single call."""
         if not self._called_from_capture_hook():
@@ -102,6 +161,7 @@ class VerificationPayloadMixin:
 
         flags = self._normalize_precision_flags(precision_flags)
         tolerance_spec = self._coerce_tolerance(output_tolerance, output)
+        signature_overrides_normalized = self._normalize_signature_overrides(signature_overrides)
 
         self._verification_payload = VerificationPayload(
             inputs=inputs,
@@ -110,6 +170,7 @@ class VerificationPayloadMixin:
             parameter_count=int(parameter_count),
             precision_flags=flags,
             output_tolerance=tolerance_spec,
+            signature_overrides=signature_overrides_normalized,
         )
 
     # Public API ----------------------------------------------------------------
@@ -139,6 +200,7 @@ class VerificationPayloadMixin:
             batch_size=payload.batch_size,
             parameter_count=payload.parameter_count,
             precision_flags=payload.precision_flags,
+            **dict(payload.signature_overrides),
         )
         # Validate eagerly to surface incomplete signatures early
         coerce_input_signature(sig)

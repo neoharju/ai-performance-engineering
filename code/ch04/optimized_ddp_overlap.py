@@ -199,7 +199,7 @@ class OptimizedOverlapDdpBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def get_config(self) -> BenchmarkConfig:
         """Return benchmark configuration (smoke-fast)."""
         return BenchmarkConfig(
-            iterations=1,
+            iterations=10,
             warmup=5,
             enable_memory_tracking=False,
             enable_profiling=False,

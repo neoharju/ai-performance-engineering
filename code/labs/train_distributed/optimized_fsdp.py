@@ -19,8 +19,6 @@ from torch.distributed.fsdp import (
 )
 from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
 from torch.utils.data import DataLoader, DistributedSampler
-from transformers import AutoConfig, AutoModelForCausalLM
-from transformers.models.llama.modeling_llama import LlamaDecoderLayer
 
 try:
     from arch_config import prefer_sdpa_backends  # type: ignore
@@ -97,6 +95,10 @@ def _build_dataloader(seq_len: int, micro_batch: int, rank: int, world_size: int
 
 
 def _wrap_fsdp(model: torch.nn.Module) -> FSDP:
+    try:
+        from transformers.models.llama.modeling_llama import LlamaDecoderLayer
+    except ImportError as exc:
+        raise RuntimeError("_wrap_fsdp() requires the `transformers` package") from exc
     auto_wrap = partial(transformer_auto_wrap_policy, transformer_layer_cls={LlamaDecoderLayer})
     mp_policy = MixedPrecision(param_dtype=torch.bfloat16, reduce_dtype=torch.bfloat16, buffer_dtype=torch.bfloat16)
     return FSDP(
@@ -134,6 +136,11 @@ def _assert_torchao_available():
 
 
 def main():
+    try:
+        from transformers import AutoConfig, AutoModelForCausalLM
+    except ImportError as exc:
+        raise RuntimeError("optimized_fsdp requires the `transformers` package") from exc
+
     args = parse_args()
     _assert_torchao_available()
 

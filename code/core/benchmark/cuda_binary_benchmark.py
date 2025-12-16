@@ -27,6 +27,7 @@ from typing import Optional, Sequence
 
 import torch
 
+from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.benchmark.verification import simple_signature
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig
 from core.harness.cuda_capabilities import pipeline_runtime_allowed
@@ -72,7 +73,7 @@ class BinaryRunResult:
     raw_stderr: str
 
 
-class CudaBinaryBenchmark(BaseBenchmark):
+class CudaBinaryBenchmark(VerificationPayloadMixin, BaseBenchmark):
     """Benchmark wrapper that builds and runs a CUDA executable.
     
     Supports two build modes:

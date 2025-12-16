@@ -69,9 +69,10 @@ class OptimizedPrecisionMixedBenchmark(VerificationPayloadMixin, BaseBenchmark):
             # rather than TF32 or cuDNN autotuning.
             self._tf32_state = configure_tf32(enable_matmul=False, enable_cudnn=False)
         
-        # Keep the "precision mixed" story focused: use bf16 autocast + bf16 weights
+        # Keep the "precision mixed" story focused: use bf16 autocast with FP32 weights.
+        # BF16 keeps the FP32 exponent range and typically does not require gradient scaling.
         # without introducing torch.compile overhead into this specific benchmark.
-        self.model = SimpleModel(hidden_dim=self.hidden_dim).to(self.device, dtype=torch.bfloat16).train()
+        self.model = SimpleModel(hidden_dim=self.hidden_dim).to(self.device).train()
         self.parameter_count = sum(p.numel() for p in self.model.parameters())
         
         self.inputs = torch.randn(self.batch_size, self.hidden_dim, device=self.device, dtype=torch.bfloat16)

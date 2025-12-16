@@ -13,10 +13,11 @@ from typing import Optional
 
 import torch
 
+from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig
 
 
-class _SkipBenchmark(BaseBenchmark):
+class _SkipBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def __init__(self):
         super().__init__()
         self.register_workload_metadata(requests_per_iteration=1.0)

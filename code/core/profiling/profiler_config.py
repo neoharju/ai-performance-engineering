@@ -440,8 +440,8 @@ class ProfilerConfig:
         if self.nsys_stats:
             cmd.append("--stats=true")
 
-        for tag in nvtx_filters:
-            cmd.extend(["--nvtx-include", tag])
+        # Nsight Systems does not support `--nvtx-include` (that's an Nsight Compute flag).
+        # We still trace NVTX ranges, but do not filter by range/domain here.
         
         cmd.append(python_executable or sys.executable)
         cmd.append(python_script)
@@ -502,6 +502,8 @@ class ProfilerConfig:
             cmd.extend(["--replay-mode", self.ncu_replay_mode])
 
         nvtx_filters = list(dict.fromkeys(nvtx_includes or self.nvtx_includes or []))
+        if nvtx_filters:
+            cmd.append("--nvtx")
         for tag in nvtx_filters:
             cmd.extend(["--nvtx-include", tag])
 
@@ -684,11 +686,10 @@ def build_profiler_config_from_benchmark(
         metric_set = preset if preset in {"minimal", "roofline", "deep_dive"} else "deep_dive"
     sampling_interval = getattr(config, "pm_sampling_interval", None)
     explicit_includes = getattr(config, "nsys_nvtx_include", None)
-    nvtx_includes = discover_nvtx_includes(
-        benchmark_module,
-        benchmark_class,
-        explicit=explicit_includes,
-    )
+    # Fail-fast policy: do not auto-infer NVTX include filters from source code.
+    # If the caller wants NVTX filtering, they must explicitly pass
+    # BenchmarkConfig.nsys_nvtx_include (MCP/CLI can surface this as a parameter).
+    nvtx_includes = list(explicit_includes or [])
     return ProfilerConfig(
         metric_set=str(metric_set),
         preset=preset,

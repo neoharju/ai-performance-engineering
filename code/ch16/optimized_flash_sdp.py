@@ -99,7 +99,6 @@ class OptimizedFlashSDPBenchmark(VerificationPayloadMixin, BaseBenchmark):
         enable_nvtx = get_nvtx_enabled(config) if config else False
         with nvtx_range("flash_sdp_optimized", enable=enable_nvtx):
             self.output = self.model(self.inputs)
-        torch.cuda.synchronize(self.device)
         if self._verify_input is None:
             raise RuntimeError("Verification input missing")
 

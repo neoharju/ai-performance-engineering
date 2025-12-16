@@ -1,9 +1,9 @@
 """Unit tests for metrics_extractor module."""
 
 import sys
+import subprocess
 from pathlib import Path
 import pytest
-from unittest.mock import Mock, patch, MagicMock
 
 # Add repo root to path
 repo_root = Path(__file__).parent.parent
@@ -147,91 +147,108 @@ class TestGetNcuMetricDescription:
 
 class TestExtractNsysMetrics:
     """Tests for nsys metrics extraction."""
-    
-    @patch('subprocess.run')
-    def test_extract_nsys_metrics_success(self, mock_run):
-        """Test successful nsys metrics extraction."""
-        mock_run.side_effect = [
-            Mock(returncode=0, stdout="Metric,Value\nTotal GPU Time,123.45"),
-            Mock(returncode=0, stdout="Metric,Value\nKernel Time,10.0"),
-        ]
-        
-        nsys_path = Path("/tmp/test.nsys-rep")
-        nsys_path.touch()  # Create file
-        
+
+    def test_extract_nsys_metrics_success(self, tmp_path):
+        """Test successful nsys metrics extraction from a real nsys report."""
+        script_path = tmp_path / "workload.py"
+        script_path.write_text(
+            "import torch\n"
+            "x = torch.randn(512, 512, device='cuda')\n"
+            "y = torch.randn(512, 512, device='cuda')\n"
+            "z = x @ y\n"
+            "torch.cuda.synchronize()\n"
+            "print(float(z[0, 0]))\n"
+        )
+
+        out_base = tmp_path / "nsys_out"
+        subprocess.run(
+            [
+                "nsys",
+                "profile",
+                "-t",
+                "cuda,nvtx",
+                "--force-overwrite",
+                "true",
+                "-o",
+                str(out_base),
+                sys.executable,
+                str(script_path),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+        nsys_path = tmp_path / "nsys_out.nsys-rep"
+        assert nsys_path.exists()
+
         metrics = extract_nsys_metrics(nsys_path)
-        
-        assert metrics.total_gpu_time_ms == 123.45
-        assert mock_run.call_count == 2
-    
-    @patch('subprocess.run')
-    def test_extract_nsys_metrics_file_not_found(self, mock_run):
+        assert metrics.total_gpu_time_ms is not None
+        assert metrics.total_gpu_time_ms > 0.0
+
+    def test_extract_nsys_metrics_file_not_found(self, tmp_path):
         """Test extraction when file doesn't exist."""
-        nsys_path = Path("/tmp/nonexistent.nsys-rep")
-        
+        nsys_path = tmp_path / "nonexistent.nsys-rep"
         metrics = extract_nsys_metrics(nsys_path)
-        
         assert metrics.total_gpu_time_ms is None
-        mock_run.assert_not_called()
-    
-    @patch('subprocess.run')
-    def test_extract_nsys_metrics_timeout(self, mock_run):
-        """Test extraction when subprocess times out."""
-        import subprocess
-        mock_run.side_effect = subprocess.TimeoutExpired("nsys", 60)
-        
-        nsys_path = Path("/tmp/test.nsys-rep")
-        nsys_path.touch()
-        
-        metrics = extract_nsys_metrics(nsys_path)
-        
-        assert metrics.total_gpu_time_ms is None
-        assert mock_run.call_count == 2
 
 
 class TestExtractNcuMetrics:
     """Tests for ncu metrics extraction."""
-    
-    @patch('subprocess.run')
-    def test_extract_ncu_metrics_success(self, mock_run):
-        """Test successful ncu metrics extraction."""
-        mock_run.return_value = Mock(
-            returncode=0,
-            stdout='"gpu__time_duration.avg","10.5"\n"sm__throughput.avg.pct_of_peak_sustained_elapsed","85.0"'
+
+    def test_extract_ncu_metrics_success(self, tmp_path):
+        """Test successful ncu metrics extraction from a real ncu report."""
+        script_path = tmp_path / "workload.py"
+        script_path.write_text(
+            "import torch\n"
+            "x = torch.randn(512, 512, device='cuda')\n"
+            "y = torch.randn(512, 512, device='cuda')\n"
+            "z = x @ y\n"
+            "torch.cuda.synchronize()\n"
+            "print(float(z[0, 0]))\n"
         )
-        
-        ncu_path = Path("/tmp/test.ncu-rep")
-        ncu_path.touch()
-        
-        metrics = extract_ncu_metrics(ncu_path)
-        
-        assert metrics.kernel_time_ms == 10.5
-        assert metrics.sm_throughput_pct == 85.0
-        mock_run.assert_called_once()
-    
-    @patch('subprocess.run')
-    def test_extract_ncu_metrics_file_not_found(self, mock_run):
+
+        metrics = ",".join(
+            [
+                "gpu__time_duration.avg",
+                "sm__throughput.avg.pct_of_peak_sustained_elapsed",
+                "gpu__dram_throughput.avg.pct_of_peak_sustained_elapsed",
+                "lts__throughput.avg.pct_of_peak_sustained_elapsed",
+                "sm__warps_active.avg.pct_of_peak_sustained_active",
+            ]
+        )
+        out_base = tmp_path / "ncu_out"
+        subprocess.run(
+            ["ncu", "--metrics", metrics, "--force-overwrite", "-o", str(out_base), sys.executable, str(script_path)],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+        ncu_path = tmp_path / "ncu_out.ncu-rep"
+        assert ncu_path.exists()
+
+        metrics_obj = extract_ncu_metrics(ncu_path)
+        assert metrics_obj.kernel_time_ms is not None
+        assert metrics_obj.kernel_time_ms > 0.0
+        assert metrics_obj.sm_throughput_pct is not None
+
+    def test_extract_ncu_metrics_file_not_found(self, tmp_path):
         """Test extraction when file doesn't exist."""
-        ncu_path = Path("/tmp/nonexistent.ncu-rep")
-        
-        metrics = extract_ncu_metrics(ncu_path)
-        
-        assert metrics.kernel_time_ms is None
-        mock_run.assert_not_called()
-    
-    @patch('subprocess.run')
-    def test_extract_ncu_metrics_companion_csv(self, mock_run):
+        ncu_path = tmp_path / "nonexistent.ncu-rep"
+        metrics_obj = extract_ncu_metrics(ncu_path)
+        assert metrics_obj.kernel_time_ms is None
+
+    def test_extract_ncu_metrics_companion_csv(self, tmp_path):
         """Test extraction from companion CSV file."""
-        ncu_path = Path("/tmp/test.ncu-rep")
+        ncu_path = tmp_path / "test.ncu-rep"
         ncu_path.touch()
-        
-        csv_path = Path("/tmp/test.csv")
+
+        csv_path = tmp_path / "test.csv"
         csv_path.write_text('"gpu__time_duration.avg","20.0"')
-        
-        metrics = extract_ncu_metrics(ncu_path)
-        
-        # Should read from companion CSV
-        assert metrics.kernel_time_ms == 20.0
+
+        metrics_obj = extract_ncu_metrics(ncu_path)
+        assert metrics_obj.kernel_time_ms == 20.0
 
 
 class TestGoldenFileMetrics:
@@ -241,8 +258,7 @@ class TestGoldenFileMetrics:
         """Golden test for nsys CSV parsing with realistic data from golden file."""
         # Read from actual golden file
         golden_file = Path(__file__).parent / "golden" / "nsys_stats_sample.csv"
-        if not golden_file.exists():
-            pytest.skip(f"Golden file not found: {golden_file}")
+        assert golden_file.exists(), f"Golden file not found: {golden_file}"
         
         nsys_csv = golden_file.read_text()
         result = _parse_nsys_csv(nsys_csv)
@@ -258,8 +274,7 @@ class TestGoldenFileMetrics:
         """Golden test for ncu CSV parsing with realistic data from golden file."""
         # Read from actual golden file
         golden_file = Path(__file__).parent / "golden" / "ncu_stats_sample.csv"
-        if not golden_file.exists():
-            pytest.skip(f"Golden file not found: {golden_file}")
+        assert golden_file.exists(), f"Golden file not found: {golden_file}"
         
         ncu_csv = golden_file.read_text()
         result = _parse_ncu_csv(ncu_csv)
@@ -269,55 +284,6 @@ class TestGoldenFileMetrics:
         assert result["gpu__time_duration.avg"] == 10.5
         assert "sm__throughput.avg.pct_of_peak_sustained_elapsed" in result
         assert result["sm__throughput.avg.pct_of_peak_sustained_elapsed"] == 90.0  # Last value wins
-    
-    def test_nsys_extraction_golden(self, tmp_path):
-        """Golden test for full nsys extraction with sample report using golden file."""
-        # Read golden file content
-        golden_file = Path(__file__).parent / "golden" / "nsys_stats_sample.csv"
-        if not golden_file.exists():
-            pytest.skip(f"Golden file not found: {golden_file}")
-        
-        nsys_rep = tmp_path / "test.nsys-rep"
-        nsys_rep.touch()
-        
-        # Use golden file content as subprocess output
-        nsys_stats_output = golden_file.read_text()
-        
-        with patch('subprocess.run') as mock_run:
-            mock_run.return_value = Mock(
-                returncode=0,
-                stdout=nsys_stats_output
-            )
-            
-            metrics = extract_nsys_metrics(nsys_rep)
-            
-            assert metrics.total_gpu_time_ms == 1234.56  # From golden file
-            assert metrics.raw_metrics is not None
-    
-    def test_ncu_extraction_golden(self, tmp_path):
-        """Golden test for full ncu extraction with sample report using golden file."""
-        # Read golden file content
-        golden_file = Path(__file__).parent / "golden" / "ncu_stats_sample.csv"
-        if not golden_file.exists():
-            pytest.skip(f"Golden file not found: {golden_file}")
-        
-        ncu_rep = tmp_path / "test.ncu-rep"
-        ncu_rep.touch()
-        
-        # Use golden file content as subprocess output
-        ncu_stats_output = golden_file.read_text()
-        
-        with patch('subprocess.run') as mock_run:
-            mock_run.return_value = Mock(
-                returncode=0,
-                stdout=ncu_stats_output
-            )
-            
-            metrics = extract_ncu_metrics(ncu_rep)
-            
-            assert metrics.kernel_time_ms == 10.5  # From golden file
-            assert metrics.sm_throughput_pct == 90.0  # Last value in golden file
-            assert metrics.dram_throughput_pct == 60.75  # From golden file
     
     def test_nsys_csv_edge_cases(self):
         """Test nsys CSV parsing with edge cases."""

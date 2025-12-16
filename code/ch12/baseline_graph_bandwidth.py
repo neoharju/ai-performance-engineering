@@ -73,7 +73,6 @@ class BaselineGraphBandwidthBenchmark(VerificationPayloadMixin, BaseBenchmark):
         with nvtx_range("graph_bandwidth", enable=enable_nvtx):
             for _ in range(self.iterations):
                 self._extension.separate_kernel_launches(self.dst, self.src, 1)
-                self._synchronize()
         if self._verify_input is None or self.dst is None:
             raise RuntimeError("Verification input/output not initialized")
 

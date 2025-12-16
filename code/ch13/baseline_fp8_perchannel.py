@@ -25,6 +25,7 @@ from core.harness.benchmark_harness import (
     BenchmarkMode,
     WorkloadMetadata,
 )
+from core.utils.compile_utils import configure_tf32, restore_tf32
 
 
 class FP8PerTensorLinear(nn.Module):
@@ -83,6 +84,8 @@ class BaselineFP8PerChannelBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.in_features = 4096
         self.out_features = 4096
         self.dtype = torch.float32
+        self._tf32_state = None
+        self._prev_precision: Optional[str] = None
         self._last = 0.0
         self._error_sum = 0.0
         self._verify_input: Optional[torch.Tensor] = None
@@ -104,6 +107,10 @@ class BaselineFP8PerChannelBenchmark(VerificationPayloadMixin, BaseBenchmark):
         torch.manual_seed(42)
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(42)
+
+        self._prev_precision = torch.get_float32_matmul_precision()
+        self._tf32_state = configure_tf32(enable_matmul=True, enable_cudnn=True)
+        torch.set_float32_matmul_precision("high")
         
         # Create model with per-tensor FP8
         self.model = FP8PerTensorLinear(
@@ -137,21 +144,15 @@ class BaselineFP8PerChannelBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def benchmark_fn(self) -> None:
         """Benchmark: Per-tensor FP8 forward pass."""
         with torch.no_grad():
-            output = self.model(self.x)
-            ref_output = self.ref_model(self.x)
-            
-            # Track error for accuracy comparison
-            error = (output - ref_output).abs().mean() / ref_output.abs().mean()
-            self._error_sum = error.item()
-            self._last = float(output.sum())
-            self.output = output.detach().clone()
-            self._synchronize()
+            self.output = self.model(self.x)
         if self._verify_input is None:
             raise RuntimeError("Verification input not initialized")
         dtype = self._verify_input.dtype
         self._payload_dtype = dtype
 
     def capture_verification_payload(self) -> None:
+        if self.output is None:
+            raise RuntimeError("benchmark_fn() must run before capture_verification_payload()")
         dtype = self._payload_dtype
         self._set_verification_payload(
             inputs={"input": self._verify_input},
@@ -172,6 +173,11 @@ class BaselineFP8PerChannelBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.model = None
         self.ref_model = None
         self.x = None
+        if self._tf32_state is not None:
+            restore_tf32(self._tf32_state)
+            self._tf32_state = None
+        if self._prev_precision is not None:
+            torch.set_float32_matmul_precision(self._prev_precision)  # type: ignore[arg-type]
         torch.cuda.empty_cache()
 
     def get_config(self) -> BenchmarkConfig:

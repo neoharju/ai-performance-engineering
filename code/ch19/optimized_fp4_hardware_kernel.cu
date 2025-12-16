@@ -14,9 +14,12 @@
 #include <cuda_fp8.h>
 #include <cuda_fp16.h>
 #include <iostream>
+#include <fstream>
+#include <algorithm>
 #include <vector>
 #include <random>
 #include <cmath>
+#include <string>
 
 #define CUDA_CHECK(call) \
     do { \
@@ -41,9 +44,12 @@ constexpr int FP4_BLOCK_SIZE = 16;
 // Quantize float to NVFP4 with block scaling
 void quantize_to_nvfp4(const float* input, uint8_t* output_packed, 
                        __nv_fp8_e4m3* scales, int rows, int cols) {
+    // Pack as 2 FP4 values per byte, along the contiguous (row-major) dimension.
+    // This matches the packing used by NVIDIA cuBLASLt NVFP4 examples.
     const int packed_cols = cols / 2;
     const int num_scale_cols = cols / FP4_BLOCK_SIZE;
     
+    // Compute per-row scales (block-scaled along the column dimension).
     for (int r = 0; r < rows; ++r) {
         for (int block = 0; block < num_scale_cols; ++block) {
             const int block_start = block * FP4_BLOCK_SIZE;
@@ -55,14 +61,23 @@ void quantize_to_nvfp4(const float* input, uint8_t* output_packed,
             
             float scale = (max_abs > 0.0f) ? max_abs / 6.0f : 1.0f;
             scales[r * num_scale_cols + block] = __nv_fp8_e4m3(scale);
-            
+        }
+    }
+
+    // Pack in row-major order: consecutive elements are adjacent columns.
+    for (int r = 0; r < rows; ++r) {
+        for (int block = 0; block < num_scale_cols; ++block) {
+            const int block_start = block * FP4_BLOCK_SIZE;
+            float scale = static_cast<float>(scales[r * num_scale_cols + block]);
             for (int i = 0; i < FP4_BLOCK_SIZE; i += 2) {
                 float v0 = input[r * cols + block_start + i];
                 float v1 = input[r * cols + block_start + i + 1];
-                
-                __nv_fp4_storage_t fp4_0 = __nv_cvt_float_to_fp4(v0 / scale, __NV_E2M1, cudaRoundNearest);
-                __nv_fp4_storage_t fp4_1 = __nv_cvt_float_to_fp4(v1 / scale, __NV_E2M1, cudaRoundNearest);
-                
+
+                __nv_fp4_storage_t fp4_0 =
+                    __nv_cvt_float_to_fp4(v0 / scale, __NV_E2M1, cudaRoundNearest);
+                __nv_fp4_storage_t fp4_1 =
+                    __nv_cvt_float_to_fp4(v1 / scale, __NV_E2M1, cudaRoundNearest);
+
                 int packed_idx = r * packed_cols + (block_start + i) / 2;
                 output_packed[packed_idx] = ((fp4_1 & 0x0F) << 4) | (fp4_0 & 0x0F);
             }
@@ -70,7 +85,7 @@ void quantize_to_nvfp4(const float* input, uint8_t* output_packed,
     }
 }
 
-int main() {
+int main(int argc, char** argv) {
     std::cout << "=== Optimized FP4 Hardware Kernel (cuBLASLt Tensor Cores) ===" << std::endl;
     
     // Check GPU
@@ -78,8 +93,8 @@ int main() {
     CUDA_CHECK(cudaGetDeviceProperties(&prop, 0));
     std::cout << "GPU: " << prop.name << " (SM" << prop.major << "." << prop.minor << ")" << std::endl;
     
-    // Matrix dimensions (aligned for tensor cores)
-    const int M = 1024, N = 1024, K = 1024;
+    // Matrix dimensions (aligned for tensor cores). Must match the baseline.
+    const int M = 512, N = 512, K = 512;
     
     // FP4 packed sizes
     const size_t packed_K = K / 2;
@@ -152,16 +167,25 @@ int main() {
     CUBLASLT_CHECK(cublasLtMatmulDescSetAttribute(matmulDesc, CUBLASLT_MATMUL_DESC_A_SCALE_POINTER, &d_A_scales_ptr, sizeof(d_A_scales_ptr)));
     CUBLASLT_CHECK(cublasLtMatmulDescSetAttribute(matmulDesc, CUBLASLT_MATMUL_DESC_B_SCALE_POINTER, &d_B_scales_ptr, sizeof(d_B_scales_ptr)));
 
-    // Matrix layouts
+    // Matrix layouts.
+    //
+    // NOTE: NVFP4 elements are stored packed (2 values per byte). The layout
+    // leading dimensions are specified in *elements* (not bytes).
     cublasLtMatrixLayout_t layoutA, layoutB, layoutC;
     CUBLASLT_CHECK(cublasLtMatrixLayoutCreate(&layoutA, CUDA_R_4F_E2M1, M, K, M));
     CUBLASLT_CHECK(cublasLtMatrixLayoutCreate(&layoutB, CUDA_R_4F_E2M1, K, N, K));
     CUBLASLT_CHECK(cublasLtMatrixLayoutCreate(&layoutC, CUDA_R_16F, M, N, M));
 
+    cublasLtOrder_t order = CUBLASLT_ORDER_COL;
+    CUBLASLT_CHECK(cublasLtMatrixLayoutSetAttribute(layoutA, CUBLASLT_MATRIX_LAYOUT_ORDER, &order, sizeof(order)));
+    CUBLASLT_CHECK(cublasLtMatrixLayoutSetAttribute(layoutB, CUBLASLT_MATRIX_LAYOUT_ORDER, &order, sizeof(order)));
+    CUBLASLT_CHECK(cublasLtMatrixLayoutSetAttribute(layoutC, CUBLASLT_MATRIX_LAYOUT_ORDER, &order, sizeof(order)));
+
     float alpha = 1.0f, beta = 0.0f;
 
     // Workspace
-    size_t workspaceSize = 1024 * 1024 * 32;
+    // cuBLASLt NVFP4 algorithms typically require a larger workspace.
+    size_t workspaceSize = 1024 * 1024 * 64;
     void* d_workspace = nullptr;
     CUDA_CHECK(cudaMalloc(&d_workspace, workspaceSize));
 
@@ -178,16 +202,9 @@ int main() {
         preference, 1, &heuristicResult, &returnedResults);
     
     if (heuristicStatus != CUBLAS_STATUS_SUCCESS || returnedResults == 0) {
-        std::cerr << "No NVFP4 algorithm found, trying without block scaling..." << std::endl;
-        cublasLtMatmulMatrixScale_t noScale = CUBLASLT_MATMUL_MATRIX_SCALE_SCALAR_32F;
-        cublasLtMatmulDescSetAttribute(matmulDesc, CUBLASLT_MATMUL_DESC_A_SCALE_MODE, &noScale, sizeof(noScale));
-        cublasLtMatmulDescSetAttribute(matmulDesc, CUBLASLT_MATMUL_DESC_B_SCALE_MODE, &noScale, sizeof(noScale));
-        heuristicStatus = cublasLtMatmulAlgoGetHeuristic(ltHandle, matmulDesc, layoutA, layoutB, layoutC, layoutC,
-                                                          preference, 1, &heuristicResult, &returnedResults);
-        if (returnedResults == 0) {
-            std::cerr << "FP4 not supported on this system" << std::endl;
-            return 1;
-        }
+        std::cerr << "No cuBLASLt NVFP4 algorithm found (status=" << heuristicStatus
+                  << ", returnedResults=" << returnedResults << ")." << std::endl;
+        return 1;
     }
 
     // Warmup
@@ -222,13 +239,31 @@ int main() {
     double flops = 2.0 * M * N * K;
     double tflops = flops / (avg_ms * 1e9);
 
-    std::cout << std::endl;
-    std::cout << "Results:" << std::endl;
-    std::cout << "  Matrix: " << M << "x" << N << "x" << K << std::endl;
-    std::cout << "  Time: " << avg_ms << " ms" << std::endl;
-    std::cout << "  Throughput: " << tflops << " TFLOPS" << std::endl;
-    std::cout << std::endl;
-    std::cout << "Compare with baseline_fp4_hardware_kernel for speedup!" << std::endl;
+    std::cout << "RESULT_MS: " << avg_ms << std::endl;
+
+    // Optional dump for harness verification: --dump-output <path>
+    std::string dump_path;
+    for (int i = 1; i < argc; ++i) {
+        std::string arg(argv[i]);
+        if (arg == "--dump-output") {
+            if (i + 1 >= argc) {
+                std::cerr << "--dump-output requires a path argument" << std::endl;
+                return 2;
+            }
+            dump_path = std::string(argv[i + 1]);
+        }
+    }
+    if (!dump_path.empty()) {
+        std::vector<__half> h_C(elements_C);
+        CUDA_CHECK(cudaMemcpy(h_C.data(), d_C, elements_C * sizeof(__half), cudaMemcpyDeviceToHost));
+        std::ofstream out(dump_path, std::ios::binary);
+        if (!out) {
+            std::cerr << "Failed to open dump path: " << dump_path << std::endl;
+            return 2;
+        }
+        out.write(reinterpret_cast<const char*>(h_C.data()), h_C.size() * sizeof(__half));
+        out.close();
+    }
 
     // Cleanup
     CUBLASLT_CHECK(cublasLtMatmulPreferenceDestroy(preference));

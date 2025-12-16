@@ -20,7 +20,7 @@ class BaselineGEMMILPBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self._buf0: Optional[torch.Tensor] = None
         self._buf1: Optional[torch.Tensor] = None
         self.output: Optional[torch.Tensor] = None
-        self.N = 10_000_000
+        self.N = 50_000_000
         self._extension = None
         self.repeats = 4
         # ILP benchmark - fixed input size to measure instruction-level parallelism

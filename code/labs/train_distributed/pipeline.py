@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass
 from typing import Deque, Dict, Iterable, List, Literal, Optional, Tuple
 from collections import deque
 
 import torch
 import torch.nn as nn
-from accelerate.utils import set_seed
 
 ScheduleType = Literal["gpipe", "1f1b", "dualpipe", "dualpipev"]
 Tensor = torch.Tensor
@@ -182,7 +182,10 @@ class PipelineExperiment:
 
     def __init__(self, config: PipelineConfig):
         self.config = config
-        set_seed(config.seed)
+        random.seed(config.seed)
+        torch.manual_seed(config.seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(config.seed)
         if not torch.cuda.is_available():
             raise RuntimeError("Pipeline demos require CUDA GPUs.")
         available = torch.cuda.device_count()

@@ -4,6 +4,9 @@ This module tests the verification data models, quarantine management,
 and verification runner functionality.
 """
 
+from __future__ import annotations
+
+from contextlib import contextmanager
 import json
 import os
 import pickle
@@ -11,7 +14,6 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
@@ -48,6 +50,21 @@ from core.benchmark.verify_runner import (
     VerifyConfig,
     VerifyRunner,
 )
+
+
+@contextmanager
+def _temp_environ(updates: Optional[Dict[str, str]] = None, *, clear: bool = False):
+    """Temporarily mutate os.environ without mocks/monkeypatch."""
+    old = dict(os.environ)
+    try:
+        if clear:
+            os.environ.clear()
+        if updates:
+            os.environ.update({k: str(v) for k, v in updates.items()})
+        yield
+    finally:
+        os.environ.clear()
+        os.environ.update(old)
 
 
 # =============================================================================
@@ -193,7 +210,32 @@ class TestInputSignature:
         )
         errors = sig.validate()
         assert any("batch_size" in e for e in errors)
-    
+
+    def test_pipeline_stage_boundaries_required(self):
+        sig = InputSignature(
+            shapes={"input": (32, 256)},
+            dtypes={"input": "float32"},
+            batch_size=32,
+            parameter_count=0,
+            precision_flags=PrecisionFlags(),
+            pipeline_stages=2,
+        )
+        errors = sig.validate(strict=True)
+        assert any("pipeline_stage_boundaries" in e for e in errors)
+
+    def test_pipeline_stage_boundaries_contiguous(self):
+        sig = InputSignature(
+            shapes={"input": (32, 256)},
+            dtypes={"input": "float32"},
+            batch_size=32,
+            parameter_count=0,
+            precision_flags=PrecisionFlags(),
+            pipeline_stages=2,
+            pipeline_stage_boundaries=[(0, 0), (2, 2)],
+        )
+        errors = sig.validate(strict=True)
+        assert any("contiguous" in e for e in errors)
+
     def test_to_dict_and_from_dict_roundtrip(self):
         """Test serialization roundtrip."""
         sig = InputSignature(
@@ -204,6 +246,8 @@ class TestInputSignature:
             precision_flags=PrecisionFlags(fp16=True),
             world_size=4,
             num_streams=2,
+            pipeline_stages=2,
+            pipeline_stage_boundaries=[(0, 1), (2, 3)],
         )
         d = sig.to_dict()
         sig2 = InputSignature.from_dict(d)
@@ -278,27 +322,25 @@ class TestEnforcementPhase:
     
     def test_default_phase_is_detect(self):
         """Test default enforcement phase is DETECT."""
-        with patch.dict(os.environ, {}, clear=True):
-            if "VERIFY_ENFORCEMENT_PHASE" in os.environ:
-                del os.environ["VERIFY_ENFORCEMENT_PHASE"]
+        with _temp_environ(clear=True):
             phase = get_enforcement_phase()
             assert phase == EnforcementPhase.DETECT
     
     def test_get_phase_from_env(self):
         """Test reading phase from environment."""
-        with patch.dict(os.environ, {"VERIFY_ENFORCEMENT_PHASE": "gate"}):
+        with _temp_environ({"VERIFY_ENFORCEMENT_PHASE": "gate"}):
             phase = get_enforcement_phase()
             assert phase == EnforcementPhase.GATE
     
     def test_quarantine_phase(self):
         """Test QUARANTINE phase from environment."""
-        with patch.dict(os.environ, {"VERIFY_ENFORCEMENT_PHASE": "quarantine"}):
+        with _temp_environ({"VERIFY_ENFORCEMENT_PHASE": "quarantine"}):
             phase = get_enforcement_phase()
             assert phase == EnforcementPhase.QUARANTINE
     
     def test_invalid_phase_defaults_to_detect(self):
         """Test invalid phase value defaults to DETECT."""
-        with patch.dict(os.environ, {"VERIFY_ENFORCEMENT_PHASE": "invalid_value"}):
+        with _temp_environ({"VERIFY_ENFORCEMENT_PHASE": "invalid_value"}):
             phase = get_enforcement_phase()
             assert phase == EnforcementPhase.DETECT
 
@@ -308,19 +350,17 @@ class TestVerificationEnabled:
     
     def test_verification_enabled_by_default(self):
         """Test verification is enabled by default."""
-        with patch.dict(os.environ, {}, clear=True):
-            if "VERIFY_DISABLED" in os.environ:
-                del os.environ["VERIFY_DISABLED"]
+        with _temp_environ(clear=True):
             assert is_verification_enabled() is True
     
     def test_verification_can_be_disabled(self):
         """Test verification can be disabled via env var."""
-        with patch.dict(os.environ, {"VERIFY_DISABLED": "1"}):
+        with _temp_environ({"VERIFY_DISABLED": "1"}):
             assert is_verification_enabled() is False
     
     def test_verification_enabled_with_zero(self):
         """Test VERIFY_DISABLED=0 keeps verification enabled."""
-        with patch.dict(os.environ, {"VERIFY_DISABLED": "0"}):
+        with _temp_environ({"VERIFY_DISABLED": "0"}):
             assert is_verification_enabled() is True
 
 
@@ -493,37 +533,52 @@ class TestSkipFlagDetection:
     
     def test_detect_skip_output_check_attribute(self):
         """Test detecting skip_output_check attribute."""
-        benchmark = MagicMock()
-        benchmark.skip_output_check = True
-        benchmark.skip_input_check = False
-        benchmark.skip_verification = False
-        benchmark.skip_input_verification = MagicMock(return_value=False)
-        benchmark.skip_output_verification = MagicMock(return_value=False)
+        class Benchmark:
+            skip_output_check = True
+            skip_input_check = False
+            skip_verification = False
+
+            def skip_input_verification(self) -> bool:
+                return False
+
+            def skip_output_verification(self) -> bool:
+                return False
         
+        benchmark = Benchmark()
         result = detect_skip_flags(benchmark)
         assert result == QuarantineReason.SKIP_FLAG_PRESENT
     
     def test_detect_skip_input_verification_method(self):
         """Test detecting skip_input_verification method."""
-        benchmark = MagicMock()
-        benchmark.skip_output_check = False
-        benchmark.skip_input_check = False
-        benchmark.skip_verification = False
-        benchmark.skip_input_verification = MagicMock(return_value=True)
-        benchmark.skip_output_verification = MagicMock(return_value=False)
+        class Benchmark:
+            skip_output_check = False
+            skip_input_check = False
+            skip_verification = False
+
+            def skip_input_verification(self) -> bool:
+                return True
+
+            def skip_output_verification(self) -> bool:
+                return False
         
+        benchmark = Benchmark()
         result = detect_skip_flags(benchmark)
         assert result == QuarantineReason.SKIP_FLAG_PRESENT
     
     def test_no_skip_flags(self):
         """Test benchmark without skip flags."""
-        benchmark = MagicMock()
-        benchmark.skip_output_check = False
-        benchmark.skip_input_check = False
-        benchmark.skip_verification = False
-        benchmark.skip_input_verification = MagicMock(return_value=False)
-        benchmark.skip_output_verification = MagicMock(return_value=False)
+        class Benchmark:
+            skip_output_check = False
+            skip_input_check = False
+            skip_verification = False
+
+            def skip_input_verification(self) -> bool:
+                return False
+
+            def skip_output_verification(self) -> bool:
+                return False
         
+        benchmark = Benchmark()
         result = detect_skip_flags(benchmark)
         assert result is None
 
@@ -928,17 +983,36 @@ class TestVerificationIntegration:
         """Test quarantine is applied on compliance failure."""
         manager = QuarantineManager(temp_environment["quarantine_file"])
         
-        # Create benchmark with skip flag
-        benchmark = MagicMock()
-        benchmark.skip_output_check = True
-        benchmark.skip_input_check = False
-        benchmark.skip_verification = False
-        benchmark.skip_input_verification = MagicMock(return_value=False)
-        benchmark.skip_output_verification = MagicMock(return_value=False)
-        benchmark.get_input_signature = MagicMock(return_value={"shapes": {"x": (10,)}})
-        benchmark.validate_result = MagicMock(return_value=None)
-        benchmark.get_workload_metadata = MagicMock(return_value=None)
+        class Benchmark:
+            skip_output_check = True
+            skip_input_check = False
+            skip_verification = False
+
+            def skip_input_verification(self) -> bool:
+                return False
+
+            def skip_output_verification(self) -> bool:
+                return False
+
+            def get_input_signature(self) -> Dict[str, Any]:
+                return {"shapes": {"x": (10,)}, "dtypes": {"x": "float32"}, "batch_size": 1, "parameter_count": 0}
+
+            def get_verify_output(self) -> torch.Tensor:
+                return torch.ones(10)
+
+            def get_output_tolerance(self) -> tuple:
+                return (1e-3, 1e-3)
+
+            def get_verify_inputs(self) -> Dict[str, torch.Tensor]:
+                return {"x": torch.ones(10)}
+
+            def validate_result(self) -> Optional[str]:
+                return None
+
+            def get_workload_metadata(self) -> Optional[Any]:
+                return None
         
+        benchmark = Benchmark()
         issues = check_benchmark_compliance(benchmark)
         assert len(issues) > 0
         

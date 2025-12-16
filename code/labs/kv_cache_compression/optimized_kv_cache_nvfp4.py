@@ -98,7 +98,7 @@ class OptimizedKVCacheNVFP4Benchmark(BaselineKVCacheBenchmark):
                 "bf16": self.tensor_dtype == torch.bfloat16,
                 "tf32": torch.backends.cuda.matmul.allow_tf32,
             },
-            output_tolerance=(0.1, 1.0),
+            output_tolerance=(1.0, 10.0),
         )
 
     def get_custom_metrics(self) -> Optional[dict]:

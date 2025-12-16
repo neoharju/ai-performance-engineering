@@ -6,7 +6,6 @@ Tests discovery of Python and CUDA benchmark pairs as specified in Part 2.10.
 import pytest
 import sys
 from pathlib import Path
-from unittest.mock import patch, MagicMock
 
 # Add repo root to path
 repo_root = Path(__file__).parent.parent

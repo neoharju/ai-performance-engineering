@@ -37,7 +37,9 @@ def _init_benchmark_types():
     
     try:
         import core.harness.benchmark_harness as _benchmark_harness
-        BenchmarkType = _benchmark_harness.Benchmark
+        # Benchmarks are concrete subclasses of BaseBenchmark; there is no
+        # `Benchmark` symbol exported from benchmark_harness.
+        BenchmarkType = _benchmark_harness.BaseBenchmark
         BenchmarkConfigType = _benchmark_harness.BenchmarkConfig
         BENCHMARK_AVAILABLE = True
     except (ImportError, AttributeError):

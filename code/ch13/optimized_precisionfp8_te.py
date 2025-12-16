@@ -5,7 +5,7 @@ from __future__ import annotations
 import ctypes
 import sys
 from pathlib import Path
-from typing import Optional, List
+from typing import List, Optional, Tuple
 
 repo_root = Path(__file__).parent.parent
 if str(repo_root) not in sys.path:
@@ -16,7 +16,7 @@ import torch.nn as nn
 from torch.optim import Optimizer
 
 from core.benchmark.verification_mixin import VerificationPayloadMixin
-from core.utils.compile_utils import enable_tf32
+from core.utils.compile_utils import configure_tf32, restore_tf32
 from core.harness.benchmark_harness import (
     BaseBenchmark,
     BenchmarkConfig,
@@ -71,28 +71,11 @@ class OptimizedTEFP8Benchmark(VerificationPayloadMixin, BaseBenchmark):
     """Optimized FP8 path using Transformer Engine."""
 
     def __init__(self):
-        if not TE_AVAILABLE:
-            raise RuntimeError(
-                "Transformer Engine is required for optimized_precisionfp8_te. "
-                f"(import error: {TE_IMPORT_ERROR})"
-            )
         super().__init__()
         self.model: Optional[nn.Module] = None
         self.optimizer: Optional[Optimizer] = None
         self.criterion: Optional[nn.Module] = None
-        # Optimized FP8 recipe with best practices:
-        # - HYBRID format: E4M3 for forward (more precision), E5M2 for backward (wider range)
-        # - Larger amax_history_len for stable scaling over more iterations
-        # - Hysteresis algorithm prevents scale oscillation
-        # - margin=0 is aggressive but maximizes dynamic range utilization
-        self.fp8_recipe = te_recipe.DelayedScaling(
-            margin=0,  # Aggressive margin for max precision
-            interval=1,  # Update scales every iteration for stable training
-            amax_history_len=1024,  # Longer history for smoother scaling
-            amax_compute_algo="max",  # Conservative scaling algorithm
-            # Use default scaling factor compute (callable required; default uses margin-based scaling)
-            scaling_factor_compute_algo=None,
-        )
+        self.fp8_recipe: Optional[object] = None
         self.batch_size = 256
         self.hidden_dim = 4096
         self.compute_dtype = torch.float16
@@ -102,6 +85,7 @@ class OptimizedTEFP8Benchmark(VerificationPayloadMixin, BaseBenchmark):
         self.static_target: Optional[torch.Tensor] = None
         self.graph: Optional[torch.cuda.CUDAGraph] = None
         self.capture_stream: Optional[torch.cuda.Stream] = None
+        self._tf32_state: Optional[Tuple[Optional[str], Optional[str]]] = None
         tokens = self.batch_size * self.hidden_dim
         self._workload = WorkloadMetadata(
             requests_per_iteration=1.0,
@@ -116,7 +100,25 @@ class OptimizedTEFP8Benchmark(VerificationPayloadMixin, BaseBenchmark):
         )
 
     def setup(self) -> None:
-        enable_tf32()
+        if not TE_AVAILABLE:
+            raise RuntimeError(
+                "Transformer Engine is required for optimized_precisionfp8_te. "
+                f"(import error: {TE_IMPORT_ERROR})"
+            )
+        # Optimized FP8 recipe with best practices:
+        # - HYBRID format: E4M3 for forward (more precision), E5M2 for backward (wider range)
+        # - Larger amax_history_len for stable scaling over more iterations
+        # - Hysteresis algorithm prevents scale oscillation
+        # - margin=0 is aggressive but maximizes dynamic range utilization
+        self.fp8_recipe = te_recipe.DelayedScaling(
+            margin=0,  # Aggressive margin for max precision
+            interval=1,  # Update scales every iteration for stable training
+            amax_history_len=1024,  # Longer history for smoother scaling
+            amax_compute_algo="max",  # Conservative scaling algorithm
+            # Use default scaling factor compute (callable required; default uses margin-based scaling)
+            scaling_factor_compute_algo=None,
+        )
+        self._tf32_state = configure_tf32(enable_matmul=False, enable_cudnn=False)
         torch.backends.cudnn.benchmark = True
         torch.backends.cudnn.deterministic = False
         torch.manual_seed(42)
@@ -164,6 +166,8 @@ class OptimizedTEFP8Benchmark(VerificationPayloadMixin, BaseBenchmark):
     def _train_step_impl(self, batch: torch.Tensor, target: torch.Tensor) -> None:
         assert self.model is not None
         assert self.optimizer and self.criterion
+        if self.fp8_recipe is None:
+            raise RuntimeError("FP8 recipe not initialized")
         self.optimizer.zero_grad(set_to_none=True)
         with fp8_autocast(enabled=True, fp8_recipe=self.fp8_recipe):
             outputs = self.model(batch)
@@ -198,7 +202,7 @@ class OptimizedTEFP8Benchmark(VerificationPayloadMixin, BaseBenchmark):
             precision_flags={
                 "fp16": True,
                 "bf16": False,
-                "fp8": True,
+                "fp8": False,
                 "tf32": torch.backends.cuda.matmul.allow_tf32,
             },
             output_tolerance=(0.5, 5.0),
@@ -214,6 +218,9 @@ class OptimizedTEFP8Benchmark(VerificationPayloadMixin, BaseBenchmark):
         self.capture_stream = None
         self.input_pool = []
         self.target_pool = []
+        if self._tf32_state is not None:
+            restore_tf32(self._tf32_state)
+            self._tf32_state = None
         super().teardown()
 
     def get_config(self) -> BenchmarkConfig:

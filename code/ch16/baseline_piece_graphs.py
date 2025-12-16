@@ -1,13 +1,17 @@
-"""baseline_piece_graphs.py - Monolithic CUDA graph capture baseline for piece-graphs."""
+"""baseline_piece_graphs.py - Monolithic CUDA graph capture baseline for piece-graphs.
+
+Captures the full model in a single CUDA graph for steady-state replay.
+The optimized variant captures smaller "piece graphs" (head/tail regions) and
+replays them separately.
+"""
 
 from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 import torch
-import torch.nn as nn
 
 repo_root = Path(__file__).parent.parent
 if str(repo_root) not in sys.path:
@@ -22,37 +26,10 @@ from core.harness.benchmark_harness import (  # noqa: E402
     WorkloadMetadata,
 )
 from core.profiling.nvtx_helper import get_nvtx_enabled, nvtx_range  # noqa: E402
+from ch16.piece_graphs_model import RegionalPieceGraph  # noqa: E402
 
 
-class PieceGraphBlock(nn.Module):
-    """Sequential block to mimic per-piece captures."""
-
-    def __init__(self, hidden_dim: int = 512):
-        super().__init__()
-        self.output = None
-        self._verify_input = None
-        self.net = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-        )
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.net(x)
-
-
-class PieceGraphModel(nn.Module):
-    """Sequential stack of PieceGraphBlocks."""
-
-    def __init__(self, hidden_dim: int = 512, n_layers: int = 12):
-        super().__init__()
-        self.hidden_dim = hidden_dim
-        self.layers = nn.ModuleList([PieceGraphBlock(hidden_dim) for _ in range(n_layers)])
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        for layer in self.layers:
-            x = layer(x)
-        return x
+GraphCacheEntry = Tuple["torch.cuda.CUDAGraph", torch.Tensor, torch.Tensor]
 
 
 class BaselinePieceGraphsBenchmark(VerificationPayloadMixin, BaseBenchmark):
@@ -60,75 +37,87 @@ class BaselinePieceGraphsBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
     def __init__(self):
         super().__init__()
-        self.model: Optional[PieceGraphModel] = None
-        self.inputs: Optional[torch.Tensor] = None
-        self.graph: Optional[torch.cuda.CUDAGraph] = None
-        self.static_input: Optional[torch.Tensor] = None
-        self.static_output: Optional[torch.Tensor] = None
-        # Heavier per-iteration work to better expose graph replay speedups.
-        self.repeats = 12
-        self.batch = 16
-        self.hidden = 768
-        tokens = self.batch * self.hidden * self.repeats
-        self._workload = WorkloadMetadata(
-            requests_per_iteration=float(self.repeats),
-            tokens_per_iteration=float(tokens),
-        )
+        self.model: Optional[RegionalPieceGraph] = None
+        self.seq_len = 256
+        self.hidden_dim = 768
+        self.n_layers = 12
+        self.num_heads = 8
+
         self._verify_input: Optional[torch.Tensor] = None
         self.parameter_count: int = 0
 
+        self.graph_cache: dict[int, GraphCacheEntry] = {}
+        self._seq_len_used: Optional[int] = None
+
+        self._workload = WorkloadMetadata(
+            requests_per_iteration=1.0,
+            tokens_per_iteration=float(self.seq_len),
+        )
+        self.register_workload_metadata(
+            requests_per_iteration=1.0,
+            tokens_per_iteration=float(self.seq_len),
+        )
+
     def setup(self) -> None:
         torch.manual_seed(42)
-        if torch.cuda.is_available():
-            torch.cuda.manual_seed_all(42)
-        self.model = (
-            PieceGraphModel(hidden_dim=self.hidden, n_layers=12)
-            .to(self.device, dtype=torch.float16)
-            .eval()
-        )
+        torch.cuda.manual_seed_all(42)
+
+        self.model = RegionalPieceGraph(
+            hidden_dim=self.hidden_dim,
+            n_layers=self.n_layers,
+            num_heads=self.num_heads,
+        ).to(self.device, dtype=torch.float16).eval()
         self.parameter_count = sum(p.numel() for p in self.model.parameters())
-        self.inputs = torch.randn(
-            self.batch, self.hidden, device=self.device, dtype=torch.float16
+
+        self._verify_input = torch.randn(
+            1,
+            self.seq_len,
+            self.hidden_dim,
+            device=self.device,
+            dtype=torch.float16,
         )
-        self._verify_input = self.inputs.detach().clone()
-        # Capture monolithic graph
-        try:
-            self.graph = torch.cuda.CUDAGraph()
-            self.static_input = self.inputs.clone()
-            self.static_output = torch.empty_like(self.static_input)
-            torch.cuda.synchronize()
-            with torch.cuda.graph(self.graph):
-                self.static_output.copy_(self.model(self.static_input))
-            torch.cuda.synchronize()
-        except Exception:
-            self.graph = None
+
+        self.graph_cache.clear()
+        static_input = torch.empty_like(self._verify_input)
+        static_output = torch.empty_like(self._verify_input)
+        static_input.copy_(self._verify_input)
+
         torch.cuda.synchronize(self.device)
+        with torch.inference_mode(), torch.amp.autocast("cuda", dtype=torch.float16):
+            static_output.copy_(self.model(static_input))
+        torch.cuda.synchronize(self.device)
+
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph):
+            with torch.inference_mode(), torch.amp.autocast("cuda", dtype=torch.float16):
+                static_output.copy_(self.model(static_input))
+
+        torch.cuda.synchronize(self.device)
+        self.graph_cache[self.seq_len] = (graph, static_input, static_output)
 
     def benchmark_fn(self) -> None:
         config = self.get_config()
         enable_nvtx = get_nvtx_enabled(config) if config else False
-        last_output: Optional[torch.Tensor] = None
         with nvtx_range("baseline_piece_graphs", enable=enable_nvtx):
-            for _ in range(self.repeats):
-                if self.graph and self.static_input is not None and self.static_output is not None:
-                    self.static_input.copy_(self.inputs)
-                    self.graph.replay()
-                    last_output = self.static_output
-                else:
-                    last_output = self.model(self.inputs)
-            torch.cuda.synchronize(self.device)
-        if last_output is None and self.model is not None:
-            last_output = self.model(self.inputs)
-        if last_output is None:
-            raise RuntimeError("Failed to produce output during benchmark")
-        self.output = last_output.detach().float().clone()
-        if self._verify_input is None:
-            raise RuntimeError("Verification input not initialized")
+            if self.model is None or self._verify_input is None:
+                raise RuntimeError("Model/inputs not initialized")
+            entry = self.graph_cache.get(self.seq_len)
+            if entry is None:
+                raise RuntimeError("Missing CUDA graph for configured sequence length")
+            graph, static_input, static_output = entry
+            static_input.copy_(self._verify_input)
+            graph.replay()
+            self.output = static_output
+            self._seq_len_used = self.seq_len
 
     def capture_verification_payload(self) -> None:
+        if self.output is None:
+            raise RuntimeError("benchmark_fn() must run before capture_verification_payload()")
+        if self._verify_input is None:
+            raise RuntimeError("Verification input not initialized")
         self._set_verification_payload(
             inputs={"input": self._verify_input},
-            output=self.output,
+            output=self.output.detach().float().clone(),
             batch_size=self._verify_input.shape[0],
             parameter_count=self.parameter_count,
             precision_flags={
@@ -142,10 +131,8 @@ class BaselinePieceGraphsBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
     def teardown(self) -> None:
         self.model = None
-        self.inputs = None
-        self.graph = None
-        self.static_input = None
-        self.static_output = None
+        self._verify_input = None
+        self.graph_cache.clear()
         torch.cuda.empty_cache()
 
     def get_config(self) -> BenchmarkConfig:

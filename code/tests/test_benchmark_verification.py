@@ -13,7 +13,6 @@ import pytest
 import sys
 from pathlib import Path
 from typing import Dict, Any, Optional
-from unittest.mock import MagicMock, patch
 
 # Add repo root to path
 repo_root = Path(__file__).parent.parent

@@ -4,7 +4,6 @@ import sys
 from pathlib import Path
 from typing import Optional, Dict
 import pytest
-from unittest.mock import patch, MagicMock
 
 # Add repo root to path
 repo_root = Path(__file__).parent.parent
@@ -560,24 +559,16 @@ class TestInferenceTiming:
     
     def test_chapter_metric_config_ttft_tpot(self):
         """Test chapter metric config mappings for TTFT/TPOT."""
-        # Mock get_chapter_metrics to return CH17 metrics
-        with patch('core.benchmark.comparison.get_chapter_metrics') as mock_get_metrics:
-            mock_get_metrics.return_value = {
-                "ttft_p99_ms": {"target": 300, "unit": "ms", "lower_is_better": True},
-                "ttft_p99_mlperf_ms": {"target": 450, "unit": "ms", "lower_is_better": True},
-                "tpot_p99_ms": {"target": 40, "unit": "ms", "lower_is_better": True},
-            }
-            
-            config = get_chapter_metric_config("ch17")
-            
-            # Check that mappings point to inference_timing metrics
-            assert "inference_timing.ttft_p99_ms" in config
-            assert "inference_timing.tpot_p99_ms" in config
-            
-            # Verify display names
-            ttft_config = config["inference_timing.ttft_p99_ms"]
-            assert ttft_config[0] == "TTFT P99"  # display_name
-            assert ttft_config[1] == MetricDirection.LOWER_IS_BETTER
+        config = get_chapter_metric_config("ch17")
+        
+        # Check that mappings point to inference_timing metrics
+        assert "inference_timing.ttft_p99_ms" in config
+        assert "inference_timing.tpot_p99_ms" in config
+        
+        # Verify display names
+        ttft_config = config["inference_timing.ttft_p99_ms"]
+        assert ttft_config[0] == "TTFT P99"  # display_name
+        assert ttft_config[1] == MetricDirection.LOWER_IS_BETTER
 
 
 if __name__ == "__main__":

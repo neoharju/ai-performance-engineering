@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Optional, Iterator
-from collections import abc
+from typing import Iterator, Optional
 
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 
-from core.utils.compile_utils import enable_tf32
 from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata
 
@@ -17,9 +15,12 @@ from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, Workl
 class SyntheticDataset(Dataset):
     """Synthetic dataset for DataLoader benchmarking."""
     
-    def __init__(self, num_samples: int = 1000, feature_dim: int = 1024):
+    def __init__(self, num_samples: int = 1000, feature_dim: int = 1024, *, preprocess_steps: int = 8):
+        if preprocess_steps < 1:
+            raise ValueError("preprocess_steps must be >= 1")
         self.num_samples = num_samples
         self.feature_dim = feature_dim
+        self.preprocess_steps = preprocess_steps
         self.data = torch.randn(num_samples, feature_dim)
         self.labels = torch.randint(0, 10, (num_samples,))
     
@@ -28,7 +29,9 @@ class SyntheticDataset(Dataset):
     
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
         sample = self.data[idx]
-        enriched = torch.tanh(sample * 1.1) + torch.sin(sample * 0.5)
+        enriched = sample
+        for _ in range(self.preprocess_steps):
+            enriched = torch.tanh(enriched * 1.1) + torch.sin(enriched * 0.5)
         normalized = enriched - enriched.mean()
         return normalized, self.labels[idx]
 
@@ -61,30 +64,38 @@ class OptimizedDataloaderTunedBenchmark(VerificationPayloadMixin, BaseBenchmark)
         self.dataset_size = 1000
         self.batch_size = 64
         self.feature_dim = 1024
+        self.preprocess_steps = 8
         self._data_iter: Optional[Iterator] = None
         self._workload = WorkloadMetadata(
-            requests_per_iteration=float(self.dataset_size // self.batch_size),
-            tokens_per_iteration=float(self.dataset_size * self.feature_dim),
+            requests_per_iteration=float(self.batch_size),
+            tokens_per_iteration=float(self.batch_size * self.feature_dim),
         )
         self.output = None
+        self._payload_inputs: Optional[dict] = None
         self.register_workload_metadata(
-            requests_per_iteration=float(self.dataset_size // self.batch_size),
-            tokens_per_iteration=float(self.dataset_size * self.feature_dim),
+            requests_per_iteration=float(self.batch_size),
+            tokens_per_iteration=float(self.batch_size * self.feature_dim),
         )
     
     def setup(self) -> None:
-        if torch.cuda.is_available():
-            torch.backends.cudnn.benchmark = True
-            torch.backends.cudnn.deterministic = False
-            enable_tf32()
+        # DataLoader workers default to torch.set_num_threads(1) to avoid CPU
+        # oversubscription. Set the same in the main process so baseline and
+        # optimized variants see identical preprocessing math.
+        torch.set_num_threads(1)
         torch.manual_seed(42)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(42)
         
         self.model = SimpleModel(input_dim=self.feature_dim).to(self.device)
         
         self.optimizer = torch.optim.SGD(self.model.parameters(), lr=0.01)
         self.criterion = nn.CrossEntropyLoss()
         
-        dataset = SyntheticDataset(num_samples=self.dataset_size, feature_dim=self.feature_dim)
+        dataset = SyntheticDataset(
+            num_samples=self.dataset_size,
+            feature_dim=self.feature_dim,
+            preprocess_steps=self.preprocess_steps,
+        )
         self.dataloader = DataLoader(
             dataset,
             batch_size=self.batch_size,
@@ -114,26 +125,25 @@ class OptimizedDataloaderTunedBenchmark(VerificationPayloadMixin, BaseBenchmark)
             loss = self.criterion(outputs, labels)
             loss.backward()
             self.optimizer.step()
-            self.output = outputs.detach().clone()
-        self._synchronize()
+            self.output = outputs.detach()
+        self._payload_inputs = {"data": data.detach(), "labels": labels.detach()}
         if self.output is None:
             raise RuntimeError("benchmark_fn() must produce output for verification")
-        inputs = {"data": data, "labels": labels}
-        self._payload_inputs = inputs
 
     def capture_verification_payload(self) -> None:
-        inputs = self._payload_inputs
+        if self._payload_inputs is None or self.output is None:
+            raise RuntimeError("benchmark_fn() must run before capture_verification_payload()")
+        inputs = {k: v.detach().clone() for k, v in self._payload_inputs.items()}
         self._set_verification_payload(
             inputs=inputs,
-            output=self.output.detach().float().clone(),
-            batch_size=self.batch_size,
+            output=self.output.detach().clone(),
+            batch_size=int(next(iter(inputs.values())).shape[0]),
             precision_flags={
-                "fp16": True,
+                "fp16": False,
                 "bf16": False,
                 "fp8": False,
                 "tf32": torch.backends.cuda.matmul.allow_tf32 if torch.cuda.is_available() else False,
             },
-            output_tolerance=(0.1, 1.0),
         )
 
     def teardown(self) -> None:
@@ -159,6 +169,7 @@ class OptimizedDataloaderTunedBenchmark(VerificationPayloadMixin, BaseBenchmark)
         return BenchmarkConfig(
             iterations=100,
             warmup=10,
+            adaptive_iterations=False,
             enable_memory_tracking=False,
             enable_profiling=False,
         )
@@ -179,12 +190,6 @@ class OptimizedDataloaderTunedBenchmark(VerificationPayloadMixin, BaseBenchmark)
         if self.model is None:
             return "Model not initialized"
         return None
-
-    def get_verify_output(self) -> torch.Tensor:
-        """Return output tensor for verification comparison."""
-        if self.output is None:
-            raise RuntimeError("Output not available - run benchmark first")
-        return self.output
 
 
 def get_benchmark() -> OptimizedDataloaderTunedBenchmark:

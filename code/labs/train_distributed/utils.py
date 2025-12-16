@@ -4,14 +4,24 @@ from __future__ import annotations
 
 import time
 from contextlib import contextmanager
+from typing import TYPE_CHECKING, Any
 
 import torch
 import torch.distributed as dist
-from datasets import Dataset, load_dataset
-from transformers import AutoTokenizer
+
+if TYPE_CHECKING:  # pragma: no cover
+    from datasets import Dataset
+    from transformers import PreTrainedTokenizerBase
+else:
+    Dataset = Any  # type: ignore[misc,assignment]
+    PreTrainedTokenizerBase = Any  # type: ignore[misc,assignment]
 
 
-def setup_tokenizer(model_id: str) -> AutoTokenizer:
+def setup_tokenizer(model_id: str) -> PreTrainedTokenizerBase:
+    try:
+        from transformers import AutoTokenizer
+    except ImportError as exc:
+        raise RuntimeError("setup_tokenizer() requires the `transformers` package") from exc
     tokenizer = AutoTokenizer.from_pretrained(model_id)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
@@ -36,9 +46,12 @@ def _main_process_first(is_main_process: bool):
         dist.barrier()
 
 
-def load_tinystories(tokenizer: AutoTokenizer, seq_len: int, *, is_main_process: bool) -> Dataset:
+def load_tinystories(tokenizer: PreTrainedTokenizerBase, seq_len: int, *, is_main_process: bool) -> Dataset:
     """Tokenize and pack TinyStories into contiguous blocks for LM training."""
-
+    try:
+        from datasets import load_dataset
+    except ImportError as exc:
+        raise RuntimeError("load_tinystories() requires the `datasets` package") from exc
     with _main_process_first(is_main_process):
         raw_dataset = load_dataset("roneneldan/TinyStories", split="train[:5%]")
 

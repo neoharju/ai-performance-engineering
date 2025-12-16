@@ -36,6 +36,10 @@
 - Keep the tool script at the chapter/lab level when book context references it, but decouple it from benchmark discovery and `bench run`.
 - Run these via `aisp tools <name> -- <args...>` by registering the script path in `core/tools/tools_commands.py` (`TOOLS` mapping).
 
+### Hardware Diagnostics (microbench)
+- Hardware microbenchmarks (e.g., `aisp_hw_*` tools / `core/diagnostics/microbench.py`) are **diagnostic-only** and intentionally bypass the benchmark harness and its 94 validity protections.
+- Do not use microbench results to claim baseline-vs-optimized speedups; use harness benchmarks via `aisp bench run --targets ...` for comparable results.
+
 ## When to Move Code into `core/` (Reuse Rule)
 - If shared logic has **2+ call sites** across chapters/labs, extract it into `core/` (prefer `core/analysis/*` or `core/utils/*`) and import it from chapter code.
 - If a chapter’s narrative/book references specific chapter-local code, keep a thin chapter wrapper that calls into `core/` rather than moving everything out of the chapter.
@@ -62,6 +66,8 @@ The table below documents known issues that can cause benchmark results to be mi
 **✅ All 94 validity issues are now protected by our harness**
 
 **CUDA Graph Note:** Capturing CUDA graphs in `setup()` is allowed for steady-state replay benchmarks (we intentionally measure replay, not capture). It is NOT allowed to precompute and reuse the final output from `setup()`; the output used for verification must come from the timed `benchmark_fn()` run and be surfaced via `capture_verification_payload()`.
+
+**Virtualization Note:** `validate_environment()` treats virtualization as invalid by default for publishable performance numbers. For development/CI in a VM, set `AISP_ALLOW_VIRTUALIZATION=1` (results may include virtualization overhead; do not publish).
 
 | Category | Issue | What Happens | Protection | Status | Real-World Incident |
 |----------|-------|--------------|------------|--------|---------------------|
@@ -343,6 +349,7 @@ def setup(self) -> None:
 - Determinism is handled by the harness in verification/repro modes; benchmark files must not override harness policy.
 - **Exception (rare):** If a benchmark must enable determinism for correctness/debuggability, it MUST include an explicit file-level justification comment so `aisp bench audit` can allowlist it:
   - `# aisp: allow_determinism <short reason>`
+- Note: Setting `torch.backends.cudnn.benchmark = True` is a performance knob (autotuning) and does NOT require `# aisp: allow_determinism`; keep backend toggles consistent across baseline/optimized unless that toggle is the intended optimization being demonstrated.
 
 ## Tests for New Functionality (CRITICAL)
 

@@ -8,7 +8,9 @@ structures so they can be reused by any interface.
 from __future__ import annotations
 
 import csv
+import io
 import json
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -65,12 +67,12 @@ def _extract_ncu_sources(ncu_path: Path, limit: int = 12) -> List[Dict[str, str]
 
 def _extract_ncu_disassembly(ncu_path: Path, limit: int = 40) -> List[str]:
     """
-    Best-effort disassembly from an ncu-rep via the SASS page.
+    Best-effort disassembly from an ncu-rep via the Source page (SASS view).
     Returns a list of text lines (truncated) for quick inspection.
     """
     try:
         result = subprocess.run(
-            ["ncu", "--import", str(ncu_path), "--csv", "--page", "sass"],
+            ["ncu", "--import", str(ncu_path), "--csv", "--page", "source", "--print-source", "sass"],
             capture_output=True,
             text=True,
             timeout=45,
@@ -78,14 +80,25 @@ def _extract_ncu_disassembly(ncu_path: Path, limit: int = 40) -> List[str]:
         if result.returncode != 0:
             return []
         lines = [ln for ln in result.stdout.splitlines() if ln.strip()]
-        # Keep only meaningful lines (skip headers and empty)
         payload: List[str] = []
-        for ln in lines:
-            if ln.startswith("==") or ln.startswith("Kernel Name"):
+        header: Optional[List[str]] = None
+        for row in csv.reader(lines):
+            if not row:
                 continue
-            payload.append(ln)
-            if len(payload) >= limit:
-                break
+            if row[0] == "Kernel Name":
+                header = None
+                continue
+            if "Address" in row and "Source" in row:
+                header = row
+                continue
+            if header and len(row) >= 2:
+                address = row[0].strip()
+                source = row[1].strip()
+                if not source:
+                    continue
+                payload.append(f"{address} {source}".strip())
+                if len(payload) >= limit:
+                    break
         return payload
     except Exception:
         return []
@@ -543,42 +556,110 @@ def compare_ncu_files(profiles_dir: Path) -> Optional[Dict[str, Any]]:
     if not baseline_ncu or not optimized_ncu:
         return None
 
+    def _parse_float(text: str) -> Optional[float]:
+        stripped = (text or "").strip().replace(",", "")
+        if not stripped:
+            return None
+        if stripped.endswith("%"):
+            stripped = stripped[:-1]
+        match = re.match(r"^[+-]?\d*\.?\d+(?:[eE][+-]?\d+)?", stripped)
+        if not match:
+            return None
+        try:
+            return float(match.group(0))
+        except ValueError:
+            return None
+
+    def _time_to_ms(value: float, unit: str) -> float:
+        u = (unit or "").strip().lower()
+        if u.endswith("ns"):
+            return value / 1e6
+        if u.endswith("us"):
+            return value / 1e3
+        if u.endswith("ms"):
+            return value
+        if u.endswith("s"):
+            return value * 1e3
+        return value
+
+    def _load_metrics(ncu_path: Path) -> Dict[str, Dict[str, float]]:
+        metrics = [
+            "gpu__time_duration.avg",
+            "sm__throughput.avg.pct_of_peak_sustained_elapsed",
+            "gpu__dram_throughput.avg.pct_of_peak_sustained_elapsed",
+            "lts__throughput.avg.pct_of_peak_sustained_elapsed",
+            "sm__warps_active.avg.pct_of_peak_sustained_active",
+        ]
+        result = subprocess.run(
+            ["ncu", "--import", str(ncu_path), "--csv", "--page", "details", "--metrics", ",".join(metrics)],
+            capture_output=True,
+            text=True,
+            timeout=45,
+        )
+        if result.returncode != 0 or not result.stdout.strip():
+            return {}
+        reader = csv.DictReader(io.StringIO(result.stdout))
+        per_kernel: Dict[str, Dict[str, float]] = {}
+        for row in reader:
+            kernel = (row.get("Kernel Name") or "").strip() or "kernel"
+            metric = (row.get("Metric Name") or "").strip()
+            value_raw = (row.get("Metric Value") or "").strip()
+            if not metric or not value_raw:
+                continue
+            value = _parse_float(value_raw)
+            if value is None:
+                continue
+            unit = (row.get("Metric Unit") or "").strip()
+            if metric.startswith("gpu__time_duration"):
+                value = _time_to_ms(value, unit)
+            per_kernel.setdefault(kernel, {})[metric] = value
+        return per_kernel
+
     try:
-        def extract_ncu_metrics(ncu_path: Path) -> Dict[str, Any]:
-            result = subprocess.run(
-                ["ncu", "--import", str(ncu_path), "--csv"],
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            if result.returncode != 0:
-                return {}
-
-            metrics: Dict[str, Any] = {}
-            lines = result.stdout.strip().split("\n")
-            for line in lines:
-                if "," in line and not line.startswith("=="):
-                    parts = line.split(",")
-                    if len(parts) >= 2:
-                        metrics[parts[0]] = parts[1] if len(parts) > 1 else ""
-            return metrics
-
-        baseline_metrics = extract_ncu_metrics(baseline_ncu[0])
-        optimized_metrics = extract_ncu_metrics(optimized_ncu[0])
-
-        if baseline_metrics or optimized_metrics:
-            return {
-                "baseline_file": baseline_ncu[0].name,
-                "optimized_file": optimized_ncu[0].name,
-                "baseline_metrics": baseline_metrics,
-                "optimized_metrics": optimized_metrics,
-                "baseline_sources": _extract_ncu_sources(baseline_ncu[0]),
-                "optimized_sources": _extract_ncu_sources(optimized_ncu[0]),
-                "baseline_disassembly": _extract_ncu_disassembly(baseline_ncu[0]),
-                "optimized_disassembly": _extract_ncu_disassembly(optimized_ncu[0]),
-            }
+        baseline_per_kernel = _load_metrics(baseline_ncu[0])
+        optimized_per_kernel = _load_metrics(optimized_ncu[0])
     except Exception as exc:  # pragma: no cover - tool availability varies
         return {"error": f"NCU extraction failed: {exc}"}
+
+    if not baseline_per_kernel and not optimized_per_kernel:
+        return None
+
+    # Rank kernels by baseline time if available.
+    def _kernel_time(per_kernel: Dict[str, Dict[str, float]], name: str) -> float:
+        try:
+            return float(per_kernel.get(name, {}).get("gpu__time_duration.avg", 0.0) or 0.0)
+        except Exception:
+            return 0.0
+
+    all_kernels = set(baseline_per_kernel.keys()) | set(optimized_per_kernel.keys())
+    ranked = sorted(all_kernels, key=lambda k: _kernel_time(baseline_per_kernel, k), reverse=True)
+    ranked = ranked[:12]
+
+    def _kernel_payload(name: str) -> Dict[str, Any]:
+        b = baseline_per_kernel.get(name, {})
+        o = optimized_per_kernel.get(name, {})
+        keys = set(b.keys()) | set(o.keys())
+        diffs: Dict[str, Any] = {}
+        for key in sorted(keys):
+            bv = b.get(key)
+            ov = o.get(key)
+            delta = None
+            ratio = None
+            if isinstance(bv, (int, float)) and isinstance(ov, (int, float)):
+                delta = ov - bv
+                ratio = (ov / bv) if bv != 0 else None
+            diffs[key] = {"baseline": bv, "optimized": ov, "delta": delta, "ratio": ratio}
+        return {"kernel": name, "metrics": diffs}
+
+    return {
+        "baseline_file": baseline_ncu[0].name,
+        "optimized_file": optimized_ncu[0].name,
+        "kernel_comparison": [_kernel_payload(k) for k in ranked],
+        "baseline_sources": _extract_ncu_sources(baseline_ncu[0]),
+        "optimized_sources": _extract_ncu_sources(optimized_ncu[0]),
+        "baseline_disassembly": _extract_ncu_disassembly(baseline_ncu[0]),
+        "optimized_disassembly": _extract_ncu_disassembly(optimized_ncu[0]),
+    }
 
     return None
 

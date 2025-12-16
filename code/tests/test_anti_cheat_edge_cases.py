@@ -23,7 +23,6 @@ import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
 
 import pytest
 import torch
@@ -1769,4 +1768,3 @@ class TestRaceConditions:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
-

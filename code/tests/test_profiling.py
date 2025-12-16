@@ -7,7 +7,6 @@ Run with: pytest tests/test_profiling.py -v
 import json
 import tempfile
 from pathlib import Path
-from unittest.mock import Mock, patch
 
 import pytest
 
@@ -130,7 +129,7 @@ class TestMemoryProfiler:
         from core.profiling.memory import MemoryProfiler
         
         profiler = MemoryProfiler()
-        profiler._timeline = [Mock()]  # Add dummy data
+        profiler._timeline = [object()]  # Add dummy data
         profiler._markers = {"test": (0, 100)}
         
         profiler.reset()
@@ -482,4 +481,3 @@ def trace_file(tmp_path, sample_trace_data):
     trace_path = tmp_path / "trace.json"
     trace_path.write_text(json.dumps(sample_trace_data))
     return trace_path
-

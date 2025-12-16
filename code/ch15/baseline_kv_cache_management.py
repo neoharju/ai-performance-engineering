@@ -27,10 +27,11 @@ class BaselineKVCacheManagementBenchmark(VerificationPayloadMixin, BaseBenchmark
         self.v_proj: Optional[nn.Linear] = None
         self.out_proj: Optional[nn.Linear] = None
         self.tokens: Optional[torch.Tensor] = None
-        self.hidden_dim = 256
+        # Use a moderately large hidden dim so repeated K/V projections dominate.
+        self.hidden_dim = 1024
         self.num_heads = 8
         self.head_dim = self.hidden_dim // self.num_heads
-        self.batch_size = 128
+        self.batch_size = 64
         self.steps = 256
         tokens = self.batch_size * self.steps
         self._workload = WorkloadMetadata(

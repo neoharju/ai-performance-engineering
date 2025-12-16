@@ -38,6 +38,7 @@ class OptimizedTensorCoresBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.B = None
         self.size = 4096
         self.dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+        self.output_buffer = None
         self._workload = WorkloadMetadata(
             requests_per_iteration=1.0,
             tokens_per_iteration=float(self.size * self.size),
@@ -54,11 +55,14 @@ class OptimizedTensorCoresBenchmark(VerificationPayloadMixin, BaseBenchmark):
             enable_tf32()
         
         torch.manual_seed(42)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(42)
         # Optimization: Tensor cores accelerate FP16/BF16 matrix operations
         # Tensor cores provide high throughput for mixed-precision operations
         # This uses FP16/BF16 to leverage tensor core acceleration
         self.A = torch.randn(self.size, self.size, device=self.device, dtype=self.dtype)
         self.B = torch.randn(self.size, self.size, device=self.device, dtype=self.dtype)
+        self.output_buffer = torch.empty((self.size, self.size), device=self.device, dtype=self.dtype)
         self._synchronize()
         self.register_workload_metadata(
             requests_per_iteration=self._workload.requests_per_iteration,
@@ -70,8 +74,10 @@ class OptimizedTensorCoresBenchmark(VerificationPayloadMixin, BaseBenchmark):
         # Optimization: FP16/BF16 matmul with tensor cores
         # Tensor cores provide high throughput for these operations
         with self._nvtx_range("optimized_tensor_cores"):
-            self.output = torch.matmul(self.A, self.B)
-        self._synchronize()
+            if self.output_buffer is None:
+                raise RuntimeError("Output buffer not initialized")
+            torch.matmul(self.A, self.B, out=self.output_buffer)
+            self.output = self.output_buffer
         if self.output is None or self.A is None or self.B is None:
             raise RuntimeError("benchmark_fn() must produce output")
 

@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import os
 from time import perf_counter
 from pathlib import Path
 
 import torch
 import torch.nn.functional as F
 import torch.distributed as dist
-from accelerate import PartialState
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed.algorithms.ddp_comm_hooks.default_hooks import fp16_compress_hook
 from core.utils.compile_utils import enable_tf32
@@ -54,10 +54,23 @@ def _maybe_fused_adamw(params, lr):
 
 def main():
     args = parse_args()
-    state = PartialState()
-    device = state.device
+    if not dist.is_initialized():
+        if "RANK" in os.environ and "WORLD_SIZE" in os.environ:
+            dist.init_process_group(backend="nccl")
+        else:
+            raise RuntimeError("DDP optimized run requires torch.distributed process group to be initialized.")
 
-    set_seed(2025 + state.process_index)
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    if not torch.cuda.is_available():
+        raise RuntimeError("DDP optimized run requires CUDA GPUs.")
+
+    torch.cuda.set_device(local_rank)
+    device = torch.device("cuda", local_rank)
+    rank = dist.get_rank()
+    world_size = dist.get_world_size()
+    is_main = rank == 0
+
+    set_seed(2025 + rank)
     enable_tf32()
     torch.backends.cudnn.benchmark = True
 
@@ -80,12 +93,9 @@ def main():
     model.to(device)
     model.train()
 
-    if not torch.distributed.is_initialized():
-        raise RuntimeError("DDP optimized run requires torch.distributed process group to be initialized.")
-
     ddp_model = DDP(
         model,
-        device_ids=[device],
+        device_ids=[local_rank],
         static_graph=True,
         bucket_cap_mb=50,
         gradient_as_bucket_view=True,
@@ -124,7 +134,7 @@ def main():
 
         total_tokens += batch["input_ids"].numel()
 
-        if step % 10 == 0 and state.is_main_process:
+        if step % 10 == 0 and is_main:
             print(
                 f"[optimized-ddp-flash] step {step}/{num_steps} "
                 f"loss={loss.item():.4f} "
@@ -133,9 +143,9 @@ def main():
 
     torch.cuda.synchronize(device)
     total_time = perf_counter() - start_time
-    if state.is_main_process:
+    if is_main:
         toks_sec = total_tokens / total_time if total_time > 0 else 0.0
-        effective_bs = args.batch_size * args.grad_accum * state.num_processes
+        effective_bs = args.batch_size * args.grad_accum * world_size
         print(
             f"[optimized-ddp-flash] {num_steps} steps | total tokens {total_tokens:,} | "
             f"global batch {effective_bs} | {toks_sec:,.0f} toks/s per rank"

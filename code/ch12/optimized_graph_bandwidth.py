@@ -45,11 +45,6 @@ class OptimizedGraphBandwidthBenchmark(VerificationPayloadMixin, BaseBenchmark):
     
     def setup(self) -> None:
         """Setup: Initialize tensors and load CUDA extension."""
-        
-        # Optimization: Enable cuDNN benchmarking for optimal kernel selection
-        if torch.cuda.is_available():
-            torch.backends.cudnn.benchmark = True
-            torch.backends.cudnn.deterministic = False
         # Load CUDA extension (will compile on first call)
         # CUDA extensions may fail to compile or load on some hardware/driver combinations
         try:
@@ -87,7 +82,6 @@ class OptimizedGraphBandwidthBenchmark(VerificationPayloadMixin, BaseBenchmark):
         with nvtx_range("optimized_graph_bandwidth_graph", enable=enable_nvtx):
             # Call CUDA extension with graph kernel
             self._extension.graph_kernel(self.dst, self.src, self.iterations)
-        self._synchronize()
         if self._verify_input is None or self.dst is None:
             raise RuntimeError("Verification input/output not initialized")
 

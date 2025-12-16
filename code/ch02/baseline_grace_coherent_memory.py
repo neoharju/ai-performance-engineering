@@ -171,6 +171,10 @@ class GraceCoherentMemoryBenchmark(VerificationPayloadMixin, BaseBenchmark):
         super().teardown()
 
     def get_config(self) -> BenchmarkConfig:
+        # This benchmark does substantial work inside benchmark_fn() (it runs an
+        # internal loop of coherent-memory transfers). A single harness iteration
+        # is intentional and still yields stable timings (the harness also has
+        # adaptive-iterations enabled by default).
         return BenchmarkConfig(iterations=1, warmup=5, enable_memory_tracking=False)
 
     def get_workload_metadata(self) -> Optional[WorkloadMetadata]:

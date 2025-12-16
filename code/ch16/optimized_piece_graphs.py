@@ -1,10 +1,14 @@
-"""Optimized piece-graph benchmark: cached regional CUDA graphs per sequence bucket."""
+"""Optimized piece-graph benchmark: cached regional CUDA graphs for steady-state replay.
+
+Splits the model into two pieces (head/tail) and captures a CUDA graph per piece.
+The baseline captures the full model monolithically.
+"""
 
 from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Dict, Optional, Sequence, Tuple
+from typing import Dict, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -14,58 +18,15 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from core.benchmark.verification_mixin import VerificationPayloadMixin
-from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig
+from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata
 from core.profiling.nvtx_helper import get_nvtx_enabled, nvtx_range
+from ch16.piece_graphs_model import RegionalPieceGraph
 
 
 def resolve_device() -> torch.device:
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA-capable GPU required for piece-graph benchmarks.")
     return torch.device("cuda")
-
-
-class PieceGraphBlock(nn.Module):
-    """Transformer-style block used by both head and tail regions."""
-
-    def __init__(self, hidden_dim: int = 512, num_heads: int = 8):
-        super().__init__()
-        self.output = None
-        self.norm1 = nn.LayerNorm(hidden_dim)
-        self.attn = nn.MultiheadAttention(
-            embed_dim=hidden_dim,
-            num_heads=num_heads,
-            batch_first=True,
-        )
-        self.norm2 = nn.LayerNorm(hidden_dim)
-        self.mlp = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim * 4),
-            nn.GELU(),
-            nn.Linear(hidden_dim * 4, hidden_dim),
-        )
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        residual = x
-        x = self.norm1(x)
-        attn_out, _ = self.attn(x, x, x, need_weights=False)
-        x = residual + attn_out
-        residual = x
-        x = self.norm2(x)
-        x = residual + self.mlp(x)
-        return x
-
-
-class RegionalPieceGraph(nn.Module):
-    """Splits the model into two regions (input+head stack, tail stack+output)."""
-
-    def __init__(self, hidden_dim: int = 512, n_layers: int = 12):
-        super().__init__()
-        midpoint = n_layers // 2
-        blocks = [PieceGraphBlock(hidden_dim=hidden_dim) for _ in range(n_layers)]
-        self.hidden_dim = hidden_dim
-        self.input_proj = nn.Linear(hidden_dim, hidden_dim)
-        self.region_head = nn.Sequential(*blocks[:midpoint])
-        self.region_tail = nn.Sequential(*blocks[midpoint:])
-        self.output_proj = nn.Linear(hidden_dim, hidden_dim)
 
 
 RegionGraph = Tuple[torch.cuda.CUDAGraph, torch.Tensor, torch.Tensor]
@@ -78,94 +39,115 @@ class OptimizedPieceGraphsBenchmark(VerificationPayloadMixin, BaseBenchmark):
         super().__init__()
         self.device = resolve_device()
         self.model: Optional[RegionalPieceGraph] = None
-        # Start with larger buckets so the capture/replay benefit stands out.
-        self.sequence_schedule: Sequence[int] = [256, 384, 512, 640, 768, 896, 1024]
-        self.iteration = 0
-        self.graph_cache: Dict[int, Tuple[RegionGraph, RegionGraph]] = {}
-        self._rng = torch.Generator(device=self.device)
-        self._rng.manual_seed(42)
+        self.seq_len = 256
         self.hidden_dim_val = 768
         self.n_layers_val = 12
+        self.num_heads = 8
+        self.graph_cache: Dict[int, Tuple[RegionGraph, RegionGraph]] = {}
         self.parameter_count: int = 0
-        self.register_workload_metadata(requests_per_iteration=1.0)
+        self._verify_input: Optional[torch.Tensor] = None
+        self.output: Optional[torch.Tensor] = None
+        self._payload_verify_tokens: Optional[torch.Tensor] = None
+
+        self._workload = WorkloadMetadata(
+            requests_per_iteration=1.0,
+            tokens_per_iteration=float(self.seq_len),
+        )
+        self.register_workload_metadata(
+            requests_per_iteration=1.0,
+            tokens_per_iteration=float(self.seq_len),
+        )
 
     def setup(self) -> None:
         torch.manual_seed(42)
         torch.cuda.manual_seed_all(42)
-        self.model = RegionalPieceGraph(hidden_dim=768, n_layers=12).to(
+        self.model = RegionalPieceGraph(
+            hidden_dim=self.hidden_dim_val,
+            n_layers=self.n_layers_val,
+            num_heads=self.num_heads,
+        ).to(
             self.device, dtype=torch.float16
         ).eval()
         self.parameter_count = sum(p.numel() for p in self.model.parameters())
+        self._verify_input = torch.randn(
+            1,
+            self.seq_len,
+            self.hidden_dim_val,
+            device=self.device,
+            dtype=torch.float16,
+        )
         self._capture_piece_graphs()
 
     def _capture_piece_graphs(self) -> None:
         assert self.model is not None
+        if self._verify_input is None:
+            raise RuntimeError("Verification input must be initialized before CUDA graph capture")
         self.graph_cache.clear()
-        torch.cuda.synchronize()
-        for seq_len in sorted(set(self.sequence_schedule)):
-            head_input = torch.empty(
-                1, seq_len, self.model.hidden_dim, device=self.device, dtype=torch.float16
-            )
-            head_input.normal_(0.0, 1.0, generator=self._rng)
-            head_output = torch.empty_like(head_input)
-            tail_input = torch.empty_like(head_input)
-            tail_output = torch.empty_like(head_input)
+        torch.cuda.synchronize(self.device)
 
-            with torch.amp.autocast("cuda", dtype=torch.float16):
-                warmed = self.model.region_head(self.model.input_proj(head_input))
-            head_output.copy_(warmed)
+        seq_len = self.seq_len
+        head_input = torch.empty(
+            1, seq_len, self.model.hidden_dim, device=self.device, dtype=torch.float16
+        )
+        head_output = torch.empty_like(head_input)
+        tail_input = torch.empty_like(head_input)
+        tail_output = torch.empty_like(head_input)
 
-            head_graph = torch.cuda.CUDAGraph()
-            with torch.cuda.graph(head_graph):
-                with torch.amp.autocast("cuda", dtype=torch.float16):
-                    tmp = self.model.region_head(self.model.input_proj(head_input))
-                head_output.copy_(tmp)
+        head_input.copy_(self._verify_input)
+        with torch.inference_mode(), torch.amp.autocast("cuda", dtype=torch.float16):
+            head_output.copy_(self.model.region_head(self.model.input_proj(head_input)))
+        torch.cuda.synchronize(self.device)
 
-            tail_input.copy_(head_output)
-            with torch.amp.autocast("cuda", dtype=torch.float16):
-                warmed_tail = self.model.output_proj(self.model.region_tail(tail_input))
-            tail_output.copy_(warmed_tail)
+        head_graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(head_graph):
+            with torch.inference_mode(), torch.amp.autocast("cuda", dtype=torch.float16):
+                head_output.copy_(self.model.region_head(self.model.input_proj(head_input)))
 
-            tail_graph = torch.cuda.CUDAGraph()
-            with torch.cuda.graph(tail_graph):
-                with torch.amp.autocast("cuda", dtype=torch.float16):
-                    tmp = self.model.output_proj(self.model.region_tail(tail_input))
-                tail_output.copy_(tmp)
+        tail_input.copy_(head_output)
+        with torch.inference_mode(), torch.amp.autocast("cuda", dtype=torch.float16):
+            tail_output.copy_(self.model.output_proj(self.model.region_tail(tail_input)))
+        torch.cuda.synchronize(self.device)
 
-            self.graph_cache[seq_len] = (
-                (head_graph, head_input, head_output),
-                (tail_graph, tail_input, tail_output),
-            )
-        torch.cuda.synchronize()
+        tail_graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(tail_graph):
+            with torch.inference_mode(), torch.amp.autocast("cuda", dtype=torch.float16):
+                tail_output.copy_(self.model.output_proj(self.model.region_tail(tail_input)))
+
+        self.graph_cache[seq_len] = (
+            (head_graph, head_input, head_output),
+            (tail_graph, tail_input, tail_output),
+        )
+        torch.cuda.synchronize(self.device)
 
     def benchmark_fn(self) -> None:
         if self.model is None:
             raise RuntimeError("Model not initialized")
-        seq_len = self.sequence_schedule[self.iteration % len(self.sequence_schedule)]
-        self.iteration += 1
+        if self._verify_input is None:
+            raise RuntimeError("Verification input not initialized")
+
+        seq_len = self.seq_len
         (head_graph, head_input, head_output), (tail_graph, tail_input, tail_output) = self.graph_cache[seq_len]
 
         config = self.get_config()
         enable_nvtx = get_nvtx_enabled(config) if config else False
-
-        fresh_tokens = torch.empty_like(head_input)
-        fresh_tokens.normal_(0.0, 1.0, generator=self._rng)
-        head_input.copy_(fresh_tokens)
+        head_input.copy_(self._verify_input)
         with nvtx_range("piece_graph_head", enable=enable_nvtx):
             head_graph.replay()
         tail_input.copy_(head_output)
         with nvtx_range("piece_graph_tail", enable=enable_nvtx):
             tail_graph.replay()
-        torch.cuda.synchronize()
-        self.output = tail_output.detach().clone()
-        verify_tokens = fresh_tokens.detach().clone()
-        self._payload_verify_tokens = verify_tokens
+        self.output = tail_output
+        self._payload_verify_tokens = self._verify_input
 
     def capture_verification_payload(self) -> None:
         verify_tokens = self._payload_verify_tokens
+        if verify_tokens is None:
+            raise RuntimeError("benchmark_fn() must run before capture_verification_payload()")
+        if self.output is None:
+            raise RuntimeError("benchmark_fn() must run before capture_verification_payload()")
         self._set_verification_payload(
             inputs={"input": verify_tokens},
-            output=self.output,
+            output=self.output.detach().float().clone(),
             batch_size=verify_tokens.shape[0],
             parameter_count=self.parameter_count,
             precision_flags={
@@ -179,6 +161,8 @@ class OptimizedPieceGraphsBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
     def teardown(self) -> None:
         self.model = None
+        self._verify_input = None
+        self._payload_verify_tokens = None
         self.graph_cache.clear()
         torch.cuda.empty_cache()
 

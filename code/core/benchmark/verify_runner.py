@@ -1561,8 +1561,94 @@ class VerifyRunner:
             VerifyResult with distributed verification outcome
         """
         config = config or VerifyConfig()
-        
-        # Step 1: Check rank execution
+
+        def _verify_pipeline_boundaries_across_ranks(
+            metadata_by_rank: Dict[int, Any],
+            expected_world_size: int,
+        ) -> Tuple[bool, Optional[str]]:
+            if len(metadata_by_rank) != expected_world_size:
+                missing = set(range(expected_world_size)) - set(metadata_by_rank.keys())
+                return False, f"PIPELINE METADATA MISSING: missing ranks {sorted(missing)}"
+
+            reference = metadata_by_rank.get(0)
+            if not isinstance(reference, dict):
+                return False, f"PIPELINE METADATA INVALID: rank0 metadata must be dict, got {type(reference)}"
+
+            stages_raw = reference.get("pipeline_stages")
+            boundaries_raw = reference.get("pipeline_stage_boundaries")
+            if stages_raw is None:
+                return False, "PIPELINE METADATA INVALID: pipeline_stages missing"
+            try:
+                pipeline_stages = int(stages_raw)
+            except Exception:
+                return False, f"PIPELINE METADATA INVALID: pipeline_stages must be int, got {type(stages_raw)}"
+            if pipeline_stages < 2:
+                return False, f"PIPELINE METADATA INVALID: pipeline_stages must be >=2, got {pipeline_stages}"
+
+            if pipeline_stages > expected_world_size:
+                return (
+                    False,
+                    f"PIPELINE METADATA INVALID: pipeline_stages ({pipeline_stages}) exceeds world_size ({expected_world_size})",
+                )
+            if expected_world_size % pipeline_stages != 0:
+                return (
+                    False,
+                    f"PIPELINE METADATA INVALID: world_size ({expected_world_size}) must be a multiple of pipeline_stages ({pipeline_stages})",
+                )
+
+            if not isinstance(boundaries_raw, list):
+                return False, "PIPELINE METADATA INVALID: pipeline_stage_boundaries must be a list of (start, end) pairs"
+            if len(boundaries_raw) != pipeline_stages:
+                return (
+                    False,
+                    "PIPELINE METADATA INVALID: pipeline_stage_boundaries length mismatch: "
+                    f"expected {pipeline_stages}, got {len(boundaries_raw)}",
+                )
+
+            boundaries: List[Tuple[int, int]] = []
+            for entry in boundaries_raw:
+                if not isinstance(entry, (list, tuple)) or len(entry) != 2:
+                    return False, "PIPELINE METADATA INVALID: pipeline_stage_boundaries entries must be (start, end) pairs"
+                boundaries.append((int(entry[0]), int(entry[1])))
+
+            prev_end: Optional[int] = None
+            for idx, (start, end) in enumerate(boundaries):
+                if start < 0:
+                    return False, "PIPELINE METADATA INVALID: pipeline_stage_boundaries start must be >=0"
+                if start > end:
+                    return False, "PIPELINE METADATA INVALID: pipeline_stage_boundaries start must be <= end"
+                if idx == 0:
+                    if start != 0:
+                        return False, "PIPELINE METADATA INVALID: pipeline_stage_boundaries must start at layer 0"
+                else:
+                    assert prev_end is not None
+                    if start != prev_end + 1:
+                        return False, "PIPELINE METADATA INVALID: pipeline_stage_boundaries must be contiguous and non-overlapping"
+                prev_end = end
+
+            for meta_rank, meta in metadata_by_rank.items():
+                if not isinstance(meta, dict):
+                    return False, f"PIPELINE METADATA INVALID: rank {meta_rank} metadata must be dict, got {type(meta)}"
+                if int(meta.get("pipeline_stages")) != pipeline_stages:
+                    return False, (
+                        "PIPELINE METADATA MISMATCH: pipeline_stages differs across ranks: "
+                        f"rank0={pipeline_stages} rank{meta_rank}={meta.get('pipeline_stages')}"
+                    )
+                if meta.get("pipeline_stage_boundaries") != boundaries_raw:
+                    return False, (
+                        "PIPELINE METADATA MISMATCH: pipeline_stage_boundaries differs across ranks: "
+                        f"rank0={boundaries_raw} rank{meta_rank}={meta.get('pipeline_stage_boundaries')}"
+                    )
+
+            return True, None
+
+        # Step 1: Run local verification
+        try:
+            outputs, metrics, seed_info, _, signature = self._run_with_seed(benchmark, config.seed)
+        except Exception as e:
+            return VerifyResult.fail(f"Rank {rank} execution failed: {e}")
+
+        # Step 2: Check rank execution AFTER running (marker/output is only available post-run).
         executed, exec_error = check_rank_execution(benchmark, world_size, rank)
         if not executed:
             return VerifyResult(
@@ -1571,14 +1657,42 @@ class VerifyRunner:
                 details={"rank_error": exec_error, "rank": rank},
                 timestamp=datetime.now(),
             )
+
+        # Step 3: Pipeline-parallel distributed validation (outputs differ by design).
+        is_pipeline_parallel = bool(signature.pipeline_stages is not None and signature.pipeline_stages > 1)
+        if is_pipeline_parallel:
+            metadata = {
+                "pipeline_stages": signature.pipeline_stages,
+                "pipeline_stage_boundaries": signature.pipeline_stage_boundaries,
+            }
+            gathered: Dict[int, Any] = {rank: metadata}
+            if world_size > 1:
+                try:
+                    import torch.distributed as dist
+
+                    if dist.is_initialized() and hasattr(dist, "all_gather_object"):
+                        all_meta: List[Any] = [None] * world_size  # type: ignore[list-item]
+                        dist.all_gather_object(all_meta, metadata)
+                        gathered = {idx: entry for idx, entry in enumerate(all_meta) if entry is not None}
+                except Exception:
+                    gathered = {rank: metadata}
+
+            if rank == 0 or len(gathered) == world_size:
+                ok, msg = _verify_pipeline_boundaries_across_ranks(gathered, expected_world_size=world_size)
+                if not ok:
+                    return VerifyResult(
+                        passed=False,
+                        reason=QuarantineReason.DISTRIBUTED_VERIFY_FAIL.value,
+                        details={"error": msg, "rank": rank},
+                        timestamp=datetime.now(),
+                    )
+            sig_hash = signature.hash()
+            return VerifyResult.success(
+                signature_hash=sig_hash,
+                seed_info=seed_info,
+            )
         
-        # Step 2: Run local verification
-        try:
-            outputs, metrics, seed_info, _, signature = self._run_with_seed(benchmark, config.seed)
-        except Exception as e:
-            return VerifyResult.fail(f"Rank {rank} execution failed: {e}")
-        
-        # Step 3: Gather outputs from all ranks
+        # Step 3: Gather outputs from all ranks (data-parallel, outputs should match).
         rank_outputs = gather_rank_outputs(outputs, world_size, rank)
         
         # Step 4: Verify consistency (only rank 0 has all data in distributed case)

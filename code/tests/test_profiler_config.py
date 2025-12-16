@@ -7,7 +7,6 @@ Run with: pytest tests/test_profiler_config.py -v
 import pytest
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -135,16 +134,18 @@ class TestProfilerConfig:
         assert "/usr/bin/python3" in cmd
     
     def test_nsys_command_with_nvtx_filters(self):
-        """nsys command should include NVTX filters."""
+        """nsys command should NOT include Nsight Compute-only NVTX filters."""
         config = ProfilerConfig(nvtx_includes=["kernel1", "kernel2"])
         cmd = config.get_nsys_command(
             output_path="/tmp/test",
             python_script="test.py"
         )
         
-        assert "--nvtx-include" in cmd
-        assert "kernel1" in cmd
-        assert "kernel2" in cmd
+        # Nsight Systems traces NVTX but does not support the Nsight Compute flag
+        # `--nvtx-include`, so filters are intentionally ignored here.
+        assert "--nvtx-include" not in cmd
+        assert "kernel1" not in cmd
+        assert "kernel2" not in cmd
     
     def test_ncu_command_generation(self):
         """ncu command should be properly formatted."""
@@ -264,26 +265,28 @@ class TestBuildProfilerConfigFromBenchmark:
     
     def test_with_minimal_config(self):
         """Should build config from minimal harness config."""
-        mock_config = MagicMock()
-        mock_config.profile_type = "minimal"
-        mock_config.ncu_metric_set = None
-        mock_config.pm_sampling_interval = None
-        mock_config.nsys_nvtx_include = None
+        class HarnessConfig:
+            def __init__(self):
+                self.profile_type = "minimal"
+                self.ncu_metric_set = None
+                self.pm_sampling_interval = None
+                self.nsys_nvtx_include = None
         
-        result = build_profiler_config_from_benchmark(mock_config)
+        result = build_profiler_config_from_benchmark(HarnessConfig())
         
         assert isinstance(result, ProfilerConfig)
         assert result.preset == "minimal"
     
     def test_with_deep_dive_config(self):
         """Should build config from deep dive harness config."""
-        mock_config = MagicMock()
-        mock_config.profile_type = "deep_dive"
-        mock_config.ncu_metric_set = "deep_dive"
-        mock_config.pm_sampling_interval = 50000
-        mock_config.nsys_nvtx_include = ["kernel1"]
+        class HarnessConfig:
+            def __init__(self):
+                self.profile_type = "deep_dive"
+                self.ncu_metric_set = "deep_dive"
+                self.pm_sampling_interval = 50000
+                self.nsys_nvtx_include = ["kernel1"]
         
-        result = build_profiler_config_from_benchmark(mock_config)
+        result = build_profiler_config_from_benchmark(HarnessConfig())
         
         assert result.preset == "deep_dive"
         assert result.metric_set == "deep_dive"

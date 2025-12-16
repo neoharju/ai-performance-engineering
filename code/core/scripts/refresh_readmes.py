@@ -1058,7 +1058,7 @@ ENTRIES["labs/moe_parallelism"] = lab_entry(
     title="Lab - MoE Parallelism Planner",
     summary=dedent(
         """\
-        Provides scenario planning for mixture-of-experts clusters: memory budgeting, network affinity, parallelism breakdown, and pipeline schedules expressed as baseline/optimized harness targets."""
+        Scenario planning tool for mixture-of-experts clusters: memory budgeting, network affinity, parallelism breakdown, and pipeline schedules."""
     ),
     goals=[
         "Quantify memory budgets for experts, routers, and KV caches before deploying models.",
@@ -1067,20 +1067,18 @@ ENTRIES["labs/moe_parallelism"] = lab_entry(
         "Simulate pipeline schedules to identify bottlenecks before touching production systems.",
     ],
     contents=[
-        ("`baseline_memory_budget.py`, `optimized_memory_budget.py`", "Memory planners that prove how optimized layouts free additional HBM for experts."),
-        ("`baseline_moe_grouping.py`, `optimized_moe_grouping.py`, `plan.py`", "Grouping strategies spanning naive, locality-aware, and latency-balanced heuristics."),
-        ("`baseline_network_affinity.py`, `optimized_network_affinity.py`", "Network-affinity calculators comparing NVLink, NVSwitch, and PCIe hops."),
-        ("`baseline_parallelism_breakdown.py`, `optimized_parallelism_breakdown.py`, `baseline_pipeline_schedule.py`, `optimized_pipeline_schedule.py`", "Parallelism and scheduling studies for sharding experts across GPUs."),
-        ("`benchmarking.py`, `run_lab.py`, `__init__.py`", "Lab driver, Typer CLI, and exports used by the harness."),
+        ("`run_lab.py`, `scenarios.py`, `plan.py`", "Tool entry point + canonical scenario definitions and sizing model."),
+        ("`benchmarking.py`", "Optional harness wrapper used by legacy shims and ad-hoc validation."),
+        ("`scenario_*.py`, `shim_*.py`", "Legacy compatibility entry points; prefer `aisp tools moe-parallelism`."),
     ],
     validation=[
-        "`python -m cli.aisp bench run --targets labs/moe_parallelism --profile minimal` runs every planner pair and drops JSON/Markdown summaries.",
-        "`python labs/moe_parallelism/run_lab.py --scenario grouped` prints an actionable plan (experts/GPU, bandwidth needs) for the chosen scenario.",
-        "`python labs/moe_parallelism/optimized_memory_budget.py --validate` ensures optimized allocations meet the same correctness checks as the baseline.",
+        "`python -m cli.aisp tools moe-parallelism -- --scenario memory_budget` runs a single scenario via the tool registry.",
+        "`python -m cli.aisp tools moe-parallelism -- --scenario gpt_gb200` runs a larger cluster scenario.",
+        "`python labs/moe_parallelism/run_lab.py --scenario deepseek_gb200` runs the planner directly (without aisp).",
     ],
     notes=[
-        "`plan.py` centralizes scenario definitions so you only update one file when adding a new MoE topology.",
-        "`benchmarking.py` can emit Markdown tables for documentation by passing `--format markdown`.",
+        "Baseline vs optimized here are *planning* scenarios (different designs), not comparable performance benchmarks.",
+        "`plan.py` centralizes scenario definitions so you only update one file when adding a new topology.",
     ],
 )
 

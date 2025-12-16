@@ -69,6 +69,7 @@ from core.benchmark.models import (
     ThroughputStats,
 )
 from core.harness.validity_checks import (
+    EnvironmentProbe,
     GraphCaptureCheatDetector,
     audit_streams,
     check_rank_execution,
@@ -559,6 +560,16 @@ class BenchmarkConfig:
     
     force_tensor_evaluation: bool = field(default_factory=lambda: _get_default_value("force_tensor_evaluation", True))
     """Force evaluation of lazy tensors by calling sync after operations."""
+
+    enforce_environment_validation: bool = field(
+        default_factory=lambda: _get_default_value("enforce_environment_validation", True)
+    )
+    """Fail-fast when validate_environment() reports errors.
+
+    This should remain enabled for performance benchmarking. Disable only for
+    correctness/unit-test contexts where virtualization or host policy checks
+    would otherwise prevent exercising the harness logic.
+    """
 
     # Legacy timeout field (deprecated, use measurement_timeout_seconds)
     timeout_seconds: int = field(default_factory=lambda: _get_default_value("timeout_seconds", 180))
@@ -1293,7 +1304,8 @@ class BenchmarkHarness:
     def __init__(
         self,
         mode: BenchmarkMode = BenchmarkMode.CUSTOM,
-        config: Optional[BenchmarkConfig] = None
+        config: Optional[BenchmarkConfig] = None,
+        environment_probe: Optional[EnvironmentProbe] = None,
     ):
         self.mode = mode
         self.config = config or BenchmarkConfig()
@@ -1304,6 +1316,7 @@ class BenchmarkHarness:
         )
         self._seed_info = self._setup_reproducibility()  # Store seed info for manifest
         self._thread_executor: Optional[ThreadPoolExecutor] = None
+        self._environment_probe = environment_probe or EnvironmentProbe()
     
     def _setup_reproducibility(self) -> Dict[str, Any]:
         """Setup for reproducible benchmarks.
@@ -3482,12 +3495,15 @@ class BenchmarkHarness:
                 raw_times = measurement[0]
             else:
                 raise RuntimeError("PyTorch Timer returned unexpected measurement format")
+
             times_ms = [t * 1000 for t in raw_times]
-            
-            # If we got fewer iterations than requested, pad with repeats
+
+            # If we got fewer iterations than requested, pad with repeats.
             if len(times_ms) < config.iterations:
                 times_ms = (times_ms * ((config.iterations // len(times_ms)) + 1))[:config.iterations]
-            
+            elif len(times_ms) > config.iterations:
+                times_ms = times_ms[:config.iterations]
+
             return times_ms
         except Exception as e:
             # NO SILENT FALLBACK - PyTorch Timer mode was explicitly requested
@@ -3521,8 +3537,6 @@ class BenchmarkHarness:
         
         # ===== VALIDITY PROTECTIONS (Pre-benchmark) =====
         # These checks address benchmark validity issues.
-        # See AGENTS.md and docs/implementation_status.md for the checklist.
-        
         from core.harness.validity_checks import (
             reset_cuda_memory_pool, capture_gpu_state, gc_disabled,
             clear_compile_cache, force_tensor_evaluation, validate_environment,
@@ -3530,11 +3544,18 @@ class BenchmarkHarness:
         )
         
         # 0. Validate environment and log device enumeration
-        env_valid, env_warnings = validate_environment()
-        if env_warnings:
-            for warning in env_warnings:
-                import warnings as warn_module
-                warn_module.warn(f"ENVIRONMENT WARNING: {warning}", RuntimeWarning)
+        env_result = validate_environment(device=self.device, probe=self._environment_probe)
+        for warning in env_result.warnings:
+            import warnings as warn_module
+            warn_module.warn(f"ENVIRONMENT WARNING: {warning}", RuntimeWarning)
+        if env_result.errors:
+            message = "ENVIRONMENT INVALID: " + " | ".join(env_result.errors)
+            # Enforce environment correctness for chapter/labs benchmarks.
+            enforce_env = bool(getattr(config, "enforce_environment_validation", True))
+            if enforce_env and (_is_chapter_or_labs_benchmark(benchmark_obj) if benchmark_obj else False):
+                raise RuntimeError(message)
+            import warnings as warn_module
+            warn_module.warn(message, RuntimeWarning)
         
         # 1. Reset memory pool to prevent memory reuse gaming
         if getattr(config, 'reset_memory_pool', True) and self.device.type == "cuda":

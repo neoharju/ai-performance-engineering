@@ -4,8 +4,10 @@ These tests validate the verification system works with actual benchmark
 pairs from ch07 and ch11.
 """
 
+import os
 import sys
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -16,6 +18,19 @@ pytestmark = pytest.mark.skipif(
     not torch.cuda.is_available(),
     reason="CUDA required for end-to-end verification tests"
 )
+
+
+@contextmanager
+def _set_env_var(key: str, value: str) -> None:
+    original = os.environ.get(key)
+    os.environ[key] = value
+    try:
+        yield
+    finally:
+        if original is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = original
 
 
 class TestCh11StreamsVerification:
@@ -96,11 +111,7 @@ class TestCh11StreamsVerification:
         config = VerifyConfig(seed=42, force_recache=True)
         result = runner.verify_baseline(baseline, config)
         
-        # Baseline verification may fail if benchmark lacks proper signature
-        # This is expected for benchmarks that haven't been fully migrated
-        if not result.passed:
-            # Skip if benchmark needs migration
-            pytest.skip(f"Benchmark needs verification migration: {result.reason}")
+        assert result.passed, f"Baseline verification failed: {result.reason}"
         
         # Golden output should be cached
         assert result.signature_hash is not None
@@ -175,79 +186,73 @@ class TestCh11ContractCompliance:
 class TestVerificationEnforcement:
     """Test enforcement phase behavior."""
     
-    def test_detect_phase_allows_missing_methods(self, monkeypatch):
+    def test_detect_phase_allows_missing_methods(self):
         """Test that DETECT phase doesn't fail for missing methods."""
         from core.benchmark.verification import get_enforcement_phase, EnforcementPhase
         from core.benchmark.contract import BenchmarkContract
         
-        # Set to DETECT phase
-        monkeypatch.setenv("VERIFY_ENFORCEMENT_PHASE", "detect")
-        
-        phase = get_enforcement_phase()
-        assert phase == EnforcementPhase.DETECT
-        
-        # Create a minimal benchmark without verification methods
-        class MinimalBenchmark:
-            def setup(self): pass
-            def benchmark_fn(self): pass
-            def teardown(self): pass
-        
-        benchmark = MinimalBenchmark()
-        compliant, errors, warnings = BenchmarkContract.check_verification_compliance(benchmark)
-        
-        # In DETECT phase, issues should be warnings, not errors
-        assert compliant is True, "Should be compliant in DETECT phase"
-        assert len(warnings) > 0, "Should have warnings for missing methods"
+        with _set_env_var("VERIFY_ENFORCEMENT_PHASE", "detect"):
+            phase = get_enforcement_phase()
+            assert phase == EnforcementPhase.DETECT
+
+            # Create a minimal benchmark without verification methods
+            class MinimalBenchmark:
+                def setup(self): pass
+                def benchmark_fn(self): pass
+                def teardown(self): pass
+
+            benchmark = MinimalBenchmark()
+            compliant, errors, warnings = BenchmarkContract.check_verification_compliance(benchmark)
+
+            # In DETECT phase, issues should be warnings, not errors
+            assert compliant is True, "Should be compliant in DETECT phase"
+            assert len(warnings) > 0, "Should have warnings for missing methods"
     
-    def test_gate_phase_fails_missing_methods(self, monkeypatch):
+    def test_gate_phase_fails_missing_methods(self):
         """Test that GATE phase fails for missing verification methods."""
         from core.benchmark.verification import get_enforcement_phase, EnforcementPhase
         from core.benchmark.contract import BenchmarkContract
         
-        # Set to GATE phase
-        monkeypatch.setenv("VERIFY_ENFORCEMENT_PHASE", "gate")
-        
-        phase = get_enforcement_phase()
-        assert phase == EnforcementPhase.GATE
-        
-        # Create a minimal benchmark without verification methods
-        class MinimalBenchmark:
-            def setup(self): pass
-            def benchmark_fn(self): pass
-            def teardown(self): pass
-        
-        benchmark = MinimalBenchmark()
-        compliant, errors, warnings = BenchmarkContract.check_verification_compliance(benchmark)
-        
-        # In GATE phase, missing methods should be errors
-        assert compliant is False, "Should NOT be compliant in GATE phase"
-        assert len(errors) > 0, "Should have errors for missing methods"
+        with _set_env_var("VERIFY_ENFORCEMENT_PHASE", "gate"):
+            phase = get_enforcement_phase()
+            assert phase == EnforcementPhase.GATE
+
+            # Create a minimal benchmark without verification methods
+            class MinimalBenchmark:
+                def setup(self): pass
+                def benchmark_fn(self): pass
+                def teardown(self): pass
+
+            benchmark = MinimalBenchmark()
+            compliant, errors, warnings = BenchmarkContract.check_verification_compliance(benchmark)
+
+            # In GATE phase, missing methods should be errors
+            assert compliant is False, "Should NOT be compliant in GATE phase"
+            assert len(errors) > 0, "Should have errors for missing methods"
     
-    def test_compliant_benchmark_passes(self, monkeypatch):
+    def test_compliant_benchmark_passes(self):
         """Test that a compliant benchmark passes in any phase."""
         from core.benchmark.contract import BenchmarkContract
         
-        # Set to GATE phase (strictest)
-        monkeypatch.setenv("VERIFY_ENFORCEMENT_PHASE", "gate")
-        
-        # Create a benchmark with ALL required verification methods (strict mode)
-        class CompliantBenchmark:
-            def setup(self): pass
-            def benchmark_fn(self): pass
-            def teardown(self): pass
-            def get_input_signature(self): return {"shapes": {"x": (10,)}, "dtypes": {"x": "float32"}, "batch_size": 1, "parameter_count": 10, "precision_flags": {}}
-            def validate_result(self): return None
-            def get_verify_output(self):
-                """Required in strict mode - return output tensor(s) for verification."""
-                return {"output": torch.tensor([1.0])}
-            def get_output_tolerance(self):
-                return (1e-3, 1e-3)
-        
-        benchmark = CompliantBenchmark()
-        compliant, errors, warnings = BenchmarkContract.check_verification_compliance(benchmark)
-        
-        assert compliant is True, f"Should be compliant, got errors: {errors}"
-        assert len(errors) == 0, f"Should have no errors: {errors}"
+        with _set_env_var("VERIFY_ENFORCEMENT_PHASE", "gate"):
+            # Create a benchmark with ALL required verification methods (strict mode)
+            class CompliantBenchmark:
+                def setup(self): pass
+                def benchmark_fn(self): pass
+                def teardown(self): pass
+                def get_input_signature(self): return {"shapes": {"x": (10,)}, "dtypes": {"x": "float32"}, "batch_size": 1, "parameter_count": 10, "precision_flags": {}}
+                def validate_result(self): return None
+                def get_verify_output(self):
+                    """Required in strict mode - return output tensor(s) for verification."""
+                    return {"output": torch.tensor([1.0])}
+                def get_output_tolerance(self):
+                    return (1e-3, 1e-3)
+
+            benchmark = CompliantBenchmark()
+            compliant, errors, warnings = BenchmarkContract.check_verification_compliance(benchmark)
+
+            assert compliant is True, f"Should be compliant, got errors: {errors}"
+            assert len(errors) == 0, f"Should have no errors: {errors}"
 
 
 class TestBenchmarkHarnessVerify:
@@ -288,81 +293,77 @@ class TestGatePerf:
             "quarantine_file": tmp_path / "quarantine.json",
         }
     
-    def test_detect_phase_always_allows(self, temp_env, monkeypatch):
+    def test_detect_phase_always_allows(self, temp_env):
         """Test that DETECT phase always allows perf."""
         from core.benchmark.verify_runner import VerifyRunner
         from core.benchmark.quarantine import QuarantineManager
         from core.benchmark.verification import QuarantineReason
         
-        monkeypatch.setenv("VERIFY_ENFORCEMENT_PHASE", "detect")
-        
-        manager = QuarantineManager(temp_env["quarantine_file"])
-        manager.quarantine("test.py", QuarantineReason.OUTPUT_MISMATCH)
-        
-        runner = VerifyRunner(
-            cache_dir=temp_env["cache_dir"],
-            quarantine_manager=manager,
-        )
-        
-        # Even quarantined benchmarks are allowed in DETECT phase
-        allowed, reason = runner.gate_perf("test.py")
-        assert allowed is True
+        with _set_env_var("VERIFY_ENFORCEMENT_PHASE", "detect"):
+            manager = QuarantineManager(temp_env["quarantine_file"])
+            manager.quarantine("test.py", QuarantineReason.OUTPUT_MISMATCH)
+            
+            runner = VerifyRunner(
+                cache_dir=temp_env["cache_dir"],
+                quarantine_manager=manager,
+            )
+            
+            # Even quarantined benchmarks are allowed in DETECT phase
+            allowed, reason = runner.gate_perf("test.py")
+            assert allowed is True
     
-    def test_quarantine_phase_blocks_quarantined(self, temp_env, monkeypatch):
+    def test_quarantine_phase_blocks_quarantined(self, temp_env):
         """Test that QUARANTINE phase blocks quarantined benchmarks."""
         from core.benchmark.verify_runner import VerifyRunner
         from core.benchmark.quarantine import QuarantineManager
         from core.benchmark.verification import QuarantineReason
         
-        monkeypatch.setenv("VERIFY_ENFORCEMENT_PHASE", "quarantine")
-        
-        manager = QuarantineManager(temp_env["quarantine_file"])
-        manager.quarantine("ch11/baseline_streams.py", QuarantineReason.OUTPUT_MISMATCH)
-        
-        runner = VerifyRunner(
-            cache_dir=temp_env["cache_dir"],
-            quarantine_manager=manager,
-        )
-        
-        allowed, reason = runner.gate_perf("ch11/baseline_streams.py")
-        assert allowed is False
-        assert "quarantined" in reason.lower()
+        with _set_env_var("VERIFY_ENFORCEMENT_PHASE", "quarantine"):
+            manager = QuarantineManager(temp_env["quarantine_file"])
+            manager.quarantine("ch11/baseline_streams.py", QuarantineReason.OUTPUT_MISMATCH)
+            
+            runner = VerifyRunner(
+                cache_dir=temp_env["cache_dir"],
+                quarantine_manager=manager,
+            )
+            
+            allowed, reason = runner.gate_perf("ch11/baseline_streams.py")
+            assert allowed is False
+            assert "quarantined" in reason.lower()
     
-    def test_gate_phase_blocks_quarantined(self, temp_env, monkeypatch):
+    def test_gate_phase_blocks_quarantined(self, temp_env):
         """Test that GATE phase blocks quarantined benchmarks."""
         from core.benchmark.verify_runner import VerifyRunner
         from core.benchmark.quarantine import QuarantineManager
         from core.benchmark.verification import QuarantineReason
         
-        monkeypatch.setenv("VERIFY_ENFORCEMENT_PHASE", "gate")
-        
-        manager = QuarantineManager(temp_env["quarantine_file"])
-        manager.quarantine("ch11/baseline_streams.py", QuarantineReason.OUTPUT_MISMATCH)
-        
-        runner = VerifyRunner(
-            cache_dir=temp_env["cache_dir"],
-            quarantine_manager=manager,
-        )
-        
-        allowed, reason = runner.gate_perf("ch11/baseline_streams.py")
-        assert allowed is False
-        assert "GATE" in reason
+        with _set_env_var("VERIFY_ENFORCEMENT_PHASE", "gate"):
+            manager = QuarantineManager(temp_env["quarantine_file"])
+            manager.quarantine("ch11/baseline_streams.py", QuarantineReason.OUTPUT_MISMATCH)
+            
+            runner = VerifyRunner(
+                cache_dir=temp_env["cache_dir"],
+                quarantine_manager=manager,
+            )
+            
+            allowed, reason = runner.gate_perf("ch11/baseline_streams.py")
+            assert allowed is False
+            assert "GATE" in reason
     
-    def test_gate_perf_allows_non_quarantined(self, temp_env, monkeypatch):
+    def test_gate_perf_allows_non_quarantined(self, temp_env):
         """Test that non-quarantined benchmarks are allowed in GATE phase."""
         from core.benchmark.verify_runner import VerifyRunner
         from core.benchmark.quarantine import QuarantineManager
         
-        monkeypatch.setenv("VERIFY_ENFORCEMENT_PHASE", "gate")
-        
-        runner = VerifyRunner(
-            cache_dir=temp_env["cache_dir"],
-            quarantine_manager=QuarantineManager(temp_env["quarantine_file"]),
-        )
-        
-        allowed, reason = runner.gate_perf("ch11/baseline_streams.py")
-        assert allowed is True
-        assert reason is None
+        with _set_env_var("VERIFY_ENFORCEMENT_PHASE", "gate"):
+            runner = VerifyRunner(
+                cache_dir=temp_env["cache_dir"],
+                quarantine_manager=QuarantineManager(temp_env["quarantine_file"]),
+            )
+            
+            allowed, reason = runner.gate_perf("ch11/baseline_streams.py")
+            assert allowed is True
+            assert reason is None
 
 
 if __name__ == "__main__":

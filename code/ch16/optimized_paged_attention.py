@@ -139,8 +139,7 @@ class OptimizedPagedAttentionBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
         with nvtx_range("optimized_paged_attention", enable=enable_nvtx):
             with torch.no_grad():
-                self.output = self._forward_flash().detach().clone()
-        self._synchronize()
+                self.output = self._forward_flash()
         if self._verify_input is None:
             raise RuntimeError("Verification input missing")
         parameter_count = 0
@@ -152,9 +151,11 @@ class OptimizedPagedAttentionBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
     def capture_verification_payload(self) -> None:
         parameter_count = self._payload_parameter_count
+        if self.output is None:
+            raise RuntimeError("benchmark_fn() must run before capture_verification_payload()")
         self._set_verification_payload(
             inputs={"input": self._verify_input},
-            output=self.output,
+            output=self.output.detach().clone(),
             batch_size=self._verify_input.shape[0],
             parameter_count=parameter_count,
             precision_flags={

@@ -112,7 +112,7 @@ class BandwidthSuiteMultiGPU(VerificationPayloadMixin, BaseBenchmark):
 
     def get_config(self) -> BenchmarkConfig:
         return BenchmarkConfig(
-            iterations=1,
+            iterations=5,
             warmup=5,
             measurement_timeout_seconds=30,
         )

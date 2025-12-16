@@ -12,12 +12,17 @@ from typing import Optional
 import torch
 import torch.nn as nn
 
+from core.utils.compile_utils import enable_tf32
+from core.benchmark.verification import ToleranceSpec
 from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata
 
 
 class BaselinePipelineParallelismBenchmark(VerificationPayloadMixin, BaseBenchmark):
     """Baseline: Sequential processing without pipeline parallelism (single GPU)."""
+
+    _PIPELINE_STAGE_COUNT = 4
+    _PIPELINE_STAGE_BOUNDARIES = [(0, 1), (2, 3), (4, 5), (6, 6)]
     
     def __init__(self):
         super().__init__()
@@ -40,10 +45,15 @@ class BaselinePipelineParallelismBenchmark(VerificationPayloadMixin, BaseBenchma
     
     def setup(self) -> None:
         """Setup: Initialize model with all layers on single GPU."""
+        if torch.cuda.is_available():
+            enable_tf32()
         torch.manual_seed(42)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(42)
         # Baseline: Sequential processing on single GPU
         # Pipeline parallelism splits model layers across multiple GPUs
         # This baseline processes all layers sequentially on one GPU
+        dtype = torch.bfloat16
         self.model = nn.Sequential(
             nn.Linear(self.hidden_size, self.hidden_size * 4),
             nn.GELU(),
@@ -52,11 +62,11 @@ class BaselinePipelineParallelismBenchmark(VerificationPayloadMixin, BaseBenchma
             nn.Linear(self.hidden_size * 4, self.hidden_size * 2),
             nn.GELU(),
             nn.Linear(self.hidden_size * 2, self.hidden_size),
-        ).to(self.device).eval()
+        ).to(self.device, dtype=dtype).eval()
         self.parameter_count = sum(p.numel() for p in self.model.parameters())
         
         # Input data for inference
-        self.input_data = torch.randn(self.batch_size, self.hidden_size, device=self.device)
+        self.input_data = torch.randn(self.batch_size, self.hidden_size, device=self.device, dtype=dtype)
         self._synchronize()
     
     def benchmark_fn(self) -> None:
@@ -75,19 +85,30 @@ class BaselinePipelineParallelismBenchmark(VerificationPayloadMixin, BaseBenchma
         self._payload_dtype = dtype
 
     def capture_verification_payload(self) -> None:
-        dtype = self._payload_dtype
+        if self.output is None or self.input_data is None:
+            raise RuntimeError("benchmark_fn() must be called before capture_verification_payload()")
+        dtype = self.output.dtype
+        signature_overrides = {
+            "pipeline_stages": self._PIPELINE_STAGE_COUNT,
+            "pipeline_stage_boundaries": self._PIPELINE_STAGE_BOUNDARIES,
+        }
         self._set_verification_payload(
             inputs={"input": self.input_data},
             output=self.output,
             batch_size=self.batch_size,
             parameter_count=self.parameter_count,
+            output_tolerance=ToleranceSpec(
+                rtol=1e-3,
+                atol=1e-3,
+                justification="torch.compile fusion can change bf16 rounding vs eager execution",
+            ),
             precision_flags={
                 "fp16": dtype == torch.float16,
                 "bf16": dtype == torch.bfloat16,
                 "fp8": False,
                 "tf32": torch.backends.cuda.matmul.allow_tf32,
             },
-            output_tolerance=(0.1, 1.0),
+            signature_overrides=signature_overrides,
         )
     
     def teardown(self) -> None:

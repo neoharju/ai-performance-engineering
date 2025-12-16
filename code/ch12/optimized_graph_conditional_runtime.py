@@ -60,9 +60,14 @@ class OptimizedGraphBenchmark(VerificationPayloadMixin, BaseBenchmark):
     
     def __init__(self):
         super().__init__()
-        self.batch_size = 32
-        self.seq_len = 512
-        self.hidden_dim = 2048
+        # Keep the tensor small enough that kernel launch overhead is visible.
+        # CUDA graph replay amortizes those launches in the steady-state loop.
+        self.batch_size = 16
+        self.seq_len = 128
+        self.hidden_dim = 512
+        # Increase the number of tiny ops so the workload is launch-bound and
+        # CUDA graph replay shows a clear steady-state speedup.
+        self.num_loops = 64
         
         self.data: Optional[torch.Tensor] = None
         self._graph: Optional[CUDAGraph] = None
@@ -79,7 +84,7 @@ class OptimizedGraphBenchmark(VerificationPayloadMixin, BaseBenchmark):
         """Operations to capture in graph - uses in-place ops only."""
         # All in-place operations for stable tensor addresses
         self.data.mul_(0.99)
-        for _ in range(16):  # 16 in-place ops = 16 kernel launches normally
+        for _ in range(self.num_loops):  # num_loops × 2 ops = 2*num_loops launches normally
             self.data.add_(0.001)
             self.data.mul_(1.0001)
         self.data.relu_()
@@ -170,13 +175,14 @@ class OptimizedGraphBenchmark(VerificationPayloadMixin, BaseBenchmark):
         from core.benchmark.metrics import compute_graph_metrics
         
         # Estimate launch overhead (typical kernel launch is 5-10us)
-        baseline_launch_us = 8.0 * 35  # ~35 ops × 8us each
+        num_nodes = (2 * self.num_loops) + 3
+        baseline_launch_us = 8.0 * num_nodes  # ~8us per tiny launch
         graph_launch_us = 15.0  # Single graph launch overhead
         
         metrics = compute_graph_metrics(
             baseline_launch_overhead_us=baseline_launch_us,
             graph_launch_overhead_us=graph_launch_us,
-            num_nodes=35,
+            num_nodes=num_nodes,
             num_iterations=100,
         )
         metrics["graph.uses_cuda_graph"] = 1.0

@@ -354,12 +354,13 @@ def test_environment_validation() -> Tuple[bool, str]:
     """Test: Environment validation detects issues."""
     from core.harness.validity_checks import validate_environment
     
-    is_valid, warnings_list = validate_environment()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    result = validate_environment(device=device)
     
     # Should return some result (valid or warnings)
     # Note: We might have warnings on a multi-GPU system
     
-    return True, f"Environment valid: {is_valid}, warnings: {len(warnings_list)}"
+    return True, f"Environment valid: {result.is_valid}, errors: {len(result.errors)}, warnings: {len(result.warnings)}"
 
 
 def run_all_tests() -> TestResults:
@@ -410,4 +411,3 @@ def run_all_tests() -> TestResults:
 if __name__ == "__main__":
     results = run_all_tests()
     sys.exit(0 if not results.failed else 1)
-

@@ -14,7 +14,6 @@ import torch
 
 from core.harness.benchmark_harness import BenchmarkConfig
 from core.benchmark.cuda_binary_benchmark import BinaryRunResult, CudaBinaryBenchmark
-from ch04.verification_payload_mixin import VerificationPayloadMixin
 
 
 def _default_symmetric_size() -> str:
@@ -22,7 +21,7 @@ def _default_symmetric_size() -> str:
     return os.getenv("NVSHMEM_SYMMETRIC_SIZE", "128M")
 
 
-class NvshmemIbgdaMicrobench(VerificationPayloadMixin, CudaBinaryBenchmark):
+class NvshmemIbgdaMicrobench(CudaBinaryBenchmark):
     """Wrap the nvshmem_ibgda_microbench CUDA binary for the harness."""
 
     def __init__(
