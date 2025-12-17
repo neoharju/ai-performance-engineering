@@ -12,12 +12,12 @@ Teaches how memory layout drives performance: coalesced copies, tiled matmuls, a
 ## Directory Layout
 | Path | Description |
 | --- | --- |
-| `baseline_copy_scalar.cu`, `baseline_copy_uncoalesced.cu`, `baseline_uncoalesced_copy.py`, `optimized_copy_coalesced.cu`, `optimized_copy_vectorized.cu`, `optimized_copy_vectorized_sm121` | Copy kernels highlighting coalescing, vector width, and warp-level efficiency. |
+| `baseline_copy_scalar.cu`, `baseline_copy_uncoalesced.cu`, `baseline_uncoalesced_copy.py`, `optimized_copy_uncoalesced_coalesced.cu`, `optimized_copy_scalar_vectorized.cu`, `optimized_copy_scalar_vectorized_sm121` | Copy kernels highlighting coalescing, vector width, and warp-level efficiency. |
 | `baseline_hbm3e_copy.cu`, `baseline_hbm3e_peak.cu`, `optimized_hbm3e_copy.cu`, `optimized_hbm3e_peak.cu`, `baseline_hbm3ecopy.py`, `optimized_hbm3ecopy.py` | HBM3e peak-bandwidth probes with CUDA and Python harnesses. |
 | `baseline_async_prefetch.cu`, `optimized_async_prefetch.cu`, `baseline_tma_copy.cu`, `baseline_tma_copy.py`, `optimized_async_prefetch.py` | Async/TMA samples that overlap global-memory fetch with computation. |
 | `baseline_matmul.cu`, `baseline_matmul_cuda.py`, `optimized_matmul_cuda.py`, `optimized_matmul_tiled.cu` | Matmul implementations to contrast naive global-memory access with shared-memory tiling and warp-level reuse. |
 | `baseline_lookup.cu`, `baseline_lookup.py`, `optimized_lookup.cu`, `lookup_pytorch.py` | Cache-sensitive lookup workloads demonstrating how to reorganize tables for better locality. |
-| `baseline_transpose.cu`, `baseline_transpose.py`, `optimized_copy_vectorized.cu`, `optimized_transpose.py` | Transpose and gather/scatter experiments that show how to minimize bank conflicts. |
+| `baseline_transpose.cu`, `baseline_transpose.py`, `optimized_copy_scalar_vectorized.cu`, `optimized_transpose.py` | Transpose and gather/scatter experiments that show how to minimize bank conflicts. |
 | `compare.py`, `Makefile`, `expectations_b200.json`, `memory_access_pytorch.py` | Harness entry, build recipes, expectation thresholds, and PyTorch validation scripts. |
 
 ## Running the Benchmarks

@@ -359,7 +359,7 @@ ENTRIES["ch06"] = chapter_entry(
     contents=[
         ("`my_first_kernel.cu`, `simple_kernel.cu`, `baseline_add.cu`, `optimized_add.cu`, `baseline_add.py`, `optimized_add.py`", "Hello-world kernels plus Python wrappers for verifying CUDA build chains and launch parameters."),
         ("`baseline_add_tensors.cu`, `optimized_add_tensors.cu`, `baseline_add_tensors.py`, `optimized_add_tensors.py`", "Tensor-oriented adds with automatic pinned-memory staging and correctness checks."),
-        ("`baseline_attention_ilp.py`, `baseline_gemm_ilp.py`, `optimized_gemm_ilp.py`, `optimized_ilp_low_occupancy_vec4.cu`, `optimized_ilp_extreme_low_occupancy_vec4.cu`", "Instruction-level parallelism studies that manipulate loop unrolling, registers, and vector width."),
+        ("`baseline_attention_ilp.py`, `baseline_gemm_ilp.py`, `optimized_gemm_ilp.py`, `ilp_low_occupancy_vec4_demo.cu`, `ilp_extreme_low_occupancy_vec4_demo.cu`", "Instruction-level parallelism studies that manipulate loop unrolling, registers, and vector width."),
         ("`baseline_bank_conflicts.cu`, `optimized_bank_conflicts.cu`, `baseline_launch_bounds*.{py,cu}`, `optimized_launch_bounds*.{py,cu}`", "Bank conflict and launch-bound exercises to highlight shared memory layouts and CTA sizing."),
         ("`baseline_autotuning.py`, `optimized_autotuning.py`, `memory_pool_tuning.cu`, `stream_ordered_allocator/`", "Autotuning harness plus allocator experiments for controlling fragmentation and stream ordering."),
         ("`unified_memory.cu`, `occupancy_api.cu`, `baseline_quantization_ilp.py`, `optimized_quantization_ilp.py`", "Unified memory demo, occupancy calculator sample, and quantization-focused ILP workloads."),
@@ -390,12 +390,12 @@ ENTRIES["ch07"] = chapter_entry(
         "Quantify transpose and gather/scatter penalties to justify layout changes.",
     ],
     contents=[
-        ("`baseline_copy_scalar.cu`, `baseline_copy_uncoalesced.cu`, `baseline_uncoalesced_copy.py`, `optimized_copy_coalesced.cu`, `optimized_copy_vectorized.cu`, `optimized_copy_vectorized_sm121`", "Copy kernels highlighting coalescing, vector width, and warp-level efficiency."),
+        ("`baseline_copy_scalar.cu`, `baseline_copy_uncoalesced.cu`, `baseline_uncoalesced_copy.py`, `optimized_copy_uncoalesced_coalesced.cu`, `optimized_copy_scalar_vectorized.cu`, `optimized_copy_scalar_vectorized_sm121`", "Copy kernels highlighting coalescing, vector width, and warp-level efficiency."),
         ("`baseline_hbm3e_copy.cu`, `baseline_hbm3e_peak.cu`, `optimized_hbm3e_copy.cu`, `optimized_hbm3e_peak.cu`, `baseline_hbm3ecopy.py`, `optimized_hbm3ecopy.py`", "HBM3e peak-bandwidth probes with CUDA and Python harnesses."),
         ("`baseline_async_prefetch.cu`, `optimized_async_prefetch.cu`, `baseline_tma_copy.cu`, `baseline_tma_copy.py`, `optimized_async_prefetch.py`", "Async/TMA samples that overlap global-memory fetch with computation."),
         ("`baseline_matmul.cu`, `baseline_matmul_cuda.py`, `optimized_matmul_cuda.py`, `optimized_matmul_tiled.cu`", "Matmul implementations to contrast naive global-memory access with shared-memory tiling and warp-level reuse."),
         ("`baseline_lookup.cu`, `baseline_lookup.py`, `optimized_lookup.cu`, `lookup_pytorch.py`", "Cache-sensitive lookup workloads demonstrating how to reorganize tables for better locality."),
-        ("`baseline_transpose.cu`, `baseline_transpose.py`, `optimized_copy_vectorized.cu`, `optimized_transpose.py`", "Transpose and gather/scatter experiments that show how to minimize bank conflicts."),
+        ("`baseline_transpose.cu`, `baseline_transpose.py`, `optimized_copy_scalar_vectorized.cu`, `optimized_transpose.py`", "Transpose and gather/scatter experiments that show how to minimize bank conflicts."),
         ("`compare.py`, `Makefile`, `expectations_b200.json`, `memory_access_pytorch.py`", "Harness entry, build recipes, expectation thresholds, and PyTorch validation scripts."),
     ],
     validation=[
@@ -537,7 +537,7 @@ ENTRIES["ch11"] = chapter_entry(
     ],
     notes=[
         "`warp_specialized_triton.py` provides a Triton analogue for the CUDA concurrency demos so you can compare compiler-generated schedules.",
-        "`optimized_kv_prefetch_pipeline_enhanced.cu` builds on the DSMEM kernels bundled in this directory so you can study the entire pipeline locally.",
+        "`kv_prefetch_pipeline_enhanced_demo.cu` builds on the DSMEM kernels bundled in this directory so you can study the entire pipeline locally.",
     ],
 )
 

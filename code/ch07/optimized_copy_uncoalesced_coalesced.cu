@@ -1,4 +1,4 @@
-// optimized_copy_coalesced.cu -- vectorized streaming copy baseline for Chapter 7.
+// optimized_copy_uncoalesced_coalesced.cu -- vectorized streaming copy for Chapter 7.
 
 #include <cuda_runtime.h>
 

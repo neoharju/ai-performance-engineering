@@ -1,4 +1,4 @@
-// optimized_ilp.cu
+// ilp_demo.cu
 // CUDA 13 + Blackwell: Float8 vectorization with 8-way ILP
 
 #include "optimized_ilp_low_occupancy_vec4_impl.cuh"

@@ -1,4 +1,4 @@
-// optimized_ilp_low_occupancy_vec4.cu
+// ilp_low_occupancy_vec4_demo.cu
 // CUDA 13 + Blackwell: Float8 with low occupancy for higher ILP
 
 #include "optimized_ilp_low_occupancy_vec4_impl.cuh"

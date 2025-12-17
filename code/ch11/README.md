@@ -47,4 +47,4 @@ python -m cli.aisp demos ch11-event-timing
 
 ## Notes
 - `warp_specialized_triton.py` provides a Triton analogue for the CUDA concurrency demos so you can compare compiler-generated schedules.
-- `optimized_kv_prefetch_pipeline_enhanced.cu` builds on the DSMEM kernels bundled in this directory so you can study the entire pipeline locally.
+- `kv_prefetch_pipeline_enhanced_demo.cu` builds on the DSMEM kernels bundled in this directory so you can study the entire pipeline locally.

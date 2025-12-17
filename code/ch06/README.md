@@ -14,7 +14,7 @@ Moves from Python into CUDA C++: write first kernels, reason about occupancy, co
 | --- | --- |
 | `my_first_kernel.cu`, `simple_kernel.cu`, `baseline_add.cu`, `optimized_add.cu`, `baseline_add.py`, `optimized_add.py` | Hello-world kernels plus Python wrappers for verifying CUDA build chains and launch parameters. |
 | `baseline_add_tensors.cu`, `optimized_add_tensors.cu`, `baseline_add_tensors.py`, `optimized_add_tensors.py` | Tensor-oriented adds with automatic pinned-memory staging and correctness checks. |
-| `baseline_attention_ilp.py`, `baseline_gemm_ilp.py`, `optimized_gemm_ilp.py`, `optimized_ilp_low_occupancy_vec4.cu`, `optimized_ilp_extreme_low_occupancy_vec4.cu` | Instruction-level parallelism studies that manipulate loop unrolling, registers, and vector width. |
+| `baseline_attention_ilp.py`, `baseline_gemm_ilp.py`, `optimized_gemm_ilp.py`, `ilp_low_occupancy_vec4_demo.cu`, `ilp_extreme_low_occupancy_vec4_demo.cu` | Instruction-level parallelism studies that manipulate loop unrolling, registers, and vector width. |
 | `baseline_bank_conflicts.cu`, `optimized_bank_conflicts.cu`, `baseline_launch_bounds*.{py,cu}`, `optimized_launch_bounds*.{py,cu}` | Bank conflict and launch-bound exercises to highlight shared memory layouts and CTA sizing. |
 | `baseline_autotuning.py`, `optimized_autotuning.py`, `memory_pool_tuning.cu`, `stream_ordered_allocator/` | Autotuning harness plus allocator experiments for controlling fragmentation and stream ordering. |
 | `unified_memory.cu`, `occupancy_api.cu`, `baseline_quantization_ilp.py`, `optimized_quantization_ilp.py` | Unified memory demo, occupancy calculator sample, and quantization-focused ILP workloads. |

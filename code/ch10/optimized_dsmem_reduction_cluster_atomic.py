@@ -1,4 +1,4 @@
-"""Python harness wrapper for optimized_dsmem_cluster_atomic.cu.
+"""Python harness wrapper for optimized_dsmem_reduction_cluster_atomic.cu.
 
 DSMEM Cluster Atomic: Uses map_shared_rank() + atomicAdd for cross-CTA aggregation.
 
@@ -37,7 +37,7 @@ class OptimizedDSMEMClusterAtomicBenchmark(CudaBinaryBenchmark):
         chapter_dir = Path(__file__).parent
         super().__init__(
             chapter_dir=chapter_dir,
-            binary_name="optimized_dsmem_cluster_atomic",
+            binary_name="optimized_dsmem_reduction_cluster_atomic",
             friendly_name="DSMEM Cluster Reduction (Atomic Aggregation)",
             iterations=3,
             warmup=5,

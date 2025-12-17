@@ -1,7 +1,7 @@
-"""optimized_multiple_all_techniques.py - Alias to the combined techniques benchmark.
+"""optimized_multiple_unoptimized_all_techniques.py - Alias to the combined techniques benchmark.
 
-This file exists for backwards compatibility with older references and
-integration tests. The canonical implementation lives in
+This file keeps the "all techniques" variant discoverable as an optimized_* suffix
+for `baseline_multiple_unoptimized.py`. The canonical implementation lives in
 `optimized_multiple_unoptimized.py`.
 """
 
@@ -28,4 +28,3 @@ if __name__ == "__main__":
     from core.harness.benchmark_harness import benchmark_main
 
     benchmark_main(get_benchmark)
-

@@ -75,16 +75,16 @@ optimized_dsmem_reduction$(SUFFIX): optimized_dsmem_reduction.cu $(COMMON_HEADER
 optimized_dsmem_reduction_verify$(SUFFIX): optimized_dsmem_reduction.cu $(COMMON_HEADERS)
 	$(NVCC) $(NVCC_FLAGS) -rdc=true -DVERIFY=1 $(INCLUDES) -o $@ $<
 
-optimized_dsmem_cluster_atomic$(SUFFIX): optimized_dsmem_cluster_atomic.cu $(COMMON_HEADERS)
+optimized_dsmem_reduction_cluster_atomic$(SUFFIX): optimized_dsmem_reduction_cluster_atomic.cu $(COMMON_HEADERS)
 	$(NVCC) $(NVCC_FLAGS) -rdc=true $(INCLUDES) -o $@ $<
 
-optimized_dsmem_cluster_atomic_verify$(SUFFIX): optimized_dsmem_cluster_atomic.cu $(COMMON_HEADERS)
+optimized_dsmem_reduction_cluster_atomic_verify$(SUFFIX): optimized_dsmem_reduction_cluster_atomic.cu $(COMMON_HEADERS)
 	$(NVCC) $(NVCC_FLAGS) -rdc=true -DVERIFY=1 $(INCLUDES) -o $@ $<
 
-optimized_dsmem_warp_specialized$(SUFFIX): optimized_dsmem_warp_specialized.cu $(COMMON_HEADERS)
+optimized_dsmem_reduction_warp_specialized$(SUFFIX): optimized_dsmem_reduction_warp_specialized.cu $(COMMON_HEADERS)
 	$(NVCC) $(NVCC_FLAGS) -rdc=true $(INCLUDES) -o $@ $<
 
-optimized_dsmem_warp_specialized_verify$(SUFFIX): optimized_dsmem_warp_specialized.cu $(COMMON_HEADERS)
+optimized_dsmem_reduction_warp_specialized_verify$(SUFFIX): optimized_dsmem_reduction_warp_specialized.cu $(COMMON_HEADERS)
 	$(NVCC) $(NVCC_FLAGS) -rdc=true -DVERIFY=1 $(INCLUDES) -o $@ $<
 
 # Special rules for files needing C++20 or -lcuda

@@ -32,7 +32,7 @@ baseline_warp_specialized_two_pipelines_multistream$(SUFFIX): \
 	$(NVCC) $(NVCC_FLAGS) -o $@ baseline_warp_specialized_two_pipelines_driver.cu
 
 optimized_warp_specialized_two_pipelines_multistream$(SUFFIX): \
-	optimized_warp_specialized_two_pipelines_driver.cu optimized_warp_specialized_two_pipelines_multistream.cu
+	optimized_warp_specialized_two_pipelines_driver.cu warp_specialized_two_pipelines_multistream_impl.cuh
 	$(NVCC) $(NVCC_FLAGS) -o $@ $<
 
 # Architecture-specific targets

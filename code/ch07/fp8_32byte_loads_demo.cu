@@ -1,4 +1,4 @@
-// optimized_fp8_32byte_loads.cu - Where 32-byte loads ACTUALLY help
+// fp8_32byte_loads_demo.cu - Where 32-byte loads ACTUALLY help
 //
 // KEY INSIGHT FROM CH7:
 // The book talks about 32-byte SECTORS (cache granularity), not that 
@@ -188,5 +188,4 @@ int main() {
     
     return 0;
 }
-
 

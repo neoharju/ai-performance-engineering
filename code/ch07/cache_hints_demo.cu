@@ -1,4 +1,4 @@
-// optimized_cache_hints.cu - L2 Cache Hints and Cache Policies (Ch7)
+// cache_hints_demo.cu - L2 Cache Hints and Cache Policies (Ch7)
 //
 // WHAT: Cache hints tell the GPU how to handle data in the cache hierarchy:
 //   - CACHE ALL (.ca): Cache at all levels (default)
@@ -332,6 +332,5 @@ int main() {
     benchmark_cache_policies();
     return 0;
 }
-
 
 

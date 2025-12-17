@@ -1,4 +1,4 @@
-"""Python harness wrapper for optimized_dsmem_warp_specialized.cu.
+"""Python harness wrapper for optimized_dsmem_reduction_warp_specialized.cu.
 
 DSMEM Warp Specialized: Combines warp specialization with DSMEM for maximum throughput.
 
@@ -38,7 +38,7 @@ class OptimizedDSMEMWarpSpecializedBenchmark(CudaBinaryBenchmark):
         chapter_dir = Path(__file__).parent
         super().__init__(
             chapter_dir=chapter_dir,
-            binary_name="optimized_dsmem_warp_specialized",
+            binary_name="optimized_dsmem_reduction_warp_specialized",
             friendly_name="DSMEM Reduction (Warp Specialized + Vectorized)",
             iterations=3,
             warmup=5,

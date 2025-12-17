@@ -5,7 +5,7 @@
 #include <stdexcept>
 #include <vector>
 
-#include "optimized_warp_specialized_two_pipelines_multistream.cu"
+#include "warp_specialized_two_pipelines_multistream_impl.cuh"
 
 #define CUDA_CHECK(call)                                                             \
     do {                                                                             \

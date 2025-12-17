@@ -1,4 +1,4 @@
-"""Python harness wrapper for ch07's optimized_copy_coalesced.cu."""
+"""Python harness wrapper for ch07's optimized_copy_uncoalesced_coalesced.cu."""
 
 from __future__ import annotations
 from typing import Optional
@@ -23,7 +23,7 @@ class OptimizedCopyCoalescedBenchmark(CudaBinaryBenchmark):
         repeat = 40
         super().__init__(
             chapter_dir=chapter_dir,
-            binary_name="optimized_copy_coalesced",
+            binary_name="optimized_copy_uncoalesced_coalesced",
             friendly_name="Ch7 Coalesced Copy",
             iterations=3,
             warmup=5,

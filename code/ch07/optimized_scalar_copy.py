@@ -1,4 +1,4 @@
-"""Python harness wrapper for ch07's optimized_copy_vectorized.cu."""
+"""Python harness wrapper for ch07's optimized_copy_scalar_vectorized.cu."""
 
 from __future__ import annotations
 from typing import Optional
@@ -22,7 +22,7 @@ class OptimizedCopyVectorizedBenchmark(CudaBinaryBenchmark):
         num_floats = 64 * 1024 * 1024
         super().__init__(
             chapter_dir=chapter_dir,
-            binary_name="optimized_copy_vectorized",
+            binary_name="optimized_copy_scalar_vectorized",
             friendly_name="Ch7 Vectorized Copy",
             iterations=3,
             warmup=5,

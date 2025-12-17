@@ -26,7 +26,7 @@
 //   32-byte loads help when:
 //   - Processing FP8 data (32 FP8 values per load vs 8)
 //   - Instruction throughput is the bottleneck (complex kernels)
-//   - See optimized_fp8_32byte_loads.cu for FP8 use case
+//   - See fp8_32byte_loads_demo.cu for FP8 use case
 
 #include <cuda_runtime.h>
 #include <cstdio>

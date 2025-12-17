@@ -1,7 +1,7 @@
 #include <cuda_runtime.h>
 #include <cstdio>
 
-#include "optimized_warp_specialized_two_pipelines_multistream.cu"
+#include "warp_specialized_two_pipelines_multistream_impl.cuh"
 
 #if defined(__CUDACC_VER_MAJOR__) && (__CUDACC_VER_MAJOR__ >= 13)
 

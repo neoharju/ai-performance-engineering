@@ -1,4 +1,4 @@
-// optimized_copy_vectorized.cu - Vectorized memory copy (Ch7)
+// optimized_copy_scalar_vectorized.cu - Vectorized memory copy (Ch7)
 //
 // WHAT: float4 vectorized loads - 4 floats (16 bytes) per memory operation.
 // Simple memory copy benchmark comparing to scalar baseline.

@@ -27,10 +27,10 @@ optimized_hbmpeak$(SUFFIX): optimized_hbm_peak$(SUFFIX)
 	@ln -sf $< $@
 
 # Aliases requested by the benchmark harness
-optimized_scalar_copy$(SUFFIX): optimized_copy_vectorized$(SUFFIX)
+optimized_scalar_copy$(SUFFIX): optimized_copy_scalar_vectorized$(SUFFIX)
 	@ln -sf $< $@
 
-optimized_uncoalesced_copy$(SUFFIX): optimized_copy_coalesced$(SUFFIX)
+optimized_uncoalesced_copy$(SUFFIX): optimized_copy_uncoalesced_coalesced$(SUFFIX)
 	@ln -sf $< $@
 
 optimized_transpose$(SUFFIX): optimized_transpose_padded$(SUFFIX)

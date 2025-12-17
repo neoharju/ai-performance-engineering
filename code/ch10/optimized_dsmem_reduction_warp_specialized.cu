@@ -1,4 +1,4 @@
-// optimized_dsmem_warp_specialized.cu - Warp-Specialized DSMEM Reduction (Ch10)
+// optimized_dsmem_reduction_warp_specialized.cu - Warp-Specialized DSMEM Reduction (Ch10)
 //
 // CHAPTER 10 CONTEXT: "Tensor Core Pipelines & Cluster Features"
 // 

@@ -1,4 +1,4 @@
-// optimized_dsmem_cluster_atomic.cu - DSMEM Cluster Atomic Reduction (Ch10)
+// optimized_dsmem_reduction_cluster_atomic.cu - DSMEM Cluster Atomic Reduction (Ch10)
 //
 // CHAPTER 10 CONTEXT: "Tensor Core Pipelines & Cluster Features"
 // 
