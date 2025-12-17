@@ -109,8 +109,17 @@ except ImportError:
 
 
 def reset_gpu_via_script(reason: str) -> None:
-    """Invoke core/scripts/reset_gpu.py with the provided reason."""
-    reset_script = Path(__file__).resolve().parents[1] / "scripts" / "reset_gpu.py"
+    """Invoke the GPU reset helper with the provided reason.
+
+    Override the default script path by setting `AISP_GPU_RESET_SCRIPT`.
+    """
+    env_path = os.environ.get("AISP_GPU_RESET_SCRIPT")
+    if env_path:
+        reset_script = Path(env_path)
+        if not reset_script.is_absolute():
+            reset_script = (repo_root / reset_script).resolve()
+    else:
+        reset_script = Path(__file__).resolve().parents[1] / "scripts" / "reset_gpu.py"
     if not reset_script.exists():
         raise FileNotFoundError(
             f"GPU reset script not found at {reset_script}\n"

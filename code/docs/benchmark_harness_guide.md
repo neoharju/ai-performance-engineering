@@ -393,7 +393,8 @@ The harness ensures **clean GPU state** between benchmarks:
 - Resets CUDA state between benchmarks (prevents cascading failures)
 - Clears GPU cache (`torch.cuda.empty_cache()`)
 - Resets peak memory stats
-- Handles GPU resets via `reset_gpu_state()` for cold start measurements
+- Handles cold-start resets via `reset_gpu_state()` for cache/memory cleanup
+- Orchestrators may invoke `core/scripts/reset_gpu.py` for deeper resets; override the script path with `AISP_GPU_RESET_SCRIPT`
 
 **Cold start mode**:
 ```python

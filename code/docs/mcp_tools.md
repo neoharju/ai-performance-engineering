@@ -12,6 +12,12 @@ python -m mcp.mcp_server --serve
 python -m mcp.mcp_server --list
 ```
 
+## Security / Authentication
+
+The MCP server is **JSON-RPC over stdio** and is intended for **local use** (editor integration, local automation, CI). It does not implement authentication because stdio does not expose a network listener.
+
+If you wrap MCP for network exposure, deploy it behind an authenticated transport (for example: SSH tunnel, a reverse proxy with auth, or mTLS) and treat tool execution as privileged.
+
 ## Common Workflow: Deep-Dive Baseline vs Optimized Compare
 
 One-shot (recommended): `aisp_benchmark_deep_dive_compare`
@@ -39,6 +45,14 @@ All tools return a single MCP `text` content entry containing a JSON envelope wi
 - `arguments` + `arguments_details`
 - `result` + `result_preview` + `result_metadata`
 - `context_summary` + `guidance.next_steps`
+
+## Async Jobs
+
+Some tools can return an async job ticket (`job_id`) that you can poll via `aisp_job_status`. Job records are kept in-memory with bounded retention:
+
+- `AISP_MCP_JOB_TTL_SECONDS` (default: `3600`)
+- `AISP_MCP_JOB_MAX_ENTRIES` (default: `1000`)
+- `AISP_MCP_JOB_CLEANUP_INTERVAL_SECONDS` (default: `30`)
 
 ## `aisp_tools_*` (Non-benchmark Utilities)
 

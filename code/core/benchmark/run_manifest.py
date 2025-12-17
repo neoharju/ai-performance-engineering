@@ -16,6 +16,15 @@ import torch
 from core.profiling.gpu_telemetry import query_gpu_telemetry
 
 try:
+    from core.utils.logger import get_logger
+
+    logger = get_logger(__name__)
+except Exception:  # pragma: no cover - fallback for minimal environments
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+try:
     import triton
     TRITON_VERSION = triton.__version__
 except ImportError:
@@ -278,9 +287,8 @@ def reset_gpu_state() -> None:
         # Force garbage collection
         import gc
         gc.collect()
-    except Exception:
-        # Silently fail if CUDA operations fail
-        pass
+    except Exception as exc:
+        logger.warning("Failed to reset GPU state (non-fatal): %s", exc)
 
 
 class HardwareInfo(BaseModel):
