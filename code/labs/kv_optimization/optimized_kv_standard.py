@@ -98,29 +98,25 @@ class OptimizedKVFP8Compressed(VerificationPayloadMixin, BaseBenchmark):
             dtype=self.cache_dtype
         )
 
-        # Scaling factors (per layer, updated dynamically)
-        self.k_scales = torch.ones(self.num_layers, device=self.device)
-        self.v_scales = torch.ones(self.num_layers, device=self.device)
+        # Per-token scales needed to correctly dequantize older entries.
+        self.k_scales = torch.ones(self.num_layers, self.max_seq_length, device=self.device, dtype=torch.float32)
+        self.v_scales = torch.ones(self.num_layers, self.max_seq_length, device=self.device, dtype=torch.float32)
 
         # Sequence lengths
         self.seq_lengths = torch.zeros(self.batch_size, dtype=torch.long, device=self.device)
 
-        # EMA for scale smoothing
-        self.scale_ema = 0.95
-
         logger.info("Compressed KV cache allocated")
     
-    def _compute_scale(self, x: torch.Tensor) -> float:
+    def _compute_scale(self, x: torch.Tensor) -> torch.Tensor:
         """Compute dynamic scaling factor."""
-        absmax = x.abs().max().item()
+        absmax = x.abs().amax().float()
         
         if self.use_fp4:
             max_val = 6.0  # FP4 range
         else:  # FP8
             max_val = 448.0  # FP8 E4M3 range
         
-        scale = max_val / (absmax + 1e-12)
-        return scale
+        return max_val / (absmax + 1e-12)
     
     def append_kv(
         self,
@@ -131,27 +127,18 @@ class OptimizedKVFP8Compressed(VerificationPayloadMixin, BaseBenchmark):
     ):
         """Append K/V with compression."""
         if batch_indices is None:
-            batch_indices = torch.arange(self.batch_size)
-        
-        # Update scales with EMA
-        k_scale = self._compute_scale(k)
-        v_scale = self._compute_scale(v)
-        
-        self.k_scales[layer_idx] = (
-            self.scale_ema * self.k_scales[layer_idx] +
-            (1 - self.scale_ema) * k_scale
-        )
-        self.v_scales[layer_idx] = (
-            self.scale_ema * self.v_scales[layer_idx] +
-            (1 - self.scale_ema) * v_scale
-        )
+            batch_indices = torch.arange(self.batch_size, device=self.device)
         
         # Quantize and store
-        k_quantized = (k * self.k_scales[layer_idx]).to(self.cache_dtype)
-        v_quantized = (v * self.v_scales[layer_idx]).to(self.cache_dtype)
+        k_scale = self._compute_scale(k)
+        v_scale = self._compute_scale(v)
+        k_quantized = (k * k_scale).to(self.cache_dtype)
+        v_quantized = (v * v_scale).to(self.cache_dtype)
         
         for i, batch_idx in enumerate(batch_indices):
             pos = self.seq_lengths[batch_idx].item()
+            self.k_scales[layer_idx, pos] = k_scale
+            self.v_scales[layer_idx, pos] = v_scale
             self.kv_cache[batch_idx, layer_idx, 0, :, pos] = k_quantized[i]
             self.kv_cache[batch_idx, layer_idx, 1, :, pos] = v_quantized[i]
             self.seq_lengths[batch_idx] += 1
@@ -168,8 +155,10 @@ class OptimizedKVFP8Compressed(VerificationPayloadMixin, BaseBenchmark):
         v_quantized = self.kv_cache[batch_idx, layer_idx, 1, :, :seq_len]
         
         # Dequantize
-        k = k_quantized.to(torch.bfloat16) / self.k_scales[layer_idx]
-        v = v_quantized.to(torch.bfloat16) / self.v_scales[layer_idx]
+        k_scale = self.k_scales[layer_idx, :seq_len].view(1, seq_len, 1)
+        v_scale = self.v_scales[layer_idx, :seq_len].view(1, seq_len, 1)
+        k = (k_quantized.float() / k_scale).to(torch.bfloat16)
+        v = (v_quantized.float() / v_scale).to(torch.bfloat16)
         
         return k, v
     
@@ -212,11 +201,15 @@ class OptimizedKVFP8Compressed(VerificationPayloadMixin, BaseBenchmark):
         }
 
         # Verification output: dequantize the first token of layer 0 so we compare against the BF16 baseline.
-        k, v = self.get_kv(layer_idx=0, batch_idx=0)
-        k0 = k[:, :1, : min(8, k.shape[-1])]
-        v0 = v[:, :1, : min(8, v.shape[-1])]
+        head_window = min(8, self.head_dim)
+        kq0 = self.kv_cache[0, 0, 0, :, 0, :head_window]
+        vq0 = self.kv_cache[0, 0, 1, :, 0, :head_window]
+        k_scale0 = self.k_scales[0, 0]
+        v_scale0 = self.v_scales[0, 0]
+        k0 = (kq0.float() / k_scale0).unsqueeze(1)
+        v0 = (vq0.float() / v_scale0).unsqueeze(1)
         view = torch.stack([k0, v0], dim=0).unsqueeze(0).unsqueeze(0)
-        self.output = view.detach().float().clone()
+        self.output = view.detach().clone()
 
     def capture_verification_payload(self) -> None:
         self._set_verification_payload(

@@ -919,15 +919,20 @@ def is_distributed_benchmark(file_path: Path) -> bool:
             "MIN_GPUS_REQUIRED",
         )
         has_explicit_multi_gpu_guard = any(marker in content for marker in multi_gpu_markers)
+        
+        # Torchrun is a strong indicator of multi-process / multi-GPU execution even if
+        # distributed init is abstracted behind helpers imported from other modules.
+        has_torchrun_launch = "LaunchVia.TORCHRUN" in content or "TorchrunLaunchSpec" in content
 
         # A benchmark is distributed if it has distributed imports AND operations,
         # OR if it explicitly uses NCCL backend, OR if it contains explicit
-        # multi-GPU guard helpers.
+        # multi-GPU guard helpers, OR if it launches via torchrun.
         return (
             (has_dist_import and has_dist_ops)
             or has_nccl
             or (has_world_size and has_rank and has_dist_ops)
             or has_explicit_multi_gpu_guard
+            or has_torchrun_launch
         )
     except Exception:
         return False
