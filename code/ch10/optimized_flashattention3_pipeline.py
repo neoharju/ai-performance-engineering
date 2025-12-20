@@ -331,11 +331,28 @@ class OptimizedFlashAttention3Benchmark(VerificationPayloadMixin, BaseBenchmark)
         dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
         self.model = self.model.to(dtype)
         self.parameter_count = sum(p.numel() for p in self.model.parameters())
-        
-        self.input = torch.randn(
-            self.batch_size, self.seq_len, self.hidden_dim,
-            device=self.device, dtype=dtype
-        )
+
+        # Reset RNG after model construction so baseline/optimized see identical weights and inputs.
+        torch.manual_seed(42)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(42)
+
+        with torch.no_grad():
+            weight_scale = 0.02
+            q_weight = torch.randn(self.hidden_dim, self.hidden_dim, device=self.device, dtype=dtype) * weight_scale
+            k_weight = torch.randn(self.hidden_dim, self.hidden_dim, device=self.device, dtype=dtype) * weight_scale
+            v_weight = torch.randn(self.hidden_dim, self.hidden_dim, device=self.device, dtype=dtype) * weight_scale
+            out_weight = torch.randn(self.hidden_dim, self.hidden_dim, device=self.device, dtype=dtype) * weight_scale
+
+            qkv_weight = torch.cat([q_weight, k_weight, v_weight], dim=0)
+            self.model.qkv.qkv_proj.weight.copy_(qkv_weight)
+            self.model.out_proj.weight.copy_(out_weight)
+
+            self.input = torch.randn(
+                self.batch_size, self.seq_len, self.hidden_dim,
+                device=self.device, dtype=dtype
+            )
+
         self._verify_input = self.input.detach().clone()
         
         # Use model directly without torch.compile to avoid compilation overhead
@@ -373,7 +390,7 @@ class OptimizedFlashAttention3Benchmark(VerificationPayloadMixin, BaseBenchmark)
                 "fp8": False,
                 "tf32": torch.backends.cuda.matmul.allow_tf32,
             },
-            output_tolerance=(1.0, 10.0),
+            output_tolerance=(5e-2, 5e-2),
         )
     
     def teardown(self) -> None:

@@ -16,6 +16,7 @@ import sys
 from pathlib import Path
 import json
 import argparse
+import math
 import subprocess
 import tempfile
 from typing import Dict, List, Any, Optional, Tuple, Set
@@ -394,8 +395,17 @@ def test_benchmark_pair_with_metrics(
         status.optimized_executed = True
         status.optimized_time_ms = optimized_result.timing.mean_ms if optimized_result.timing else None
         
-        if status.baseline_time_ms and status.optimized_time_ms > 0:
-            status.speedup = status.baseline_time_ms / status.optimized_time_ms
+        baseline_ms = status.baseline_time_ms
+        optimized_ms = status.optimized_time_ms
+        if (
+            isinstance(baseline_ms, (int, float))
+            and isinstance(optimized_ms, (int, float))
+            and math.isfinite(float(baseline_ms))
+            and math.isfinite(float(optimized_ms))
+            and float(baseline_ms) > 0
+            and float(optimized_ms) > 0
+        ):
+            status.speedup = float(baseline_ms) / float(optimized_ms)
             status.improves = status.speedup > 1.0
         
         # Profile optimized with nsys
@@ -500,8 +510,17 @@ def test_cuda_pair_with_metrics(
     status.optimized_executed = True
     status.optimized_time_ms = optimized_result.mean_ms
     
-    if status.baseline_time_ms and status.optimized_time_ms > 0:
-        status.speedup = status.baseline_time_ms / status.optimized_time_ms
+    baseline_ms = status.baseline_time_ms
+    optimized_ms = status.optimized_time_ms
+    if (
+        isinstance(baseline_ms, (int, float))
+        and isinstance(optimized_ms, (int, float))
+        and math.isfinite(float(baseline_ms))
+        and math.isfinite(float(optimized_ms))
+        and float(baseline_ms) > 0
+        and float(optimized_ms) > 0
+    ):
+        status.speedup = float(baseline_ms) / float(optimized_ms)
         status.improves = status.speedup > 1.0
     
     # Profile optimized

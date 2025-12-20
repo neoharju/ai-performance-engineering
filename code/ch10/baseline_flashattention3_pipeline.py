@@ -171,11 +171,29 @@ class BaselineFlashAttention3Benchmark(VerificationPayloadMixin, BaseBenchmark):
         # Use BF16 for modern GPU workloads
         dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
         self.model = self.model.to(dtype)
-        
-        self.input = torch.randn(
-            self.batch_size, self.seq_len, self.hidden_dim,
-            device=self.device, dtype=dtype
-        )
+
+        # Reset RNG after model construction so baseline/optimized see identical weights and inputs.
+        torch.manual_seed(42)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(42)
+
+        with torch.no_grad():
+            weight_scale = 0.02
+            q_weight = torch.randn(self.hidden_dim, self.hidden_dim, device=self.device, dtype=dtype) * weight_scale
+            k_weight = torch.randn(self.hidden_dim, self.hidden_dim, device=self.device, dtype=dtype) * weight_scale
+            v_weight = torch.randn(self.hidden_dim, self.hidden_dim, device=self.device, dtype=dtype) * weight_scale
+            out_weight = torch.randn(self.hidden_dim, self.hidden_dim, device=self.device, dtype=dtype) * weight_scale
+
+            self.model.q_proj.weight.copy_(q_weight)
+            self.model.k_proj.weight.copy_(k_weight)
+            self.model.v_proj.weight.copy_(v_weight)
+            self.model.out_proj.weight.copy_(out_weight)
+
+            self.input = torch.randn(
+                self.batch_size, self.seq_len, self.hidden_dim,
+                device=self.device, dtype=dtype
+            )
+
         self._verify_input = self.input.detach().clone()
         
         # Warmup
@@ -209,7 +227,7 @@ class BaselineFlashAttention3Benchmark(VerificationPayloadMixin, BaseBenchmark):
                 "fp8": False,
                 "tf32": torch.backends.cuda.matmul.allow_tf32,
             },
-            output_tolerance=(0.5, 5.0),
+            output_tolerance=(5e-2, 5e-2),
         )
     
     def teardown(self) -> None:

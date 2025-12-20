@@ -266,8 +266,10 @@ def discover_benchmarks(
     
     Args:
         chapter_dir: Path to chapter directory (e.g., Path('ch16'))
-        validate: If True, check that files have get_benchmark() and skip those that don't
-        warn_missing: If True, emit warnings for files missing get_benchmark()
+        validate: Deprecated (kept for API compatibility). Discovery always excludes
+            Python files missing get_benchmark(), because they cannot be loaded by
+            the harness or the verification tooling.
+        warn_missing: If True, emit warnings for files missing get_benchmark().
         
     Returns:
         List of tuples: (baseline_path, [optimized_paths], example_name)
@@ -283,11 +285,9 @@ def discover_benchmarks(
     }
     
     for baseline_file in baseline_files:
-        # Validate baseline file if requested
-        if validate or warn_missing:
-            baseline_valid = validate_benchmark_file(baseline_file, warn=warn_missing)
-            if validate and not baseline_valid:
-                continue  # Skip invalid baseline files
+        # Always exclude Python files missing get_benchmark(); warnings are optional.
+        if not validate_benchmark_file(baseline_file, warn=warn_missing):
+            continue
         
         # Extract example name using the entire suffix after "baseline_"
         # This preserves variants like "moe_dense" instead of collapsing everything to "moe".
@@ -299,11 +299,9 @@ def discover_benchmarks(
         # Pattern 1: optimized_{name}_*.{ext} (e.g., optimized_moe_sparse.py)
         pattern1 = chapter_dir / f"optimized_{example_name}_*{ext}"
         for opt_path in pattern1.parent.glob(pattern1.name):
-            # Validate optimized file if requested
-            if validate or warn_missing:
-                opt_valid = validate_benchmark_file(opt_path, warn=warn_missing)
-                if validate and not opt_valid:
-                    continue  # Skip invalid optimized files
+            # Always exclude Python files missing get_benchmark(); warnings are optional.
+            if not validate_benchmark_file(opt_path, warn=warn_missing):
+                continue
             
             suffix = opt_path.stem.replace(f"optimized_{example_name}_", "", 1)
             candidate_name = f"{example_name}_{suffix}"
@@ -315,14 +313,7 @@ def discover_benchmarks(
         # Pattern 2: optimized_{name}.{ext} (e.g., optimized_moe.py / optimized_moe.cu)
         pattern2 = chapter_dir / f"optimized_{example_name}{ext}"
         if pattern2.exists():
-            # Validate optimized file if requested
-            if validate or warn_missing:
-                opt_valid = validate_benchmark_file(pattern2, warn=warn_missing)
-                if validate and not opt_valid:
-                    pass  # Don't add invalid file
-                else:
-                    optimized_files.append(pattern2)
-            else:
+            if validate_benchmark_file(pattern2, warn=warn_missing):
                 optimized_files.append(pattern2)
         
         if optimized_files:

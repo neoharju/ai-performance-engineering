@@ -25,6 +25,9 @@ from ch01.workload_config import WORKLOAD
 class OptimizedPerformanceFusionBenchmark(VerificationPayloadMixin, BaseBenchmark):
     """Batch fusion-only optimization: fuse microbatches while keeping FP32 math."""
 
+    signature_equivalence_group = "ch01_performance_precision"
+    signature_equivalence_ignore_fields = ("precision_flags",)
+
     def __init__(self):
         super().__init__()
         self.workload = WORKLOAD
@@ -100,6 +103,7 @@ class OptimizedPerformanceFusionBenchmark(VerificationPayloadMixin, BaseBenchmar
     def capture_verification_payload(self) -> None:
         if self.model is None or self._verify_input is None:
             raise RuntimeError("setup() and benchmark_fn() must run before capture_verification_payload()")
+        model_dtype = next(self.model.parameters()).dtype
         with torch.no_grad():
             self._verify_output = self.model(self._verify_input).detach().clone()
         self._set_verification_payload(
@@ -107,6 +111,12 @@ class OptimizedPerformanceFusionBenchmark(VerificationPayloadMixin, BaseBenchmar
             output=self._verify_output,
             batch_size=self._verify_input.shape[0],
             parameter_count=int(self.parameter_count),
+            precision_flags={
+                "fp16": model_dtype == torch.float16,
+                "bf16": model_dtype == torch.bfloat16,
+                "fp8": False,
+                "tf32": torch.cuda.is_available() and bool(torch.backends.cuda.matmul.allow_tf32),
+            },
             output_tolerance=(0.5, 0.5),
         )
 
@@ -152,4 +162,3 @@ if __name__ == "__main__":
     from core.harness.benchmark_harness import benchmark_main
 
     benchmark_main(get_benchmark)
-

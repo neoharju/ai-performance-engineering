@@ -78,7 +78,7 @@ class BaselineMatmulTCGen05Benchmark(VerificationPayloadMixin, BaseBenchmark):
                 "fp8": False,
                 "tf32": False,
             },
-            output_tolerance=(0.5, 5.0),
+            output_tolerance=(5e-2, 5e-2),
         )
 
     def teardown(self) -> None:

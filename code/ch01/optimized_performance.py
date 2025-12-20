@@ -27,6 +27,9 @@ from ch01.workload_config import WORKLOAD
 
 class OptimizedPerformanceBatchBenchmark(VerificationPayloadMixin, BaseBenchmark):
     """Benchmark implementation with larger batch size optimization."""
+
+    signature_equivalence_group = "ch01_performance_precision"
+    signature_equivalence_ignore_fields = ("precision_flags",)
     
     def __init__(self, batch_size: int = 32):
         super().__init__()
@@ -135,6 +138,12 @@ class OptimizedPerformanceBatchBenchmark(VerificationPayloadMixin, BaseBenchmark
             output=self._verify_output,
             batch_size=self._verify_input.shape[0],
             parameter_count=int(self.parameter_count),
+            precision_flags={
+                "fp16": bool(model_params) and model_params[0].dtype == torch.float16,
+                "bf16": bool(model_params) and model_params[0].dtype == torch.bfloat16,
+                "fp8": False,
+                "tf32": torch.cuda.is_available() and bool(torch.backends.cuda.matmul.allow_tf32),
+            },
             output_tolerance=(0.5, 0.5),
         )
 

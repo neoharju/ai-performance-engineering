@@ -10,6 +10,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import math
 import re
 import subprocess
 import tempfile
@@ -764,7 +765,17 @@ def generate_flamegraph_comparison(profiles_dir: Path) -> Optional[Dict[str, Any
         optimized_total_ns = sum(s.get('total_time_ns', 0) for s in optimized_api.values())
         
         # Calculate speedup
-        speedup = baseline_total_ns / optimized_total_ns if optimized_total_ns > 0 else 1.0
+        baseline_total_ns_f = float(baseline_total_ns)
+        optimized_total_ns_f = float(optimized_total_ns)
+        if (
+            not math.isfinite(baseline_total_ns_f)
+            or not math.isfinite(optimized_total_ns_f)
+            or baseline_total_ns_f <= 0
+            or optimized_total_ns_f <= 0
+        ):
+            speedup = 1.0
+        else:
+            speedup = baseline_total_ns_f / optimized_total_ns_f
         
         # Build API breakdown for flame bars
         def build_api_bars(api_stats: Dict) -> List[Dict]:
