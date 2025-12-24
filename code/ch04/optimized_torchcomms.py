@@ -1,24 +1,17 @@
 """optimized_torchcomms.py - Modern torchcomms API patterns (PyTorch 2.10+).
 
-This demonstrates the modern torchcomms API announced November 2025,
-which provides async-first communication primitives with better overlap
-and integration with FSDP2/DTensor.
-
-Key improvements over legacy torch.distributed:
-1. Async-first design with Work handles for overlap
-2. Functional API (no side effects on input tensors)  
-3. Automatic overlap with computation
-4. Better integration with torch.compile
-5. Simplified topology-aware collectives
-
-REQUIRES: Multi-GPU system (2+ GPUs) - skips on single GPU.
+Demonstrates async-first functional collectives with compute/communication overlap.
+This benchmark is launched via torchrun and requires >=2 GPUs.
 """
 
 from __future__ import annotations
 
+import argparse
 import os
 import sys
+import time
 from pathlib import Path
+from typing import Optional
 
 repo_root = Path(__file__).parent.parent
 if str(repo_root) not in sys.path:
@@ -27,305 +20,170 @@ if str(repo_root) not in sys.path:
 import torch
 import torch.nn as nn
 import torch.distributed as dist
-from typing import Optional, List
 
+from core.benchmark.verification import PrecisionFlags, simple_signature
 from core.harness.benchmark_harness import (
     BaseBenchmark,
     BenchmarkConfig,
-    BenchmarkHarness,
-    BenchmarkMode,
-    WorkloadMetadata,
+    LaunchVia,
+    TorchrunLaunchSpec,
 )
-from ch04.verification_payload_mixin import VerificationPayloadMixin
+from core.utils.logger import get_logger
 
+logger = get_logger(__name__)
 
-def _init_distributed_if_needed() -> bool:
-    """Initialize distributed if not already done."""
-    if dist.is_initialized():
-        return True
-    if "RANK" not in os.environ:
-        return False
-    try:
-        dist.init_process_group(backend="nccl")
-        return True
-    except Exception:
-        return False
+_DEFAULT_BATCH = 256
+_DEFAULT_HIDDEN = 4096
 
-
-# Check for torchcomms availability (PyTorch 2.10+)
 try:
-    # torchcomms is the new functional communication API
-    # It's designed for async-first patterns and torch.compile compatibility
-    from torch.distributed._functional_collectives import (
-        all_reduce as functional_all_reduce,
-        reduce_scatter_tensor as functional_reduce_scatter,
-        all_gather_into_tensor as functional_all_gather,
-    )
-    TORCHCOMMS_AVAILABLE = True
-except ImportError:
-    TORCHCOMMS_AVAILABLE = False
+    from torch.distributed._functional_collectives import all_reduce as functional_all_reduce
+except ImportError as exc:  # pragma: no cover - torchcomms required for this benchmark
     functional_all_reduce = None
-    functional_reduce_scatter = None
-    functional_all_gather = None
+    _TORCHCOMMS_IMPORT_ERROR = exc
+else:
+    _TORCHCOMMS_IMPORT_ERROR = None
 
 
-class OptimizedTorchcommsBenchmark(VerificationPayloadMixin, BaseBenchmark):
-    """Optimized: Modern torchcomms async-first patterns.
-    
-    Demonstrates modern PyTorch distributed communication:
-    
-    1. **Functional Collectives**: Pure functions that return new tensors
-       instead of modifying inputs in-place. Better for torch.compile.
-    
-    2. **Async Overlap**: Kick off communication early, overlap with compute,
-       wait only when data is needed.
-    
-    3. **Reduce-Scatter + All-Gather Pattern**: For FSDP2-style sharding,
-       more efficient than full all-reduce for large tensors.
-    
-    4. **torch.compile Integration**: Functional API works seamlessly
-       with Inductor optimizations.
-    
-    Expected speedup: 1.3-2x over legacy patterns due to overlap.
-    """
-    
-    def __init__(self):
+def _init_distributed() -> tuple[int, int, int]:
+    if "RANK" not in os.environ or "WORLD_SIZE" not in os.environ:
+        raise RuntimeError("optimized_torchcomms requires torchrun (RANK/WORLD_SIZE missing).")
+    if not dist.is_initialized():
+        dist.init_process_group(backend="nccl")
+    rank = dist.get_rank()
+    world_size = dist.get_world_size()
+    local_rank = int(os.environ.get("LOCAL_RANK", rank))
+    torch.cuda.set_device(local_rank)
+    return rank, world_size, local_rank
+
+
+def _require_torchcomms() -> None:
+    if functional_all_reduce is None:
+        raise RuntimeError("torchcomms functional collectives are required for optimized_torchcomms")
+
+
+def _build_block(hidden: int, device: torch.device) -> nn.Sequential:
+    return nn.Sequential(
+        nn.Linear(hidden, hidden * 4),
+        nn.GELU(),
+        nn.Linear(hidden * 4, hidden),
+    ).to(device).eval()
+
+
+def _run_worker(iters: int, warmup: int, batch: int, hidden: int) -> None:
+    _require_torchcomms()
+    rank, world_size, local_rank = _init_distributed()
+    if world_size < 2:
+        raise RuntimeError("optimized_torchcomms requires >=2 GPUs.")
+
+    torch.manual_seed(42)
+    torch.cuda.manual_seed_all(42)
+
+    device = torch.device(f"cuda:{local_rank}")
+    comm_block = _build_block(hidden, device)
+    aux_block = _build_block(hidden, device)
+    inputs = torch.randn(batch, hidden, device=device)
+    comm_stream = torch.cuda.Stream()
+
+    def _step() -> None:
+        with torch.no_grad():
+            comm_out = comm_block(inputs)
+            comm_stream.wait_stream(torch.cuda.current_stream())
+            with torch.cuda.stream(comm_stream):
+                reduced = functional_all_reduce(
+                    comm_out,
+                    reduceOp="avg",
+                    group=dist.group.WORLD,
+                )
+            aux_out = aux_block(inputs)
+            torch.cuda.current_stream().wait_stream(comm_stream)
+            _ = reduced + aux_out
+
+    for _ in range(max(warmup, 0)):
+        _step()
+    torch.cuda.synchronize(device)
+
+    start = time.perf_counter()
+    for _ in range(max(iters, 1)):
+        _step()
+    torch.cuda.synchronize(device)
+    elapsed = time.perf_counter() - start
+
+    tokens_per_iter = batch * hidden
+    tokens_per_s = tokens_per_iter * (max(iters, 1) / max(elapsed, 1e-9))
+
+    if rank == 0:
+        print(f"rank0 tokens/s: {tokens_per_s:.2f} tokens/s")
+        print(f"rank0 time_per_iter_ms: {(elapsed / max(iters,1)) * 1000.0:.3f}")
+
+    dist.barrier()
+    dist.destroy_process_group()
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Optimized torchcomms benchmark")
+    parser.add_argument("--iters", type=int, default=50)
+    parser.add_argument("--warmup", type=int, default=5)
+    parser.add_argument("--batch", type=int, default=_DEFAULT_BATCH)
+    parser.add_argument("--hidden", type=int, default=_DEFAULT_HIDDEN)
+    args = parser.parse_args()
+    _run_worker(args.iters, args.warmup, args.batch, args.hidden)
+
+
+class OptimizedTorchcommsBenchmark(BaseBenchmark):
+    """Harness entry that launches this module via torchrun."""
+
+    verification_not_applicable_reason = "torchrun benchmarks execute in external processes"
+    skip_input_check = True
+    skip_output_check = True
+
+    def __init__(self) -> None:
         super().__init__()
-        self.model = None
-        self.input = None
-        self.output = None
-        self.batch = 256
-        self.hidden = 4096
-        self.is_distributed = False
-        self.world_size = 1
-        tokens = self.batch * self.hidden
-        self._workload = WorkloadMetadata(
-            requests_per_iteration=float(self.batch),
-            tokens_per_iteration=float(tokens),
-        )
-        self._bytes_transferred = 0
-        self._overlap_efficiency = 0.0
-        self.register_workload_metadata(
-            requests_per_iteration=float(self.batch),
-            tokens_per_iteration=float(tokens),
-        )
-    
-    def setup(self) -> None:
-        """Setup: Initialize model with async-ready communication."""
-        torch.manual_seed(42)
-        torch.cuda.manual_seed_all(42)
-        
-        self.is_distributed = _init_distributed_if_needed()
-        if self.is_distributed:
-            self.world_size = dist.get_world_size()
-        
-        # Two-layer model to demonstrate overlap
-        # First layer output can be communicated while second computes
-        self.layer1 = nn.Sequential(
-            nn.Linear(self.hidden, self.hidden * 4),
-            nn.GELU(),
-        ).to(self.device).eval()
-        
-        self.layer2 = nn.Sequential(
-            nn.Linear(self.hidden * 4, self.hidden),
-        ).to(self.device).eval()
-        
-        self.model = nn.Sequential(self.layer1, self.layer2)
-        
-        self.input = torch.randn(self.batch, self.hidden, device=self.device)
-        self.output = torch.zeros_like(self.input)
-        
-        # Calculate bytes - reduce-scatter + all-gather is same as all-reduce
-        self._bytes_transferred = 2 * self.input.numel() * self.input.element_size()
-        
-        torch.cuda.synchronize(self.device)
-    
-    def _async_all_reduce(self, tensor: torch.Tensor) -> torch.Tensor:
-        """Perform async all-reduce using functional collectives.
-        
-        Returns a new tensor (functional style) instead of modifying in-place.
-        This is critical for torch.compile compatibility.
-        """
-        if self.is_distributed and TORCHCOMMS_AVAILABLE:
-            # Functional all-reduce returns a new tensor
-            # The operation is automatically overlapped with compute
-            return functional_all_reduce(
-                tensor, 
-                reduceOp="avg",
-                group=dist.group.WORLD,
-            )
-        else:
-            # Simulate with local operation
-            return tensor.clone()
-    
-    def _reduce_scatter_all_gather(self, tensor: torch.Tensor) -> torch.Tensor:
-        """FSDP2-style reduce-scatter followed by all-gather.
-        
-        More memory-efficient than all-reduce for very large tensors:
-        1. Reduce-scatter: Each rank gets a shard of the reduced tensor
-        2. All-gather: Collect all shards back to full tensor
-        
-        With torchcomms, these can be pipelined for better overlap.
-        """
-        if self.is_distributed and TORCHCOMMS_AVAILABLE:
-            # Reduce-scatter: get local shard
-            shard_size = tensor.numel() // self.world_size
-            local_shard = functional_reduce_scatter(
-                tensor,
-                scatter_dim=0,
-                reduceOp="avg", 
-                group=dist.group.WORLD,
-            )
-            
-            # All-gather: reconstruct full tensor
-            gathered = functional_all_gather(
-                local_shard,
-                gather_dim=0,
-                group=dist.group.WORLD,
-            )
-            return gathered
-        else:
-            # Simulate locally
-            return tensor.clone()
-    
+        tokens = float(_DEFAULT_BATCH * _DEFAULT_HIDDEN)
+        self.register_workload_metadata(requests_per_iteration=float(_DEFAULT_BATCH), tokens_per_iteration=tokens)
+
     def benchmark_fn(self) -> None:
-        """Benchmark: Modern torchcomms API with equivalent semantics.
+        raise RuntimeError("SKIPPED: optimized_torchcomms requires torchrun")
 
-        Baseline and optimized must produce identical outputs. The optimization
-        demonstrated here is the *communication API style* (functional vs
-        legacy), not a change in algorithm.
-        """
-        with self._nvtx_range("optimized_torchcomms"):
-            with torch.no_grad():
-                output = self.model(self.input)
-
-                if self.is_distributed:
-                    if TORCHCOMMS_AVAILABLE:
-                        output = functional_all_reduce(
-                            output,
-                            reduceOp="avg",
-                            group=dist.group.WORLD,
-                        )
-                    else:
-                        dist.all_reduce(output, op=dist.ReduceOp.AVG)
-                else:
-                    chunks = torch.chunk(output, chunks=4, dim=0)
-                    reduced = sum(chunks) / 4.0
-                    output = reduced.expand_as(output[: len(output) // 4]).repeat(4, 1)
-
-                self.output = output
-        
-        self._synchronize()
-
-    def capture_verification_payload(self) -> None:
-        if self.model is None or self.input is None or self.output is None:
-            raise RuntimeError("setup() and benchmark_fn() must be called before capture_verification_payload()")
-        param_count = sum(p.numel() for p in self.model.parameters()) if self.model is not None else 0
-        self._set_verification_payload(
-            inputs={"input": self.input},
-            output=self.output,
-            batch_size=int(self.batch),
-            parameter_count=param_count,
-            precision_flags={
-                "fp16": False,
-                "bf16": False,
-                "fp8": False,
-                "tf32": torch.backends.cuda.matmul.allow_tf32 if torch.cuda.is_available() else False,
-            },
-            output_tolerance=(1e-5, 1e-5),
-        )
-    
-    def teardown(self) -> None:
-        """Teardown: Clean up resources."""
-        self.model = None
-        self.layer1 = None
-        self.layer2 = None
-        self.input = None
-        self.output = None
-        torch.cuda.empty_cache()
-    
     def get_config(self) -> BenchmarkConfig:
-        """Return benchmark configuration."""
         return BenchmarkConfig(
+            launch_via=LaunchVia.TORCHRUN,
+            nproc_per_node=2,
             iterations=50,
             warmup=5,
+            multi_gpu_required=True,
+            measurement_timeout_seconds=900,
         )
-    
-    def get_workload_metadata(self) -> Optional[WorkloadMetadata]:
-        return self._workload
-    
-    def get_custom_metrics(self) -> Optional[dict]:
-        """Return domain-specific metrics for distributed communication."""
-        from core.benchmark.metrics import compute_memory_transfer_metrics
-        
-        base_metrics = compute_memory_transfer_metrics(
-            bytes_transferred=self._bytes_transferred,
-            elapsed_ms=getattr(self, '_last_elapsed_ms', 1.0),
-            transfer_type="nvlink",
+
+    def get_torchrun_spec(self, config: Optional[BenchmarkConfig] = None) -> TorchrunLaunchSpec:
+        return TorchrunLaunchSpec(
+            script_path=Path(__file__).resolve(),
+            script_args=[],
+            multi_gpu_required=True,
+            name="optimized_torchcomms",
+            config_arg_map={
+                "iterations": "--iters",
+                "warmup": "--warmup",
+            },
         )
-        
-        # Add torchcomms-specific metrics
-        base_metrics.update({
-            "torchcomms_available": TORCHCOMMS_AVAILABLE,
-            "is_distributed": self.is_distributed,
-            "world_size": self.world_size,
-            "api_style": "functional" if TORCHCOMMS_AVAILABLE else "legacy",
-            "overlap_capable": True,
-        })
-        
-        return base_metrics
-
-    def validate_result(self) -> Optional[str]:
-        """Validate benchmark result."""
-        if self.model is None:
-            return "Model not initialized"
-        if self.input is None:
-            return "Input not initialized"
-        if self.output is None:
-            return "Output not computed"
-        return None
-
-    def get_verify_output(self) -> torch.Tensor:
-        """Return output tensor for verification comparison."""
-        return super().get_verify_output()
 
     def get_input_signature(self) -> dict:
-        """Return input signature for verification."""
-        return super().get_input_signature()
+        signature = simple_signature(
+            batch_size=_DEFAULT_BATCH,
+            dtype="float32",
+            hidden_size=_DEFAULT_HIDDEN,
+            precision_flags=PrecisionFlags(tf32=False),
+        )
+        signature.world_size = 2
+        signature.collective_type = "all_reduce"
+        return signature
 
     def get_output_tolerance(self) -> tuple:
-        """Return tolerance for numerical comparison."""
         return (1e-5, 1e-5)
 
 
 def get_benchmark() -> BaseBenchmark:
-    """Factory function for harness discovery."""
-    gpu_count = torch.cuda.device_count() if torch.cuda.is_available() else 0
-    if gpu_count < 2:
-        class _SkipBenchmark(VerificationPayloadMixin, BaseBenchmark):
-            def __init__(self) -> None:
-                super().__init__()
-                self.register_workload_metadata(requests_per_iteration=1.0)
-            def get_config(self) -> BenchmarkConfig:
-                return BenchmarkConfig(iterations=1, warmup=5)
-            def benchmark_fn(self) -> None:
-                raise RuntimeError(
-                    f"SKIPPED: torchcomms benchmark requires 2+ GPUs (found {gpu_count})"
-                )
-            def get_verify_output(self) -> torch.Tensor:
-                raise RuntimeError(
-                    f"SKIPPED: torchcomms benchmark requires 2+ GPUs (found {gpu_count})"
-                )
-            def get_input_signature(self) -> dict:
-                raise RuntimeError(
-                    f"SKIPPED: torchcomms benchmark requires 2+ GPUs (found {gpu_count})"
-                )
-            def get_output_tolerance(self) -> tuple:
-                return (0.1, 1.0)
-        return _SkipBenchmark()
     return OptimizedTorchcommsBenchmark()
 
 
 if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)
+    main()

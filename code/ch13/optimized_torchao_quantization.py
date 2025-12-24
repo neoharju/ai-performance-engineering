@@ -31,7 +31,7 @@ class OptimizedTorchAOQuantizationBenchmark(VerificationPayloadMixin, BaseBenchm
         self.model = None
         self.compiled_model = None
         self.data = None
-        self.batch_size = 4096
+        self.batch_size = 8192
         self.in_features = 4096
         self.hidden_features = 4096
         self.out_features = 4096
@@ -116,7 +116,7 @@ class OptimizedTorchAOQuantizationBenchmark(VerificationPayloadMixin, BaseBenchm
 
     def get_config(self) -> BenchmarkConfig:
         return BenchmarkConfig(
-            iterations=50,
+            iterations=20,
             warmup=5,
         )
 

@@ -46,7 +46,7 @@ class OptimizedAttentionFlexBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.model = None
         self.inputs = None
         self.batch_size = 2
-        self.seq_len = 512
+        self.seq_len = 2048
         self.hidden_dim = 1024
         tokens = self.batch_size * self.seq_len
         self._workload = WorkloadMetadata(
@@ -101,7 +101,7 @@ class OptimizedAttentionFlexBenchmark(VerificationPayloadMixin, BaseBenchmark):
     
     def get_config(self) -> BenchmarkConfig:
         return BenchmarkConfig(
-            iterations=50,
+            iterations=20,
             warmup=10,
             enable_memory_tracking=False,
             enable_profiling=False,

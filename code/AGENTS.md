@@ -7,11 +7,14 @@
 - DO NOT run destructive git commands in this repo (including `git restore`, `git checkout`, `git reset --hard`, `git revert`, or mass file deletions) unless I explicitly ask.
 - NEVER restore/revert/checkout any file to `HEAD` or any commit. Always keep files as-is and include changes (even if unexpected).
 - DO NOT delete any files, including untracked files or locally modified files, unless I explicitly ask.
-- If you notice unexpected local file modifications, always call them out, keep them as-is, and include them in the changes.
+- NEVER delete anything (tracked or untracked, modified or not) unless I explicitly ask.
+- If you notice unexpected local file modifications, always call them out and ask for guidance; default to keeping them as-is and including them in the changes unless I explicitly say otherwise.
+- The Amazon book link in `README.md` is expected to fail automated link checks due to bot protection; treat it as an allowlisted exception.
 
 ## Benchmark Stability (CRITICAL)
 - ALWAYS lock GPU clocks before any benchmark/profiling run; focus on relative performance rather than absolute numbers.
 - Fix as many variables as possible (persistence mode, power limits, thermal state) and keep them stable across baseline/optimized runs.
+- Use the repo’s clock-locking mechanism (`lock_gpu_clocks` in the harness); do not manually invoke `nvidia-smi` to lock clocks.
 
 ## Test Realism (CRITICAL)
 - Tests MUST NOT use `precheck_only`, `dry_run`, `estimate_only`, or any other short-circuit/preview mode.

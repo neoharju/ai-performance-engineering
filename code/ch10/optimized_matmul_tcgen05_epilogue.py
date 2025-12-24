@@ -26,8 +26,8 @@ class OptimizedMatmulTCGen05EpilogueBenchmark(VerificationPayloadMixin, BaseBenc
         self.module = None
         self.device = torch.device("cuda")
         # Match baseline for fair comparison.
-        self.M = 4096
-        self.N = 4096
+        self.M = 3072
+        self.N = 3072
         self.K = 64
         self.A: Optional[torch.Tensor] = None
         self.B: Optional[torch.Tensor] = None

@@ -1,7 +1,7 @@
 // tma_multicast_cluster.cu - TMA Multicast for CTA Clusters (Ch10)
 //
 // This benchmark demonstrates cluster multicast for a tiled FP32 GEMM:
-// - Blocks are launched in 4x1 clusters along M (four CTAs share the same B tile).
+// - Blocks are launched in 16x1 clusters along M (sixteen CTAs share the same B tile).
 // - Cluster rank 0 issues a single TMA bulk tensor load for the B tile and
 //   multicasts it to all CTAs in the cluster.
 // - Each CTA loads its own A tile and computes its C tile.
@@ -44,8 +44,8 @@ constexpr int TILE_N = 128;
 constexpr int TILE_K = 128;
 constexpr int BLOCK_SIZE = 256;
 
-// Cluster configuration: 8x1 cluster along M (shares B tiles).
-constexpr int CLUSTER_M = 8;
+// Cluster configuration: 16x1 cluster along M (shares B tiles).
+constexpr int CLUSTER_M = 16;
 constexpr int CLUSTER_N = 1;
 
 //============================================================================

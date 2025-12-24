@@ -34,6 +34,7 @@ class OptimizedPerformanceFusionBenchmark(VerificationPayloadMixin, BaseBenchmar
         self.batch_size = self.workload.microbatch_size
         self.num_microbatches = self.workload.performance_microbatches
         self.fusion = 8
+        self.hidden_dim = self.workload.performance_hidden_dim
 
         self.model = None
         self.microbatches = None
@@ -60,14 +61,14 @@ class OptimizedPerformanceFusionBenchmark(VerificationPayloadMixin, BaseBenchmar
             torch.backends.cudnn.allow_tf32 = False
 
         self.model = torch.nn.Sequential(
-            torch.nn.Linear(2048, 2048),
+            torch.nn.Linear(self.hidden_dim, self.hidden_dim),
             torch.nn.ReLU(),
-            torch.nn.Linear(2048, 10),
+            torch.nn.Linear(self.hidden_dim, 10),
         ).to(self.device).eval()
         self.parameter_count = sum(p.numel() for p in self.model.parameters())
 
         self.microbatches = [
-            torch.randn(self.batch_size, 2048, device=self.device, dtype=torch.float32).contiguous()
+            torch.randn(self.batch_size, self.hidden_dim, device=self.device, dtype=torch.float32).contiguous()
             for _ in range(self.num_microbatches)
         ]
         self.targets = [

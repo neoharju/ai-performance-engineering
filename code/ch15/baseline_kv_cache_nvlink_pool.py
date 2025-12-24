@@ -23,12 +23,11 @@ class BaselineKVCacheLocalOnlyBenchmark(VerificationPayloadMixin, BaseBenchmark)
         super().__init__()
         self.output = None
         self.model: Optional[nn.MultiheadAttention] = None
-        self.cache: Optional[torch.Tensor] = None
         self.hidden = 256
         self.heads = 8
         self.batch = 4
         self.seq_len = 64
-        self.cache_limit = 128  # tokens before spill
+        self.local_cache_limit = 64  # tokens before spill
         tokens = self.batch * self.seq_len
         self._workload = WorkloadMetadata(
             requests_per_iteration=float(self.batch),
@@ -41,30 +40,35 @@ class BaselineKVCacheLocalOnlyBenchmark(VerificationPayloadMixin, BaseBenchmark)
         torch.cuda.manual_seed_all(42)
         skip_if_insufficient_gpus(2)
         self.model = nn.MultiheadAttention(self.hidden, self.heads, batch_first=True).to(self.device).eval()
-        # KV cache stored locally only
-        self.cache = torch.zeros(self.cache_limit, self.batch, self.hidden, device=self.device)
         self._synchronize()
         self._verify_q = torch.randn(1, 1, self.hidden, device=self.device)
 
     def benchmark_fn(self) -> None:
-        assert self.model is not None and self.cache is not None
+        assert self.model is not None
         with self._nvtx_range("baseline_kv_cache_local_only"):
-            keys: list[torch.Tensor] = []
-            values: list[torch.Tensor] = []
+            local_keys: list[torch.Tensor] = []
+            local_values: list[torch.Tensor] = []
+            host_keys: list[torch.Tensor] = []
+            host_values: list[torch.Tensor] = []
             for _ in range(self.seq_len):
                 q = torch.randn(self.batch, 1, self.hidden, device=self.device)
                 k = torch.randn(self.batch, 1, self.hidden, device=self.device)
                 v = torch.randn(self.batch, 1, self.hidden, device=self.device)
-                keys.append(k)
-                values.append(v)
+                local_keys.append(k)
+                local_values.append(v)
 
-                if len(keys) > self.cache_limit:
-                    # Spill oldest to host (slow)
-                    keys.pop(0).cpu()
-                    values.pop(0).cpu()
+                if len(local_keys) > self.local_cache_limit:
+                    # Spill oldest to host (slow, pageable)
+                    host_keys.append(local_keys.pop(0).cpu())
+                    host_values.append(local_values.pop(0).cpu())
 
-                k_all = torch.cat(keys, dim=1)
-                v_all = torch.cat(values, dim=1)
+                gathered_k = [hk.to(self.device) for hk in host_keys]
+                gathered_v = [hv.to(self.device) for hv in host_values]
+                gathered_k.extend(local_keys)
+                gathered_v.extend(local_values)
+
+                k_all = torch.cat(gathered_k, dim=1)
+                v_all = torch.cat(gathered_v, dim=1)
                 out, _ = self.model(q, k_all, v_all)
                 self.output = out
 
@@ -87,7 +91,6 @@ class BaselineKVCacheLocalOnlyBenchmark(VerificationPayloadMixin, BaseBenchmark)
 
     def teardown(self) -> None:
         self.model = None
-        self.cache = None
         torch.cuda.empty_cache()
 
     def get_config(self) -> BenchmarkConfig:

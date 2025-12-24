@@ -40,6 +40,7 @@ class OptimizedPerformanceBatchBenchmark(VerificationPayloadMixin, BaseBenchmark
         self.targets = None
         self.optimizer = None
         self.fusion = 8
+        self.hidden_dim = self.workload.performance_hidden_dim
         self._verify_input = None
         self._verify_output = None
         self.parameter_count = 0
@@ -53,9 +54,9 @@ class OptimizedPerformanceBatchBenchmark(VerificationPayloadMixin, BaseBenchmark
         torch.cuda.manual_seed_all(42)
         
         self.model = torch.nn.Sequential(
-            torch.nn.Linear(2048, 2048),
+            torch.nn.Linear(self.hidden_dim, self.hidden_dim),
             torch.nn.ReLU(),
-            torch.nn.Linear(2048, 10),
+            torch.nn.Linear(self.hidden_dim, 10),
         )
         
         if self.device.type == "cuda":
@@ -73,7 +74,7 @@ class OptimizedPerformanceBatchBenchmark(VerificationPayloadMixin, BaseBenchmark
         self.model.eval()
         self.parameter_count = sum(p.numel() for p in self.model.parameters())
         microbatches = [
-            torch.randn(self.batch_size, 2048, device=self.device, dtype=dtype).contiguous()
+            torch.randn(self.batch_size, self.hidden_dim, device=self.device, dtype=dtype).contiguous()
             for _ in range(self.workload.performance_microbatches)
         ]
         targets = [

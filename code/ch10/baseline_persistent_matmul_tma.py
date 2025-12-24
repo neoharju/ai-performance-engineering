@@ -75,7 +75,7 @@ from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig
 class BaselinePersistentMatmulTMABenchmark(VerificationPayloadMixin, BaseBenchmark):
     """Benchmark wrapper for baseline persistent matmul TMA."""
 
-    def __init__(self, M: int = 8192, N: int = 8192, K: int = 2048):
+    def __init__(self, M: int = 4096, N: int = 4096, K: int = 4096):
         super().__init__()
         self.M = M
         self.N = N
@@ -84,7 +84,7 @@ class BaselinePersistentMatmulTMABenchmark(VerificationPayloadMixin, BaseBenchma
         self.A = None
         self.B = None
         self.C = None
-        self.block = 128
+        self.block = 64
         self.output = None
         self.register_workload_metadata(
             requests_per_iteration=1.0,

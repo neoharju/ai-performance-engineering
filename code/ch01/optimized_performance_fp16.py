@@ -34,6 +34,7 @@ class OptimizedPerformanceFP16Benchmark(VerificationPayloadMixin, BaseBenchmark)
         self.batch_size = self.workload.microbatch_size
         self.num_microbatches = self.workload.performance_microbatches
         self.fusion = 8
+        self.hidden_dim = self.workload.performance_hidden_dim
 
         self.model = None
         self.microbatches = None
@@ -57,9 +58,9 @@ class OptimizedPerformanceFP16Benchmark(VerificationPayloadMixin, BaseBenchmark)
             torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction = True
 
         self.model = torch.nn.Sequential(
-            torch.nn.Linear(2048, 2048),
+            torch.nn.Linear(self.hidden_dim, self.hidden_dim),
             torch.nn.ReLU(),
-            torch.nn.Linear(2048, 10),
+            torch.nn.Linear(self.hidden_dim, 10),
         )
 
         if self.device.type == "cuda":
@@ -71,7 +72,7 @@ class OptimizedPerformanceFP16Benchmark(VerificationPayloadMixin, BaseBenchmark)
         self.parameter_count = sum(p.numel() for p in self.model.parameters())
 
         self.microbatches = [
-            torch.randn(self.batch_size, 2048, device=self.device, dtype=dtype).contiguous()
+            torch.randn(self.batch_size, self.hidden_dim, device=self.device, dtype=dtype).contiguous()
             for _ in range(self.num_microbatches)
         ]
         self.targets = [

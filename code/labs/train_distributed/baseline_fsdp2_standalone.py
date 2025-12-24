@@ -4,244 +4,232 @@
 Demonstrates standard FSDP2 training without FP8 optimization.
 """
 
+from __future__ import annotations
+
+import argparse
+import os
+import sys
+import time
+from pathlib import Path
+from typing import Dict, Optional
+
 import torch
 import torch.nn as nn
 import torch.distributed as dist
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp import MixedPrecision
-from typing import Dict, Any
-import sys
-from pathlib import Path
-import time
-import os
 
 # Add common to path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+repo_root = Path(__file__).parent.parent.parent
+if str(repo_root) not in sys.path:
+    sys.path.insert(0, str(repo_root))
 
 from core.benchmark.verification import PrecisionFlags, simple_signature
 from core.harness.benchmark_harness import (
     BaseBenchmark,
     BenchmarkConfig,
-    BenchmarkHarness,
-    BenchmarkMode,
+    LaunchVia,
+    TorchrunLaunchSpec,
 )
 from core.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+_DEFAULT_BATCH_SIZE = 4
+_DEFAULT_MICRO_BATCH = 1
+_DEFAULT_SEQ_LEN = 2048
+_DEFAULT_HIDDEN = 4096
+_DEFAULT_LAYERS = 8
 
-class BaselineFSDP2Standard(BaseBenchmark):
-    """Baseline FSDP2 with BF16."""
 
-    signature_equivalence_group = "labs_train_distributed_fsdp2_standalone_precision"
-    signature_equivalence_ignore_fields = ("precision_flags",)
-
-    def __init__(
-        self,
-        batch_size: int = 4,
-        seq_length: int = 2048,
-        hidden_size: int = 4096,
-        num_layers: int = 8,
-        micro_batch_size: int = 1,
-    ):
+class SimpleTransformerLayer(nn.Module):
+    def __init__(self, hidden_size: int):
         super().__init__()
-        self.batch_size = batch_size
-        self.seq_length = seq_length
-        self.hidden_size = hidden_size
-        self.num_layers = num_layers
-        self.micro_batch_size = micro_batch_size
-        self._last_metrics: Dict[str, float] = {}
-        self.register_workload_metadata(requests_per_iteration=float(batch_size))
+        self.linear1 = nn.Linear(hidden_size, hidden_size * 4, bias=False)
+        self.linear2 = nn.Linear(hidden_size * 4, hidden_size, bias=False)
+        self.norm = nn.LayerNorm(hidden_size)
 
-        self._init_distributed()
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return x + self.linear2(torch.relu(self.linear1(self.norm(x))))
 
-        self.device = torch.device(f"cuda:{self.local_rank}")
-        torch.cuda.set_device(self.device)
 
-        logger.info(f"FSDP2 Rank {self.rank}/{self.world_size}: BF16 baseline")
+def _init_distributed() -> tuple[int, int, int]:
+    if "RANK" not in os.environ or "WORLD_SIZE" not in os.environ:
+        raise RuntimeError("FSDP2 baseline requires torchrun (RANK/WORLD_SIZE missing).")
+    if not dist.is_initialized():
+        dist.init_process_group(backend="nccl")
+    rank = dist.get_rank()
+    world_size = dist.get_world_size()
+    local_rank = int(os.environ.get("LOCAL_RANK", rank))
+    torch.cuda.set_device(local_rank)
+    return rank, world_size, local_rank
 
-    def _init_distributed(self):
-        """Initialize distributed."""
-        if not dist.is_initialized():
-            if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
-                dist.init_process_group(backend='nccl')
-            else:
-                logger.warning("Simulation mode")
-                self.rank = 0
-                self.world_size = 1
-                self.local_rank = 0
-                return
-        
-        self.rank = dist.get_rank()
-        self.world_size = dist.get_world_size()
-        self.local_rank = self.rank % torch.cuda.device_count()
 
-    def setup(self):
-        """Initialize FSDP model and inputs."""
-        if getattr(self, "world_size", 1) < 2:
-            raise RuntimeError("SKIPPED: requires >=2 GPUs")
-        self.register_workload_metadata(
-            tokens_per_iteration=float(self.batch_size * self.seq_length),
-        )
+def _build_model(hidden_size: int, num_layers: int, device: torch.device) -> nn.ModuleList:
+    return nn.ModuleList([
+        SimpleTransformerLayer(hidden_size)
+        for _ in range(num_layers)
+    ]).to(device)
 
-        # Create simple model
-        class SimpleTransformerLayer(nn.Module):
-            def __init__(self, hidden_size):
-                super().__init__()
-                self.linear1 = nn.Linear(hidden_size, hidden_size * 4, bias=False)
-                self.linear2 = nn.Linear(hidden_size * 4, hidden_size, bias=False)
-                self.norm = nn.LayerNorm(hidden_size)
 
-            def forward(self, x):
-                return x + self.linear2(torch.relu(self.linear1(self.norm(x))))
+def _run_worker(
+    *,
+    iters: int,
+    warmup: int,
+    batch_size: int,
+    micro_batch_size: int,
+    seq_length: int,
+    hidden_size: int,
+    num_layers: int,
+) -> None:
+    rank, world_size, local_rank = _init_distributed()
+    if world_size < 2:
+        raise RuntimeError("FSDP2 baseline requires >=2 GPUs.")
 
-        model = nn.ModuleList([
-            SimpleTransformerLayer(self.hidden_size)
-            for _ in range(self.num_layers)
-        ]).to(self.device)
+    if batch_size % micro_batch_size != 0:
+        raise ValueError("batch_size must be divisible by micro_batch_size")
 
-        # Wrap with FSDP2
-        mixed_precision = MixedPrecision(
-            param_dtype=torch.bfloat16,
-            reduce_dtype=torch.bfloat16,
-            buffer_dtype=torch.bfloat16,
-        )
+    torch.manual_seed(42)
+    torch.cuda.manual_seed_all(42)
 
-        self.model = FSDP(
-            model,
-            mixed_precision=mixed_precision,
-            use_orig_params=True,
-        )
+    device = torch.device(f"cuda:{local_rank}")
 
-        # Create input
-        self.input = torch.randn(
-            self.micro_batch_size,
-            self.seq_length,
-            self.hidden_size,
-            device=self.device,
-            dtype=torch.bfloat16
-        )
+    model = _build_model(hidden_size, num_layers, device)
+    mixed_precision = MixedPrecision(
+        param_dtype=torch.bfloat16,
+        reduce_dtype=torch.bfloat16,
+        buffer_dtype=torch.bfloat16,
+    )
+    fsdp_model = FSDP(model, mixed_precision=mixed_precision, use_orig_params=True)
 
-        # Create optimizer
-        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=1e-4)
+    input_tensor = torch.randn(
+        micro_batch_size,
+        seq_length,
+        hidden_size,
+        device=device,
+        dtype=torch.bfloat16,
+    )
 
-        logger.info(f"FSDP2 model initialized (Rank {self.rank})")
+    optimizer = torch.optim.AdamW(fsdp_model.parameters(), lr=1e-4)
+    grad_accum_steps = batch_size // micro_batch_size
+
+    def _step() -> float:
+        optimizer.zero_grad(set_to_none=True)
+        for _ in range(grad_accum_steps):
+            output = input_tensor
+            for layer in fsdp_model:
+                output = layer(output)
+            loss = output.mean() / grad_accum_steps
+            loss.backward()
+        optimizer.step()
+        return float(loss.detach().item() * grad_accum_steps)
+
+    for _ in range(max(warmup, 0)):
+        _step()
+    torch.cuda.synchronize(device)
+
+    start = time.perf_counter()
+    loss_value = 0.0
+    for _ in range(max(iters, 1)):
+        loss_value = _step()
+    torch.cuda.synchronize(device)
+    elapsed = time.perf_counter() - start
+
+    tokens_per_iter = batch_size * seq_length
+    tokens_per_s = tokens_per_iter * (max(iters, 1) / max(elapsed, 1e-9))
+
+    if rank == 0:
+        print(f"rank0 tokens/s: {tokens_per_s:.2f} tokens/s")
+        print(f"rank0 time_per_iter_ms: {(elapsed / max(iters,1)) * 1000.0:.3f}")
+        print(f"rank0 loss: {loss_value:.6f}")
+
+    dist.barrier()
+    dist.destroy_process_group()
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Baseline FSDP2 BF16 training")
+    parser.add_argument("--iters", type=int, default=3)
+    parser.add_argument("--warmup", type=int, default=5)
+    parser.add_argument("--batch-size", type=int, default=_DEFAULT_BATCH_SIZE)
+    parser.add_argument("--micro-batch-size", type=int, default=_DEFAULT_MICRO_BATCH)
+    parser.add_argument("--seq-length", type=int, default=_DEFAULT_SEQ_LEN)
+    parser.add_argument("--hidden-size", type=int, default=_DEFAULT_HIDDEN)
+    parser.add_argument("--num-layers", type=int, default=_DEFAULT_LAYERS)
+    args = parser.parse_args()
+
+    _run_worker(
+        iters=args.iters,
+        warmup=args.warmup,
+        batch_size=args.batch_size,
+        micro_batch_size=args.micro_batch_size,
+        seq_length=args.seq_length,
+        hidden_size=args.hidden_size,
+        num_layers=args.num_layers,
+    )
+
+
+def run_benchmark(**_kwargs) -> Dict[str, float]:
+    """Legacy entrypoint; use torchrun via the harness for multi-GPU runs."""
+    raise RuntimeError("baseline_fsdp2_standalone must be executed via torchrun.")
+
+
+class BaselineFSDP2Benchmark(BaseBenchmark):
+    """Harness entry that launches this module via torchrun."""
+
+    verification_not_applicable_reason = "torchrun benchmarks execute in external processes"
+    skip_input_check = True
+    skip_output_check = True
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.register_workload_metadata(requests_per_iteration=float(_DEFAULT_BATCH_SIZE))
 
     def benchmark_fn(self) -> None:
-        """Execute FSDP2 training step and stash metrics for the harness."""
-        torch.cuda.synchronize(self.device)
-        torch.cuda.reset_peak_memory_stats(self.device)
-        start = time.perf_counter()
+        raise RuntimeError("SKIPPED: baseline_fsdp2_standalone requires torchrun")
 
-        # Training step
-        self.optimizer.zero_grad()
+    def get_config(self) -> BenchmarkConfig:
+        return BenchmarkConfig(
+            launch_via=LaunchVia.TORCHRUN,
+            nproc_per_node=2,
+            iterations=3,
+            warmup=5,
+            multi_gpu_required=True,
+            measurement_timeout_seconds=900,
+        )
 
-        # Forward
-        output = self.input
-        for layer in self.model:
-            output = layer(output)
-
-        # Loss
-        loss = output.mean()
-
-        # Backward
-        loss.backward()
-
-        # Optimizer step
-        self.optimizer.step()
-
-        self._synchronize()
-        elapsed = time.perf_counter() - start
-
-        # Memory metrics
-        peak_memory_gb = torch.cuda.max_memory_allocated(self.device) / (1024**3)
-        tokens_per_sec = (self.batch_size * self.seq_length) / elapsed if elapsed > 0 else 0.0
-
-        logger.info(f"Rank {self.rank}: {elapsed*1000:.2f} ms, peak mem: {peak_memory_gb:.2f} GB")
-
-        self._last_metrics = {
-            "latency_ms": elapsed * 1000,
-            "peak_memory_gb": peak_memory_gb,
-            "loss": loss.item(),
-            "tokens_per_sec": tokens_per_sec,
-        }
-
-    def get_custom_metrics(self) -> Dict[str, float]:
-        """Expose last-run metrics to the harness."""
-        return self._last_metrics
-
-    def teardown(self):
-        """Clean up resources."""
-        del self.model, self.optimizer, self.input
-        super().teardown()
-
-    def get_verify_output(self) -> torch.Tensor:
-        """Return output tensor for verification comparison."""
-        raise RuntimeError("SKIPPED: torchrun/FSDP2 benchmark verification not applicable")
+    def get_torchrun_spec(self, config: Optional[BenchmarkConfig] = None) -> TorchrunLaunchSpec:
+        return TorchrunLaunchSpec(
+            script_path=Path(__file__).resolve(),
+            script_args=[],
+            multi_gpu_required=True,
+            name="baseline_fsdp2_standalone",
+            config_arg_map={
+                "iterations": "--iters",
+                "warmup": "--warmup",
+            },
+        )
 
     def get_input_signature(self) -> dict:
-        """Return input signature for verification."""
         signature = simple_signature(
-            batch_size=self.batch_size,
+            batch_size=_DEFAULT_BATCH_SIZE,
             dtype="bfloat16",
-            seq_length=self.seq_length,
-            hidden_size=self.hidden_size,
-            num_layers=self.num_layers,
-            micro_batch_size=self.micro_batch_size,
+            seq_length=_DEFAULT_SEQ_LEN,
+            hidden_size=_DEFAULT_HIDDEN,
+            num_layers=_DEFAULT_LAYERS,
+            micro_batch_size=_DEFAULT_MICRO_BATCH,
             precision_flags=PrecisionFlags(bf16=True, tf32=False),
         )
-        signature.world_size = getattr(self, "world_size", None)
+        signature.world_size = 2
         return signature
 
     def get_output_tolerance(self) -> tuple:
-        """Return tolerance for numerical comparison."""
         return (0.1, 1.0)
 
 
-def run_benchmark(
-    batch_size: int = 4,
-    seq_length: int = 2048,
-    hidden_size: int = 4096,
-    num_layers: int = 8,
-    micro_batch_size: int = 1,
-    profile: str = "none",
-    **kwargs
-) -> Dict[str, Any]:
-    """Run baseline FSDP2 benchmark."""
-
-    benchmark = BaselineFSDP2Standard(
-        batch_size=batch_size,
-        seq_length=seq_length,
-        hidden_size=hidden_size,
-        num_layers=num_layers,
-        micro_batch_size=micro_batch_size,
-    )
-
-    config = BenchmarkConfig(
-        iterations=3,
-        warmup=5,
-        profile_mode=profile,
-    )
-
-    harness = BenchmarkHarness(mode=BenchmarkMode.TRAINING, config=config)
-
-    result = harness.benchmark(benchmark, name="baseline_fsdp2_standard")
-
-    metrics = result.custom_metrics or {}
-    return {
-        "mean_time_ms": result.timing.mean_ms,
-        "peak_memory_gb": metrics.get("peak_memory_gb"),
-        "loss": metrics.get("loss"),
-        "tokens_per_sec": metrics.get("tokens_per_sec"),
-        "precision": "bf16",
-    }
-
-
 def get_benchmark() -> BaseBenchmark:
-    """Factory function for benchmark discovery."""
-    return BaselineFSDP2Standard()
+    return BaselineFSDP2Benchmark()
 
 
 if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)
+    main()

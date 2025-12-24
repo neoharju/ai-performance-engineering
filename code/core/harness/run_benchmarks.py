@@ -236,8 +236,8 @@ INFORMATIONAL_BENCHMARKS: Dict[str, Set[str]] = {
     "ch12": {"graph_cuda"},
     # Ch14: Sliding window bench uses FlexAttention which may not have full Blackwell support
     "ch14": {"sliding_window_bench"},
-    # Ch15: Disaggregated inference demos show architecture patterns (multi-GPU)
-    "ch15": {"disaggregated_inference", "inference_placement"},
+    # Ch15: Inference placement demo shows architecture patterns (multi-GPU)
+    "ch15": {"inference_placement"},
     # Ch16: Paged attention demos show memory management technique (value is memory efficiency)
     "ch16": {"paged_attention", "paged_attention_blackwell", "piece_graphs"},
     # Ch17: Pipeline parallelism and routing demos (multi-GPU)

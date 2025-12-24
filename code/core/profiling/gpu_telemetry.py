@@ -156,6 +156,8 @@ def _query_via_nvml(logical_index: int) -> Dict[str, Optional[float]]:
     utilization = pynvml.nvmlDeviceGetUtilizationRates(handle)  # type: ignore[attr-defined]
     graphics_clock = pynvml.nvmlDeviceGetClockInfo(handle, pynvml.NVML_CLOCK_SM)  # type: ignore[attr-defined]
     memory_clock = pynvml.nvmlDeviceGetClockInfo(handle, pynvml.NVML_CLOCK_MEM)  # type: ignore[attr-defined]
+    app_graphics_clock = pynvml.nvmlDeviceGetApplicationsClock(handle, pynvml.NVML_CLOCK_SM)  # type: ignore[attr-defined]
+    app_memory_clock = pynvml.nvmlDeviceGetApplicationsClock(handle, pynvml.NVML_CLOCK_MEM)  # type: ignore[attr-defined]
 
     metrics: Dict[str, Optional[float]] = {
         "temperature_gpu_c": float(temp_gpu),
@@ -166,6 +168,8 @@ def _query_via_nvml(logical_index: int) -> Dict[str, Optional[float]]:
         "utilization_memory_pct": float(utilization.memory),  # type: ignore[attr-defined]
         "graphics_clock_mhz": float(graphics_clock),
         "memory_clock_mhz": float(memory_clock),
+        "applications_clock_sm_mhz": float(app_graphics_clock),
+        "applications_clock_memory_mhz": float(app_memory_clock),
         # NVLink counters/utilization are not universally supported; keep keys but do not query here.
         "nvlink_tx_gbps": None,
         "nvlink_rx_gbps": None,
@@ -217,6 +221,13 @@ def format_gpu_telemetry(metrics: Dict[str, Optional[float]]) -> str:
     clock = metrics.get("graphics_clock_mhz")
     if clock is not None:
         parts.append(f"clock={clock:.0f}MHz")
+    app_clock = metrics.get("applications_clock_sm_mhz")
+    app_mem_clock = metrics.get("applications_clock_memory_mhz")
+    if app_clock is not None:
+        if app_mem_clock is not None:
+            parts.append(f"app_clock={app_clock:.0f}/{app_mem_clock:.0f}MHz")
+        else:
+            parts.append(f"app_clock={app_clock:.0f}MHz")
     fan = metrics.get("fan_speed_pct")
     if fan is not None:
         parts.append(f"fan={fan:.0f}%")

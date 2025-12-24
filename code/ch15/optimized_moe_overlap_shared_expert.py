@@ -47,14 +47,14 @@ class OptimizedMoeOverlapSharedExpertBenchmark(VerificationPayloadMixin, BaseBen
         self.hidden_size = 2048
         # Keep shared compute moderate so comm overlap meaningfully reduces time.
         self.shared_ffn_size = 4096
-        self.routed_ffn_size = 256
+        self.routed_ffn_size = 128
         self.num_experts = 4
         self.batch = 64
         self.seq = 64
         self.dtype = torch.bfloat16
         # Simulate expert-parallel comm as many small messages (chunked copies).
         # The comm stream can overlap these copies with shared expert compute.
-        self.comm_chunks = 4
+        self.comm_chunks = 8
         self.comm_round_trips = 12
 
         tokens = self.batch * self.seq

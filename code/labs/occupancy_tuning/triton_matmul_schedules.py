@@ -110,14 +110,15 @@ class TritonMatmulProtonBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self._a: Optional[torch.Tensor] = None
         self._b: Optional[torch.Tensor] = None
         self._scratch: Optional[torch.Tensor] = None
+        # Keep harness runs fast; enable profiling/proton explicitly for analysis.
         self._config = BenchmarkConfig(
             iterations=iterations,
             warmup=warmup,
             enable_nvtx=True,
-            enable_profiling=True,
+            enable_profiling=False,
             enable_nsys=False,
             enable_ncu=False,
-            enable_proton=True,
+            enable_proton=False,
             profile_type="minimal",
             target_label=f"labs/occupancy_tuning:{schedule.name}",
             use_subprocess=True,

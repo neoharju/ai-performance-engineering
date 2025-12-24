@@ -42,7 +42,7 @@ class BaselineClusterMulticastBenchmark(CudaBinaryBenchmark):
                 "tile_m": 8,
                 "tile_n": 128,
                 "tile_k": 128,
-                "cluster_m": 8,
+                "cluster_m": 16,
                 "cluster_n": 1,
             },
         )

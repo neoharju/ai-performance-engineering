@@ -211,7 +211,7 @@ def run_optimized(M=1024, N=1024, K=1024):
 class PersistentMatmulTMABenchmark(VerificationPayloadMixin, BaseBenchmark):
     """Benchmark harness wrapper for TMA persistent matmul."""
 
-    def __init__(self, M: int = 8192, N: int = 8192, K: int = 2048):
+    def __init__(self, M: int = 4096, N: int = 4096, K: int = 4096):
         super().__init__()
         self.a = None
         self.b = None

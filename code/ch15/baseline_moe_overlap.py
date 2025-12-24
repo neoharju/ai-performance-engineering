@@ -46,14 +46,14 @@ class BaselineMoeOverlapBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.hidden_size = 2048
         # Keep shared compute moderate so communication overlap stays visible.
         self.shared_ffn_size = 4096
-        self.routed_ffn_size = 256
+        self.routed_ffn_size = 128
         self.num_experts = 4
         self.batch = 64
         self.seq = 64
         self.dtype = torch.bfloat16
         # Simulate expert-parallel comm as many small messages (chunked copies).
         # This makes the overlap optimization measurable without changing semantics.
-        self.comm_chunks = 4
+        self.comm_chunks = 8
         # Repeat the transfer to simulate multi-hop / multi-round all-to-all.
         self.comm_round_trips = 12
 

@@ -1,19 +1,17 @@
 """baseline_torchcomms.py - Baseline using legacy torch.distributed patterns.
 
-This demonstrates traditional torch.distributed collective communication
-patterns before the modern torchcomms API (announced November 2025).
-
-Legacy patterns have more boilerplate, less overlap capability, and
-require explicit process group management for complex topologies.
-
-REQUIRES: Multi-GPU system (2+ GPUs) - skips on single GPU.
+Legacy patterns use synchronous collectives with no overlap. This benchmark is
+launched via torchrun and requires >=2 GPUs.
 """
 
 from __future__ import annotations
 
+import argparse
 import os
 import sys
+import time
 from pathlib import Path
+from typing import Optional
 
 repo_root = Path(__file__).parent.parent
 if str(repo_root) not in sys.path:
@@ -22,217 +20,148 @@ if str(repo_root) not in sys.path:
 import torch
 import torch.nn as nn
 import torch.distributed as dist
-from typing import Optional
 
+from core.benchmark.verification import PrecisionFlags, simple_signature
 from core.harness.benchmark_harness import (
     BaseBenchmark,
     BenchmarkConfig,
-    BenchmarkHarness,
-    BenchmarkMode,
-    WorkloadMetadata,
+    LaunchVia,
+    TorchrunLaunchSpec,
 )
-from ch04.verification_payload_mixin import VerificationPayloadMixin
+from core.utils.logger import get_logger
+
+logger = get_logger(__name__)
+
+_DEFAULT_BATCH = 256
+_DEFAULT_HIDDEN = 4096
 
 
-def _init_distributed_if_needed() -> bool:
-    """Initialize distributed if not already done. Returns True if distributed is available."""
-    if dist.is_initialized():
-        return True
-    
-    # Check if we're in a distributed environment
-    if "RANK" not in os.environ:
-        return False
-    
-    try:
+def _init_distributed() -> tuple[int, int, int]:
+    if "RANK" not in os.environ or "WORLD_SIZE" not in os.environ:
+        raise RuntimeError("baseline_torchcomms requires torchrun (RANK/WORLD_SIZE missing).")
+    if not dist.is_initialized():
         dist.init_process_group(backend="nccl")
-        return True
-    except Exception:
-        return False
+    rank = dist.get_rank()
+    world_size = dist.get_world_size()
+    local_rank = int(os.environ.get("LOCAL_RANK", rank))
+    torch.cuda.set_device(local_rank)
+    return rank, world_size, local_rank
 
 
-class BaselineTorchcommsBenchmark(VerificationPayloadMixin, BaseBenchmark):
-    """Baseline: Legacy torch.distributed patterns.
-    
-    This demonstrates the traditional approach to distributed communication:
-    - Explicit process group creation and management
-    - Synchronous collective operations
-    - No built-in overlap with computation
-    - Manual tensor allocation for recv buffers
-    
-    The modern torchcomms API (PyTorch 2.10+) provides:
-    - Async-first design with automatic overlap
-    - Functional API without side effects
-    - Better integration with FSDP2/DTensor
-    - Simplified topology management
-    """
-    
-    def __init__(self):
+def _build_block(hidden: int, device: torch.device) -> nn.Sequential:
+    return nn.Sequential(
+        nn.Linear(hidden, hidden * 4),
+        nn.GELU(),
+        nn.Linear(hidden * 4, hidden),
+    ).to(device).eval()
+
+
+def _run_worker(iters: int, warmup: int, batch: int, hidden: int) -> None:
+    rank, world_size, local_rank = _init_distributed()
+    if world_size < 2:
+        raise RuntimeError("baseline_torchcomms requires >=2 GPUs.")
+
+    torch.manual_seed(42)
+    torch.cuda.manual_seed_all(42)
+
+    device = torch.device(f"cuda:{local_rank}")
+    comm_block = _build_block(hidden, device)
+    aux_block = _build_block(hidden, device)
+    inputs = torch.randn(batch, hidden, device=device)
+
+    def _step() -> None:
+        with torch.no_grad():
+            comm_out = comm_block(inputs)
+            dist.all_reduce(comm_out, op=dist.ReduceOp.AVG)
+            aux_out = aux_block(inputs)
+            _ = comm_out + aux_out
+
+    for _ in range(max(warmup, 0)):
+        _step()
+    torch.cuda.synchronize(device)
+
+    start = time.perf_counter()
+    for _ in range(max(iters, 1)):
+        _step()
+    torch.cuda.synchronize(device)
+    elapsed = time.perf_counter() - start
+
+    tokens_per_iter = batch * hidden
+    tokens_per_s = tokens_per_iter * (max(iters, 1) / max(elapsed, 1e-9))
+
+    if rank == 0:
+        print(f"rank0 tokens/s: {tokens_per_s:.2f} tokens/s")
+        print(f"rank0 time_per_iter_ms: {(elapsed / max(iters,1)) * 1000.0:.3f}")
+
+    dist.barrier()
+    dist.destroy_process_group()
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Baseline legacy torch.distributed benchmark")
+    parser.add_argument("--iters", type=int, default=50)
+    parser.add_argument("--warmup", type=int, default=5)
+    parser.add_argument("--batch", type=int, default=_DEFAULT_BATCH)
+    parser.add_argument("--hidden", type=int, default=_DEFAULT_HIDDEN)
+    args = parser.parse_args()
+    _run_worker(args.iters, args.warmup, args.batch, args.hidden)
+
+
+class BaselineTorchcommsBenchmark(BaseBenchmark):
+    """Harness entry that launches this module via torchrun."""
+
+    verification_not_applicable_reason = "torchrun benchmarks execute in external processes"
+    skip_input_check = True
+    skip_output_check = True
+
+    def __init__(self) -> None:
         super().__init__()
-        self.model = None
-        self.input = None
-        self.output = None
-        self.batch = 256
-        self.hidden = 4096
-        self.is_distributed = False
-        tokens = self.batch * self.hidden
-        self._workload = WorkloadMetadata(
-            requests_per_iteration=float(self.batch),
-            tokens_per_iteration=float(tokens),
-        )
-        self._bytes_transferred = 0
-        self.register_workload_metadata(
-            requests_per_iteration=float(self.batch),
-            tokens_per_iteration=float(tokens),
-        )
-    
-    def setup(self) -> None:
-        """Setup: Initialize model and communication."""
-        torch.manual_seed(42)
-        torch.cuda.manual_seed_all(42)
-        
-        # Try to initialize distributed
-        self.is_distributed = _init_distributed_if_needed()
-        
-        # Simple transformer-like block for communication simulation
-        self.model = nn.Sequential(
-            nn.Linear(self.hidden, self.hidden * 4),
-            nn.GELU(),
-            nn.Linear(self.hidden * 4, self.hidden),
-        ).to(self.device).eval()
-        
-        self.input = torch.randn(self.batch, self.hidden, device=self.device)
-        self.output = torch.zeros_like(self.input)
-        
-        # Calculate bytes transferred for metrics
-        # All-reduce: 2 * tensor_size (reduce-scatter + all-gather)
-        self._bytes_transferred = 2 * self.input.numel() * self.input.element_size()
-        
-        torch.cuda.synchronize(self.device)
-    
-    def benchmark_fn(self) -> None:
-        """Benchmark: Legacy torch.distributed communication patterns.
-        
-        Pattern demonstrated:
-        1. Forward pass (compute)
-        2. Synchronous all-reduce (blocking)
-        3. No overlap between compute and communication
-        """
-        with self._nvtx_range("baseline_torchcomms"):
-            with torch.no_grad():
-                # Forward pass
-                output = self.model(self.input)
-                
-                if self.is_distributed:
-                    # Legacy pattern: synchronous all-reduce
-                    # This blocks until all ranks complete
-                    dist.all_reduce(output, op=dist.ReduceOp.AVG)
-                else:
-                    # Simulate all-reduce cost without distributed
-                    # In real distributed, this would average across ranks
-                    # We simulate with a local operation
-                    chunks = torch.chunk(output, chunks=4, dim=0)
-                    reduced = sum(chunks) / 4.0
-                    output = reduced.expand_as(output[:len(output)//4]).repeat(4, 1)
-                
-                self.output = output
-        
-        self._synchronize()
+        tokens = float(_DEFAULT_BATCH * _DEFAULT_HIDDEN)
+        self.register_workload_metadata(requests_per_iteration=float(_DEFAULT_BATCH), tokens_per_iteration=tokens)
 
-    def capture_verification_payload(self) -> None:
-        if self.model is None or self.input is None or self.output is None:
-            raise RuntimeError("setup() and benchmark_fn() must be called before capture_verification_payload()")
-        param_count = sum(p.numel() for p in self.model.parameters()) if self.model is not None else 0
-        self._set_verification_payload(
-            inputs={"input": self.input},
-            output=self.output,
-            batch_size=int(self.batch),
-            parameter_count=param_count,
-            precision_flags={
-                "fp16": False,
-                "bf16": False,
-                "fp8": False,
-                "tf32": torch.backends.cuda.matmul.allow_tf32 if torch.cuda.is_available() else False,
-            },
-            output_tolerance=(1e-5, 1e-5),
-        )
-    
-    def teardown(self) -> None:
-        """Teardown: Clean up resources."""
-        self.model = None
-        self.input = None
-        self.output = None
-        torch.cuda.empty_cache()
-    
+    def benchmark_fn(self) -> None:
+        raise RuntimeError("SKIPPED: baseline_torchcomms requires torchrun")
+
     def get_config(self) -> BenchmarkConfig:
-        """Return benchmark configuration."""
         return BenchmarkConfig(
+            launch_via=LaunchVia.TORCHRUN,
+            nproc_per_node=2,
             iterations=50,
             warmup=5,
-        )
-    
-    def get_workload_metadata(self) -> Optional[WorkloadMetadata]:
-        return self._workload
-    
-    def get_custom_metrics(self) -> Optional[dict]:
-        """Return domain-specific metrics for distributed communication."""
-        from core.benchmark.metrics import compute_memory_transfer_metrics
-        return compute_memory_transfer_metrics(
-            bytes_transferred=self._bytes_transferred,
-            elapsed_ms=getattr(self, '_last_elapsed_ms', 1.0),
-            transfer_type="nvlink",  # Assuming NVLink for GPU-GPU
+            multi_gpu_required=True,
+            measurement_timeout_seconds=900,
         )
 
-    def validate_result(self) -> Optional[str]:
-        """Validate benchmark result."""
-        if self.model is None:
-            return "Model not initialized"
-        if self.input is None:
-            return "Input not initialized"
-        if self.output is None:
-            return "Output not computed"
-        return None
-
-    def get_verify_output(self) -> torch.Tensor:
-        """Return output tensor for verification comparison."""
-        return super().get_verify_output()
+    def get_torchrun_spec(self, config: Optional[BenchmarkConfig] = None) -> TorchrunLaunchSpec:
+        return TorchrunLaunchSpec(
+            script_path=Path(__file__).resolve(),
+            script_args=[],
+            multi_gpu_required=True,
+            name="baseline_torchcomms",
+            config_arg_map={
+                "iterations": "--iters",
+                "warmup": "--warmup",
+            },
+        )
 
     def get_input_signature(self) -> dict:
-        """Return input signature for verification."""
-        return super().get_input_signature()
+        signature = simple_signature(
+            batch_size=_DEFAULT_BATCH,
+            dtype="float32",
+            hidden_size=_DEFAULT_HIDDEN,
+            precision_flags=PrecisionFlags(tf32=False),
+        )
+        signature.world_size = 2
+        signature.collective_type = "all_reduce"
+        return signature
 
     def get_output_tolerance(self) -> tuple:
-        """Return tolerance for numerical comparison."""
         return (1e-5, 1e-5)
 
 
 def get_benchmark() -> BaseBenchmark:
-    """Factory function for harness discovery."""
-    gpu_count = torch.cuda.device_count() if torch.cuda.is_available() else 0
-    if gpu_count < 2:
-        class _SkipBenchmark(VerificationPayloadMixin, BaseBenchmark):
-            def __init__(self) -> None:
-                super().__init__()
-                self.register_workload_metadata(requests_per_iteration=1.0)
-            def get_config(self) -> BenchmarkConfig:
-                return BenchmarkConfig(iterations=1, warmup=5)
-            def benchmark_fn(self) -> None:
-                raise RuntimeError(
-                    f"SKIPPED: torchcomms benchmark requires 2+ GPUs (found {gpu_count})"
-                )
-            def get_verify_output(self) -> torch.Tensor:
-                raise RuntimeError(
-                    f"SKIPPED: torchcomms benchmark requires 2+ GPUs (found {gpu_count})"
-                )
-            def get_input_signature(self) -> dict:
-                raise RuntimeError(
-                    f"SKIPPED: torchcomms benchmark requires 2+ GPUs (found {gpu_count})"
-                )
-            def get_output_tolerance(self) -> tuple:
-                return (0.1, 1.0)
-        return _SkipBenchmark()
     return BaselineTorchcommsBenchmark()
 
 
 if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)
+    main()

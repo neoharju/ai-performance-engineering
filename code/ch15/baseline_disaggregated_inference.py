@@ -65,9 +65,10 @@ class _DisaggregatedInferenceBenchmark(BaselineMoeInferenceBenchmark):
             seeds = torch.argmax(logits[:, -1, :], dim=-1, keepdim=True)
             context_position = cfg.context_window
             step = 0
+            window = max(1, int(self.speculative_window) * int(self.decode_parallelism))
 
             while step < cfg.decode_tokens:
-                tokens_now = min(self.speculative_window, cfg.decode_tokens - step)
+                tokens_now = min(window, cfg.decode_tokens - step)
                 start = time.perf_counter()
 
                 for bucket in range(tokens_now):
@@ -77,9 +78,9 @@ class _DisaggregatedInferenceBenchmark(BaselineMoeInferenceBenchmark):
                         kv_cache=self.kv_cache,
                         position=position,
                     )
-                    torch.cuda.synchronize(self.device)
                     seeds = torch.argmax(decode_logits[:, -1, :], dim=-1, keepdim=True)
 
+                torch.cuda.synchronize(self.device)
                 decode_samples.append((time.perf_counter() - start) * 1000.0)
                 step += tokens_now
         

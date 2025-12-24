@@ -55,6 +55,8 @@ class GpuInfoDict(TypedDict):
 class GpuStateDict(TypedDict):
     gpu_clock_mhz: Optional[int]
     memory_clock_mhz: Optional[int]
+    gpu_app_clock_mhz: Optional[int]
+    memory_app_clock_mhz: Optional[int]
     persistence_mode: Optional[bool]
     power_limit_w: Optional[float]
     power_draw_w: Optional[float]
@@ -187,14 +189,16 @@ def get_gpu_info() -> GpuInfoDict:
 
 
 def get_gpu_state() -> GpuStateDict:
-    """Get GPU state information (clocks, persistence mode, power limit).
+    """Get GPU state information (clocks, app clocks, persistence mode, power limit).
     
     Returns:
-        Dictionary with 'gpu_clock_mhz', 'memory_clock_mhz', 'persistence_mode', 'power_limit_w' keys.
+        Dictionary with clock and power metadata for the current GPU.
     """
     gpu_state: GpuStateDict = {
         "gpu_clock_mhz": None,
         "memory_clock_mhz": None,
+        "gpu_app_clock_mhz": None,
+        "memory_app_clock_mhz": None,
         "persistence_mode": None,
         "power_limit_w": None,
         "power_draw_w": None,
@@ -217,6 +221,16 @@ def get_gpu_state() -> GpuStateDict:
                 if telemetry.get("memory_clock_mhz") is not None:
                     try:
                         gpu_state["memory_clock_mhz"] = int(telemetry["memory_clock_mhz"])
+                    except (TypeError, ValueError):
+                        pass
+                if telemetry.get("applications_clock_sm_mhz") is not None:
+                    try:
+                        gpu_state["gpu_app_clock_mhz"] = int(telemetry["applications_clock_sm_mhz"])
+                    except (TypeError, ValueError):
+                        pass
+                if telemetry.get("applications_clock_memory_mhz") is not None:
+                    try:
+                        gpu_state["memory_app_clock_mhz"] = int(telemetry["applications_clock_memory_mhz"])
                     except (TypeError, ValueError):
                         pass
                 gpu_state["power_draw_w"] = telemetry.get("power_draw_w")
@@ -302,6 +316,8 @@ class HardwareInfo(BaseModel):
     # GPU state for reproducibility
     gpu_clock_mhz: Optional[int] = Field(None, description="GPU clock frequency in MHz")
     memory_clock_mhz: Optional[int] = Field(None, description="Memory clock frequency in MHz")
+    gpu_app_clock_mhz: Optional[int] = Field(None, description="GPU application clock in MHz")
+    memory_app_clock_mhz: Optional[int] = Field(None, description="Memory application clock in MHz")
     persistence_mode: Optional[bool] = Field(None, description="GPU persistence mode enabled")
     power_limit_w: Optional[float] = Field(None, description="GPU power limit in watts")
     power_draw_w: Optional[float] = Field(None, description="Current GPU power draw in watts")
@@ -514,6 +530,8 @@ class RunManifest(BaseModel):
             compute_capability=gpu_info.get("compute_capability"),
             gpu_clock_mhz=gpu_state.get("gpu_clock_mhz"),
             memory_clock_mhz=gpu_state.get("memory_clock_mhz"),
+            gpu_app_clock_mhz=gpu_state.get("gpu_app_clock_mhz"),
+            memory_app_clock_mhz=gpu_state.get("memory_app_clock_mhz"),
             persistence_mode=gpu_state.get("persistence_mode"),
             power_limit_w=gpu_state.get("power_limit_w"),
             power_draw_w=gpu_state.get("power_draw_w"),

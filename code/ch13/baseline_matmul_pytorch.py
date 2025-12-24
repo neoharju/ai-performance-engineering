@@ -49,6 +49,8 @@ class BaselineMatmulPyTorchBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.B = None
         self.C = None
         self.bias = None
+        self.residual = None
+        self.scale = 0.125
         # Use larger matrices to show more difference
         self.m = 4096
         self.n = 4096
@@ -59,7 +61,7 @@ class BaselineMatmulPyTorchBenchmark(VerificationPayloadMixin, BaseBenchmark):
             tokens_per_iteration=float(tokens),
         )
         # Register workload metadata at init time for compliance check
-        bytes_per_iter = (self.m * self.k + self.k * self.n + self.m * self.n * 2) * 4
+        bytes_per_iter = (self.m * self.k + self.k * self.n + self.m * self.n * 3) * 4
         self.register_workload_metadata(
             requests_per_iteration=1.0,
             tokens_per_iteration=float(tokens),
@@ -76,23 +78,27 @@ class BaselineMatmulPyTorchBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.B = torch.randn(self.k, self.n, device=self.device, dtype=torch.float32)
         self.C = torch.empty(self.m, self.n, device=self.device, dtype=torch.float32)
         self.bias = torch.randn(self.m, self.n, device=self.device, dtype=torch.float32)
+        self.residual = torch.randn(self.m, self.n, device=self.device, dtype=torch.float32)
         
         # Warmup
-        _ = torch.relu(torch.matmul(self.A, self.B) + self.bias)
+        out = torch.matmul(self.A, self.B)
+        out = torch.relu(out + self.bias)
+        out = (out + self.residual) * self.scale
         self._synchronize()
     
     def benchmark_fn(self) -> None:
         """Function to benchmark - PyTorch matmul."""
-        assert self.A is not None and self.B is not None and self.bias is not None
+        assert self.A is not None and self.B is not None and self.bias is not None and self.residual is not None
         with self._nvtx_range("baseline_matmul_pytorch"):
             # Standard PyTorch matrix multiplication
             out = torch.matmul(self.A, self.B)
-            self.C = torch.relu(out + self.bias)
+            out = torch.relu(out + self.bias)
+            self.C = (out + self.residual) * self.scale
         self._synchronize()
 
     def capture_verification_payload(self) -> None:
         self._set_verification_payload(
-            inputs={"A": self.A, "B": self.B, "bias": self.bias},
+            inputs={"A": self.A, "B": self.B, "bias": self.bias, "residual": self.residual},
             output=self.C.detach().clone(),
             batch_size=self.m,
             parameter_count=0,
@@ -106,7 +112,7 @@ class BaselineMatmulPyTorchBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
     def teardown(self) -> None:
         """Cleanup."""
-        del self.A, self.B, self.C, self.bias
+        del self.A, self.B, self.C, self.bias, self.residual
         torch.cuda.empty_cache()
 
     def get_config(self) -> BenchmarkConfig:
@@ -129,7 +135,7 @@ class BaselineMatmulPyTorchBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
     def validate_result(self) -> Optional[str]:
         """Validate benchmark result."""
-        if self.A is None or self.B is None or self.bias is None:
+        if self.A is None or self.B is None or self.bias is None or self.residual is None:
             return "Tensors not initialized"
         return None
 
