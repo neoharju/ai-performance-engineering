@@ -1,8 +1,8 @@
 """baseline_fp8_static.py - Dynamic-scale overhead baseline for static FP8 quantization (Ch13).
 
-This baseline models the *overhead* of dynamic FP8 scaling (per-forward amax + scale
-derivation) while keeping the *numerical output invariant* versus the optimized
-static-quantization path.
+This baseline models the *overhead* of dynamic FP8 scaling (per-forward amax
+reductions and scale derivation) while keeping the *numerical output invariant*
+versus the optimized static-quantization path.
 
 WHY THIS DESIGN:
 - Dynamic scaling overhead is real (extra reductions + scale math).
@@ -86,8 +86,8 @@ class BaselineFP8StaticBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
         with torch.no_grad():
             # Dynamic scaling overhead (not applied to quantization for output parity).
-            _ = self.x.abs().max()
-            _ = self.static_linear.weight.abs().max()
+            _ = self.x.abs().amax(dim=-1)
+            _ = self.static_linear.weight.abs().amax(dim=1)
             self.output = self.static_linear(self.x)
         self._synchronize()
 

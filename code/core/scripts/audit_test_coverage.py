@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Audit test coverage for all 94 validity issues / anti-cheat protections.
+Audit test coverage for all 95 validity issues / anti-cheat protections.
 
 This script:
 1. Extracts all documented protections from README.md
@@ -45,6 +45,7 @@ PROTECTIONS = {
     # WORKLOAD (11 issues)
     "Workload": [
         ("Precision Mismatch", "precision|input.*signature.*dtype"),
+        ("Backend Precision Policy Drift", "backend.*policy|precision.*policy|matmul.*precision"),
         ("Undeclared Shortcuts", "workload.*invariant|shortcut"),
         ("Early Exit", "config.*immutab|early.*exit"),
         ("Batch Shrinking", "input.*signature.*batch"),

@@ -35,7 +35,7 @@ class OptimizedDualPipelineBenchmark(VerificationPayloadMixin, BaseBenchmark):
         super().__init__()
         # Use a small, explicit stream count to reduce per-call stream overhead
         # while still demonstrating overlap.
-        self.num_streams = 2
+        self.num_streams = 4
         # Skip on hardware without DSMEM/cluster support to avoid launch failures.
         ensure_dsmem_supported(description="warp-specialized cluster pipelines")
         self.ext = _load_optimized_extension()
@@ -46,7 +46,7 @@ class OptimizedDualPipelineBenchmark(VerificationPayloadMixin, BaseBenchmark):
         # Match constants from baseline for fair comparison
         self.tile_elems = 1024
         # Increase tile count so stream-management overhead is amortized.
-        self.tiles = 4096
+        self.tiles = 8192
         self.baseline_total_elements = self.tiles * self.tile_elems
         # Warp specialization benchmark - fixed dimensions for pipeline analysis
 

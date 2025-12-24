@@ -108,6 +108,14 @@ PROTECTIONS = {
             ("core/harness/benchmark_harness.py", r"enforce_config_immutability"),
         ],
     },
+    "backend_policy_immutability": {
+        "description": "Detect backend precision policy mutations during timing",
+        "evidence": [
+            ("core/harness/validity_checks.py", r"class PrecisionPolicyState"),
+            ("core/harness/validity_checks.py", r"def capture_precision_policy_state"),
+            ("core/harness/benchmark_harness.py", r"check_precision_policy_consistency"),
+        ],
+    },
     
     # Memory Protections
     "memory_allocation_tracker": {

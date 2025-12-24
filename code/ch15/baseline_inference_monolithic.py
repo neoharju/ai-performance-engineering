@@ -72,8 +72,8 @@ class BaselineInferenceMonolithicBenchmark(VerificationPayloadMixin, BaseBenchma
         self._history: Dict[str, List[float]] = {"ttft": [], "tpot": []}
         # Workload dimensions for signature matching
         self.batch_size = 1
-        self.prefill_seq = 256
-        self.num_tokens = 16
+        self.prefill_seq = 64
+        self.num_tokens = 128
         self._workload = WorkloadMetadata(
             requests_per_iteration=1.0,
             tokens_per_iteration=self.prefill_seq + self.num_tokens,
@@ -84,7 +84,7 @@ class BaselineInferenceMonolithicBenchmark(VerificationPayloadMixin, BaseBenchma
         """Setup: initialize model and data."""
         torch.manual_seed(42)
         torch.cuda.manual_seed_all(42)
-        self.model = SimpleLLM(vocab_size=10000, hidden_dim=1024, num_layers=12).to(self.device).to(torch.bfloat16).eval()
+        self.model = SimpleLLM(vocab_size=10000, hidden_dim=512, num_layers=8).to(self.device).to(torch.bfloat16).eval()
         self.prompt = (torch.arange(self.prefill_seq, device=self.device, dtype=torch.int64) % 10000).unsqueeze(0)
         self.kv_cache = None
         self.output = None
@@ -106,10 +106,10 @@ class BaselineInferenceMonolithicBenchmark(VerificationPayloadMixin, BaseBenchma
                 torch.cuda.synchronize(self.device)
                 ttft_ms = self._record_stop(request_start)
                 
-                num_tokens = 16
+                num_tokens = self.num_tokens
                 tpot_times_ms = []
                 decoded_tokens = []
-                
+
                 for i in range(num_tokens):
                     token_start = self._record_start()
                     if i == 0:

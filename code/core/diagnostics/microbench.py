@@ -2,7 +2,7 @@
 
 IMPORTANT: These routines are diagnostic tools, not comparable benchmarks.
 They intentionally bypass the benchmark harness and therefore do NOT include
-the 94 validity protections (stream auditing, cache isolation, clock locking,
+the 95 validity protections (stream auditing, cache isolation, clock locking,
 etc.). Use them to sanity-check a system, not to claim baseline-vs-optimized
 speedups.
 """

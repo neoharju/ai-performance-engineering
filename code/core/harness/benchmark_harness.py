@@ -647,6 +647,14 @@ class BenchmarkConfig:
     
     monitor_gpu_state: bool = field(default_factory=lambda: _get_default_value("monitor_gpu_state", True))
     """Monitor GPU temperature, frequency, and power during benchmark."""
+
+    monitor_backend_policy: bool = field(default_factory=lambda: _get_default_value("monitor_backend_policy", True))
+    """Monitor backend precision policy flags for mutation during timing."""
+
+    enforce_backend_policy_immutability: bool = field(
+        default_factory=lambda: _get_default_value("enforce_backend_policy_immutability", True)
+    )
+    """Fail-fast when backend precision policy flags change during timing."""
     
     track_memory_allocations: bool = field(default_factory=lambda: _get_default_value("track_memory_allocations", True))
     """Track memory allocations during benchmark to detect suspicious patterns."""
@@ -3646,6 +3654,7 @@ class BenchmarkHarness:
         from core.harness.validity_checks import (
             reset_cuda_memory_pool, capture_gpu_state, gc_disabled,
             clear_compile_cache, force_tensor_evaluation, validate_environment,
+            capture_precision_policy_state, check_precision_policy_consistency,
             MemoryAllocationTracker, get_active_streams
         )
         
@@ -3678,6 +3687,11 @@ class BenchmarkHarness:
         gpu_state_before = None
         if getattr(config, 'monitor_gpu_state', True) and self.device.type == "cuda":
             gpu_state_before = capture_gpu_state(self.device.index or 0)
+
+        # 3b. Capture backend precision policy before benchmark
+        precision_policy_before = None
+        if getattr(config, 'monitor_backend_policy', True):
+            precision_policy_before = capture_precision_policy_state()
         
         # 4. Start memory allocation tracking
         memory_tracker = None
@@ -4127,6 +4141,21 @@ class BenchmarkHarness:
                     )
         
         # ===== VALIDITY PROTECTIONS (Post-benchmark) =====
+        # Check backend precision policy for unexpected mutation
+        if precision_policy_before is not None and getattr(config, 'monitor_backend_policy', True):
+            precision_policy_after = capture_precision_policy_state()
+            _, policy_warnings = check_precision_policy_consistency(
+                precision_policy_before,
+                precision_policy_after,
+            )
+            if policy_warnings:
+                message = "BACKEND POLICY MUTATION DETECTED: " + " | ".join(policy_warnings)
+                enforce_policy = bool(getattr(config, "enforce_backend_policy_immutability", True))
+                if enforce_policy and (_is_chapter_or_labs_benchmark(benchmark_obj) if benchmark_obj else False):
+                    raise RuntimeError(message)
+                import warnings as warn_module
+                warn_module.warn(message, RuntimeWarning)
+
         # Check GPU state consistency to detect throttling/thermal issues
         if gpu_state_before is not None and getattr(config, 'monitor_gpu_state', True):
             from core.harness.validity_checks import check_gpu_state_consistency

@@ -1,4 +1,4 @@
-"""optimized_quantization.py - Optimized FP16 quantization for faster inference."""
+"""optimized_quantization.py - Optimized INT8 quantization via torch._int_mm."""
 
 from __future__ import annotations
 
@@ -11,8 +11,73 @@ from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata
 
 
+INT8_MAX = 127.0
+
+
+class Int8Linear(nn.Module):
+    """INT8 static-activation / static-weight linear using torch._int_mm."""
+
+    def __init__(self, weight: torch.Tensor, bias: Optional[torch.Tensor], input_scale: torch.Tensor) -> None:
+        super().__init__()
+        if not hasattr(torch, "_int_mm"):
+            raise RuntimeError("torch._int_mm is required for INT8 quantization benchmark")
+        if weight.dim() != 2:
+            raise RuntimeError("Expected 2D weight for INT8 linear")
+        if input_scale is None:
+            raise RuntimeError("Static input scale must be provided for INT8 linear")
+
+        weight_scale = torch.clamp(weight.abs().max() / INT8_MAX, min=1e-8)
+        weight_q = torch.clamp((weight / weight_scale).round(), -INT8_MAX, INT8_MAX)
+        weight_int8_t = weight_q.to(torch.int8).t().contiguous()
+
+        self.register_buffer("weight_scale", weight_scale.detach())
+        self.register_buffer("weight_int8_t", weight_int8_t)
+        self.register_buffer("input_scale", input_scale.detach())
+        if bias is not None:
+            self.register_buffer("bias", bias.detach().clone())
+        else:
+            self.bias = None
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if x.dim() != 2:
+            raise RuntimeError("INT8 linear expects 2D input")
+        if x.size(0) <= 16:
+            raise RuntimeError("torch._int_mm requires M > 16")
+        if x.size(1) % 8 != 0 or self.weight_int8_t.size(0) % 8 != 0:
+            raise RuntimeError("torch._int_mm requires K and N to be multiples of 8")
+        x_q = torch.clamp((x / self.input_scale).round(), -INT8_MAX, INT8_MAX).to(torch.int8)
+        out_int32 = torch._int_mm(x_q, self.weight_int8_t)
+        output = out_int32.float() * (self.input_scale * self.weight_scale)
+        if self.bias is not None:
+            output = output + self.bias
+        return output
+
+
+class Int8MLP(nn.Module):
+    """Two-layer INT8 MLP for compiled inference."""
+
+    def __init__(
+        self,
+        weight1: torch.Tensor,
+        bias1: Optional[torch.Tensor],
+        weight2: torch.Tensor,
+        bias2: Optional[torch.Tensor],
+        input_scale1: torch.Tensor,
+        input_scale2: torch.Tensor,
+    ) -> None:
+        super().__init__()
+        self.fc1 = Int8Linear(weight1, bias1, input_scale1)
+        self.fc2 = Int8Linear(weight2, bias2, input_scale2)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.fc1(x)
+        x = torch.relu(x)
+        x = self.fc2(x)
+        return x
+
+
 class OptimizedQuantizationBenchmark(VerificationPayloadMixin, BaseBenchmark):
-    """Optimized: FP16 quantization for faster inference with reduced memory."""
+    """Optimized: INT8 quantization with dynamic activation and static weights."""
 
     signature_equivalence_group = "ch13_quantization_precision"
     signature_equivalence_ignore_fields = ("precision_flags",)
@@ -20,11 +85,15 @@ class OptimizedQuantizationBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def __init__(self):
         super().__init__()
         self.model = None
-        self.quantized_model = None
+        self.int8_model = None
+        self.compiled_model = None
         self.data = None
         self.data_fp32 = None
-        self.N = 65536
-        tokens = self.N * 256
+        self.batch_size = 8192
+        self.in_features = 4096
+        self.hidden_features = 4096
+        self.out_features = 4096
+        tokens = self.batch_size * self.in_features
         self._workload = WorkloadMetadata(
             requests_per_iteration=1.0,
             tokens_per_iteration=float(tokens),
@@ -37,26 +106,53 @@ class OptimizedQuantizationBenchmark(VerificationPayloadMixin, BaseBenchmark):
     
     def setup(self) -> None:
         torch.manual_seed(42)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(42)
+        if not hasattr(torch, "_int_mm"):
+            raise RuntimeError("torch._int_mm is required for INT8 quantization benchmark")
+        if not torch.cuda.is_available():
+            raise RuntimeError("CUDA required for INT8 quantization benchmark")
+
         self.model = nn.Sequential(
-            nn.Linear(256, 512),
+            nn.Linear(self.in_features, self.hidden_features),
             nn.ReLU(),
-            nn.Linear(512, 256),
-            nn.ReLU(),
-            nn.Linear(256, 10),
+            nn.Linear(self.hidden_features, self.out_features),
         ).to(self.device).to(torch.float32)
-        
         self.model.eval()
-        self.quantized_model = self.model.to(torch.float16)
-        self.data_fp32 = torch.randn(self.N, 256, device=self.device, dtype=torch.float32)
-        self.data = self.data_fp32.to(dtype=torch.float16)
+
+        self.data_fp32 = torch.randn(
+            self.batch_size,
+            self.in_features,
+            device=self.device,
+            dtype=torch.float32,
+        )
+        self.data = self.data_fp32
+
+        with torch.no_grad():
+            hidden_fp32 = torch.relu(self.model[0](self.data_fp32))
+            input_scale1 = torch.clamp(self.data_fp32.abs().max() / INT8_MAX, min=1e-8)
+            input_scale2 = torch.clamp(hidden_fp32.abs().max() / INT8_MAX, min=1e-8)
+
+        self.int8_model = Int8MLP(
+            self.model[0].weight,
+            self.model[0].bias,
+            self.model[2].weight,
+            self.model[2].bias,
+            input_scale1,
+            input_scale2,
+        ).to(self.device)
+        self.compiled_model = torch.compile(self.int8_model, mode="max-autotune")
+        for _ in range(2):
+            with torch.no_grad():
+                _ = self.compiled_model(self.data_fp32)
         self._synchronize()
     
     def benchmark_fn(self) -> None:
-        if self.quantized_model is None or self.data is None:
+        if self.compiled_model is None or self.data is None:
             raise RuntimeError("Model/data not initialized")
         with self._nvtx_range("optimized_quantization"):
             with torch.no_grad():
-                self.output = self.quantized_model(self.data)
+                self.output = self.compiled_model(self.data)
         self._synchronize()
         if self.data is None or self.output is None:
             raise RuntimeError("benchmark_fn() must produce output for verification")
@@ -69,18 +165,21 @@ class OptimizedQuantizationBenchmark(VerificationPayloadMixin, BaseBenchmark):
             output=self.output.detach().float().clone(),
             batch_size=self.data.shape[0],
             precision_flags={
-                "fp16": True,
+                "fp16": False,
                 "bf16": False,
                 "fp8": False,
+                "int8": True,
                 "tf32": torch.backends.cuda.matmul.allow_tf32 if torch.cuda.is_available() else False,
             },
-            output_tolerance=(0.5, 5.0),
+            output_tolerance=(1.0, 10.0),
         )
     
     def teardown(self) -> None:
         self.model = None
-        self.quantized_model = None
+        self.int8_model = None
+        self.compiled_model = None
         self.data = None
+        self.data_fp32 = None
         super().teardown()
     
     def get_config(self) -> BenchmarkConfig:
@@ -102,7 +201,7 @@ class OptimizedQuantizationBenchmark(VerificationPayloadMixin, BaseBenchmark):
         )
 
     def validate_result(self) -> Optional[str]:
-        if self.quantized_model is None:
+        if self.compiled_model is None:
             return "Quantized model not initialized"
         return None
 

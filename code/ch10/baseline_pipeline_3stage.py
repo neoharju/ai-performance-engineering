@@ -28,11 +28,11 @@ class BaselinePipeline3StageBenchmark(CudaBinaryBenchmark):
                 "batch_size": 8,
                 "dtype": "float32",
                 "elements": 16 * 1024 * 1024,
-                "segments": 16,
-                "segment_size": 1 * 1024 * 1024,
+                "segments": 32,
+                "segment_size": 512 * 1024,
             },
         )
-        self.register_workload_metadata(bytes_per_iteration=1024 * 1024)
+        self.register_workload_metadata(bytes_per_iteration=512 * 1024)
 
     def get_custom_metrics(self) -> Optional[dict]:
         """Return domain-specific metrics using standardized helper."""
@@ -48,8 +48,8 @@ class BaselinePipeline3StageBenchmark(CudaBinaryBenchmark):
             batch_size=8,
             dtype="float32",
             elements=16 * 1024 * 1024,
-            segments=16,
-            segment_size=1 * 1024 * 1024,
+            segments=32,
+            segment_size=512 * 1024,
         ).to_dict()
 
     def get_output_tolerance(self) -> tuple[float, float]:

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Edge case tests for all 94 anti-cheat protections.
+Edge case tests for all 95 anti-cheat protections.
 
 This file provides comprehensive edge case coverage including:
 - Boundary conditions (exactly at tolerance limits)

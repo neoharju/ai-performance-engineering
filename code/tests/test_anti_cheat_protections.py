@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Comprehensive tests for ALL 94 anti-cheat protections.
+Comprehensive tests for ALL 95 anti-cheat protections.
 
 This file ensures every validity issue documented in README.md has test coverage.
 Each test verifies that our harness detects and prevents the specific attack pattern.
@@ -18,7 +18,7 @@ Categories:
 - Distributed (8 issues)
 - Environment (12 issues)
 - Statistical (8 issues)
-- Evaluation (7 issues)
+- Evaluation (8 issues)
 """
 
 import sys
@@ -334,6 +334,36 @@ class TestWorkloadProtections:
         
         # Attempting to modify should not affect benchmark
         assert config.iterations == original_iters
+
+    def test_backend_precision_policy_mutation_detection(self):
+        """Test that backend precision policy mutations are detected.
+
+        Protection: check_precision_policy_consistency()
+        Attack: Toggle TF32 / matmul precision during timing
+        """
+        from core.harness.validity_checks import (
+            capture_precision_policy_state,
+            check_precision_policy_consistency,
+        )
+
+        if (
+            not hasattr(torch.backends, "cuda")
+            or not hasattr(torch.backends.cuda, "matmul")
+            or not hasattr(torch.backends.cuda.matmul, "allow_tf32")
+        ):
+            raise RuntimeError("Expected torch.backends.cuda.matmul.allow_tf32 to be available for precision policy test.")
+
+        before = capture_precision_policy_state()
+        prev_tf32 = torch.backends.cuda.matmul.allow_tf32
+        torch.backends.cuda.matmul.allow_tf32 = not prev_tf32
+        try:
+            after = capture_precision_policy_state()
+        finally:
+            torch.backends.cuda.matmul.allow_tf32 = prev_tf32
+
+        is_consistent, warnings_list = check_precision_policy_consistency(before, after)
+        assert not is_consistent
+        assert warnings_list
     
     def test_sparsity_mismatch_detection(self):
         """Test that sparsity mismatches are detected.
@@ -2021,5 +2051,5 @@ class TestProtectionSummary:
             tests = [m for m in dir(cls) if m.startswith('test_')]
             total_tests += len(tests)
         
-        # Should cover all 94 protections in README.md
-        assert total_tests >= 94, f"Expected 94+ tests for 94 protections, got {total_tests}"
+        # Should cover all 95 protections in README.md
+        assert total_tests >= 95, f"Expected 95+ tests for 95 protections, got {total_tests}"

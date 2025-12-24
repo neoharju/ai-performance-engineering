@@ -54,8 +54,8 @@ class OptimizedMoeOverlapSharedExpertBenchmark(VerificationPayloadMixin, BaseBen
         self.dtype = torch.bfloat16
         # Simulate expert-parallel comm as many small messages (chunked copies).
         # The comm stream can overlap these copies with shared expert compute.
-        self.comm_chunks = 1
-        self.comm_round_trips = 8
+        self.comm_chunks = 4
+        self.comm_round_trips = 12
 
         tokens = self.batch * self.seq
         self._workload = WorkloadMetadata(

@@ -35,7 +35,7 @@ class BaselineDualPipelineBenchmark(VerificationPayloadMixin, BaseBenchmark):
         super().__init__()
         self.num_streams = 1
         # Increase tile count so stream-management overhead is amortized.
-        self.tiles = 4096
+        self.tiles = 8192
         self.ext = None  # Loaded lazily in setup()
         self.input_a: torch.Tensor | None = None
         self.input_b: torch.Tensor | None = None

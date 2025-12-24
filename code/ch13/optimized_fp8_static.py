@@ -37,6 +37,7 @@ if str(repo_root) not in sys.path:
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from typing import Dict, List, Optional
 from dataclasses import dataclass, field
 from contextlib import contextmanager
@@ -68,12 +69,11 @@ class CalibrationStats:
 
 
 class StaticFP8Linear(nn.Module):
-    """Linear layer with static FP8 quantization."""
+    """Linear layer with static FP8 quantization via torch._scaled_mm."""
     
     def __init__(self, in_features: int, out_features: int, bias: bool = True,
                  device: Optional[torch.device] = None, dtype: torch.dtype = torch.float32):
         super().__init__()
-        self.output = None
         self.in_features = in_features
         self.out_features = out_features
         
@@ -81,9 +81,10 @@ class StaticFP8Linear(nn.Module):
         self.bias = nn.Parameter(torch.empty(out_features, device=device, dtype=dtype)) if bias else None
         
         self.fp8_max = 448.0
-        self.register_buffer('input_scale', torch.tensor(1.0))
-        self.register_buffer('weight_scale', torch.tensor(1.0))
+        self.register_buffer('input_scale', torch.tensor(1.0, dtype=torch.float32, device=device))
+        self.register_buffer('weight_scale', torch.tensor(1.0, dtype=torch.float32, device=device))
         self.register_buffer('is_calibrated', torch.tensor(False))
+        self.register_buffer('weight_fp8', torch.empty(0, device=device, dtype=torch.float8_e4m3fn))
         
         self._calibrating = False
         self._input_stats = CalibrationStats()
@@ -110,6 +111,8 @@ class StaticFP8Linear(nn.Module):
         self.input_scale.fill_(input_scale)
         self.weight_scale.fill_(weight_scale)
         self.is_calibrated.fill_(True)
+        weight_fp8 = (self.weight / self.weight_scale).to(torch.float8_e4m3fn)
+        self.weight_fp8 = weight_fp8.contiguous()
         
         return {"input_scale": input_scale, "weight_scale": weight_scale,
                 "calibration_samples": self._input_stats.num_samples}
@@ -120,20 +123,33 @@ class StaticFP8Linear(nn.Module):
         if self._calibrating:
             self._input_stats.update(x)
             self._weight_stats.update(self.weight)
-            output = torch.nn.functional.linear(x, self.weight, self.bias)
+            output = F.linear(x, self.weight, self.bias)
             
         elif self.is_calibrated:
-            # Static FP8 quantization
-            x_q = torch.clamp(x / self.input_scale, -self.fp8_max, self.fp8_max).round()
-            w_q = torch.clamp(self.weight / self.weight_scale, -self.fp8_max, self.fp8_max).round()
-            
-            output_q = torch.nn.functional.linear(x_q, w_q, bias=None)
-            output = (output_q * self.input_scale * self.weight_scale).to(original_dtype)
-            
+            if not hasattr(torch, "_scaled_mm"):
+                raise RuntimeError("torch._scaled_mm is required for static FP8 benchmark")
+            if not hasattr(torch, "float8_e4m3fn"):
+                raise RuntimeError("torch.float8_e4m3fn is required for static FP8 benchmark")
+            if self.weight_fp8.numel() == 0:
+                raise RuntimeError("freeze_scales() must be called before inference")
+
+            batch_shape = x.shape[:-1]
+            x_2d = x.reshape(-1, x.shape[-1])
+            x_fp8 = (x_2d / self.input_scale).to(torch.float8_e4m3fn)
+
+            output_2d = torch._scaled_mm(
+                x_fp8,
+                self.weight_fp8.T,
+                self.input_scale,
+                self.weight_scale,
+                out_dtype=torch.float32,
+            )
+            output = output_2d.reshape(*batch_shape, -1)
             if self.bias is not None:
                 output = output + self.bias
+            output = output.to(original_dtype)
         else:
-            output = torch.nn.functional.linear(x, self.weight, self.bias)
+            output = F.linear(x, self.weight, self.bias)
         
         return output
 
@@ -292,7 +308,7 @@ class StaticFP8Benchmark(VerificationPayloadMixin, BaseBenchmark):
                 "fp8": True,
                 "tf32": torch.backends.cuda.matmul.allow_tf32,
             },
-            output_tolerance=(0.5, 5.0),
+            output_tolerance=(0.0, 0.0),
         )
 
     def teardown(self) -> None:

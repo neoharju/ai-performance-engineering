@@ -53,9 +53,9 @@ class BaselineMoeOverlapBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.dtype = torch.bfloat16
         # Simulate expert-parallel comm as many small messages (chunked copies).
         # This makes the overlap optimization measurable without changing semantics.
-        self.comm_chunks = 1
+        self.comm_chunks = 4
         # Repeat the transfer to simulate multi-hop / multi-round all-to-all.
-        self.comm_round_trips = 8
+        self.comm_round_trips = 12
 
         tokens = self.batch * self.seq
         self._workload = WorkloadMetadata(

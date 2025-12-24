@@ -1,4 +1,4 @@
-"""baseline_quantization.py - Baseline FP32 precision without quantization."""
+"""baseline_torchao_quantization.py - FP32 baseline for torchao int8 quantization."""
 
 from __future__ import annotations
 
@@ -11,17 +11,17 @@ from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata
 
 
-class BaselineQuantizationBenchmark(VerificationPayloadMixin, BaseBenchmark):
-    """Baseline: FP32 precision without quantization (full precision)."""
+class BaselineTorchAOQuantizationBenchmark(VerificationPayloadMixin, BaseBenchmark):
+    """Baseline: FP32 inference for torchao quantization comparison."""
 
-    signature_equivalence_group = "ch13_quantization_precision"
+    signature_equivalence_group = "ch13_torchao_quantization_precision"
     signature_equivalence_ignore_fields = ("precision_flags",)
-    
+
     def __init__(self):
         super().__init__()
         self.model = None
         self.data = None
-        self.batch_size = 8192
+        self.batch_size = 4096
         self.in_features = 4096
         self.hidden_features = 4096
         self.out_features = 4096
@@ -31,47 +31,53 @@ class BaselineQuantizationBenchmark(VerificationPayloadMixin, BaseBenchmark):
             tokens_per_iteration=float(tokens),
         )
         self.output = None
+        self.parameter_count: int = 0
+        self._verify_input: Optional[torch.Tensor] = None
         self.register_workload_metadata(
             requests_per_iteration=1.0,
             tokens_per_iteration=float(tokens),
         )
-    
+
     def setup(self) -> None:
-        """Setup: Initialize model in FP32."""
         torch.manual_seed(42)
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(42)
+        if not torch.cuda.is_available():
+            raise RuntimeError("CUDA required for torchao quantization benchmark")
+
         self.model = nn.Sequential(
             nn.Linear(self.in_features, self.hidden_features),
             nn.ReLU(),
             nn.Linear(self.hidden_features, self.out_features),
         ).to(self.device).to(torch.float32)
-        
         self.model.eval()
+        self.parameter_count = sum(p.numel() for p in self.model.parameters())
+
         self.data = torch.randn(
             self.batch_size,
             self.in_features,
             device=self.device,
             dtype=torch.float32,
         )
+        self._verify_input = self.data.detach().clone()
         self._synchronize()
-    
+
     def benchmark_fn(self) -> None:
-        """Benchmark: FP32 inference without quantization."""
         if self.model is None or self.data is None:
             raise RuntimeError("Model/data not initialized")
-        with self._nvtx_range("baseline_quantization"):
+        with self._nvtx_range("baseline_torchao_quantization"):
             with torch.no_grad():
                 self.output = self.model(self.data)
         self._synchronize()
-        if self.data is None or self.output is None:
+        if self._verify_input is None or self.output is None:
             raise RuntimeError("benchmark_fn() must produce output for verification")
 
     def capture_verification_payload(self) -> None:
         self._set_verification_payload(
-            inputs={"input": self.data},
+            inputs={"input": self._verify_input},
             output=self.output.detach().float().clone(),
-            batch_size=self.data.shape[0],
+            batch_size=self._verify_input.shape[0],
+            parameter_count=self.parameter_count,
             precision_flags={
                 "fp16": False,
                 "bf16": False,
@@ -80,39 +86,28 @@ class BaselineQuantizationBenchmark(VerificationPayloadMixin, BaseBenchmark):
             },
             output_tolerance=(1.0, 10.0),
         )
-    
+
     def teardown(self) -> None:
-        """Teardown: Clean up resources."""
         self.model = None
         self.data = None
+        self._verify_input = None
         super().teardown()
-    
+
     def get_config(self) -> BenchmarkConfig:
-        """Return benchmark configuration."""
         return BenchmarkConfig(
             iterations=50,
             warmup=5,
         )
-    
+
     def get_workload_metadata(self) -> Optional[WorkloadMetadata]:
         return self._workload
-    
-    def get_custom_metrics(self) -> Optional[dict]:
-        """Return domain-specific metrics using standardized helper."""
-        from core.benchmark.metrics import compute_precision_metrics
-        return compute_precision_metrics(
-            fp32_time_ms=getattr(self, '_fp32_ms', 10.0),
-            reduced_precision_time_ms=getattr(self, '_reduced_ms', 5.0),
-            precision_type="fp8",
-        )
 
     def validate_result(self) -> Optional[str]:
-        """Validate benchmark result."""
         if self.model is None:
             return "Model not initialized"
         return None
 
 
-def get_benchmark() -> BaselineQuantizationBenchmark:
+def get_benchmark() -> BaselineTorchAOQuantizationBenchmark:
     """Factory function for harness discovery."""
-    return BaselineQuantizationBenchmark()
+    return BaselineTorchAOQuantizationBenchmark()

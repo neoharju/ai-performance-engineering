@@ -90,7 +90,7 @@ class TritonMatmulProtonBenchmark(VerificationPayloadMixin, BaseBenchmark):
         schedule: MatmulSchedule,
         *,
         size: int = 4096,
-        size_k: int = 1024,
+        size_k: int = 512,
         iterations: int = 2,
         warmup: int = 10,
         dtype: torch.dtype = torch.float16,

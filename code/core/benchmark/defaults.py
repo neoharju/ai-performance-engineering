@@ -122,6 +122,8 @@ class BenchmarkDefaults:
     deterministic: bool = False
     seed: Optional[int] = 42
     detect_setup_precomputation: bool = True
+    monitor_backend_policy: bool = True
+    enforce_backend_policy_immutability: bool = True
     graph_capture_cheat_ratio_threshold: float = 10.0
     graph_capture_memory_threshold_mb: float = 100.0
     
@@ -195,6 +197,8 @@ class BenchmarkDefaults:
             "backend_policy": self.backend_policy,
             "deterministic": self.deterministic,
             "seed": self.seed,
+            "monitor_backend_policy": self.monitor_backend_policy,
+            "enforce_backend_policy_immutability": self.enforce_backend_policy_immutability,
             "setup_timeout_seconds": self.setup_timeout_seconds,
             "warmup_timeout_seconds": self.warmup_timeout_seconds,
             "measurement_timeout_seconds": self.measurement_timeout_seconds,

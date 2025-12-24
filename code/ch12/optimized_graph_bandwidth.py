@@ -35,8 +35,8 @@ class OptimizedGraphBandwidthBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.src = None
         self.dst = None
         # Match baseline configuration for a fair comparison.
-        self.N = 4_000_000
-        self.iterations = 100
+        self.N = 250_000
+        self.iterations = 2000
         self._extension = None
         self._workload = WorkloadMetadata(
             requests_per_iteration=1.0,

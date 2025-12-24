@@ -27,7 +27,7 @@ from ch15.verification_payload_mixin import VerificationPayloadMixin  # noqa: E4
 class SimpleLLM(nn.Module):
     """Simplified LLM for inference simulation."""
 
-    def __init__(self, *, vocab_size: int = 10000, hidden_dim: int = 1024, num_layers: int = 12) -> None:
+    def __init__(self, *, vocab_size: int = 10000, hidden_dim: int = 512, num_layers: int = 8) -> None:
         super().__init__()
         self.embed = nn.Embedding(vocab_size, hidden_dim)
         self.layers = nn.ModuleList([nn.Linear(hidden_dim, hidden_dim) for _ in range(num_layers)])
@@ -58,8 +58,8 @@ class OptimizedInferenceMonolithicBenchmark(VerificationPayloadMixin, BaseBenchm
         self.output: Optional[torch.Tensor] = None
 
         self.batch_size = 1
-        self.prefill_seq = 256
-        self.num_tokens = 16
+        self.prefill_seq = 64
+        self.num_tokens = 128
         self._workload = WorkloadMetadata(
             requests_per_iteration=1.0,
             tokens_per_iteration=self.prefill_seq + self.num_tokens,
@@ -68,7 +68,7 @@ class OptimizedInferenceMonolithicBenchmark(VerificationPayloadMixin, BaseBenchm
     def setup(self) -> None:
         torch.manual_seed(42)
         torch.cuda.manual_seed_all(42)
-        self.model = SimpleLLM(vocab_size=10000, hidden_dim=1024, num_layers=12).to(self.device).to(torch.bfloat16).eval()
+        self.model = SimpleLLM(vocab_size=10000, hidden_dim=512, num_layers=8).to(self.device).to(torch.bfloat16).eval()
         self.prompt = (torch.arange(self.prefill_seq, device=self.device, dtype=torch.int64) % 10000).unsqueeze(0)
         self.output = None
 

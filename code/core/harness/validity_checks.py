@@ -21,7 +21,7 @@ import statistics
 import sys
 import warnings
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -145,6 +145,87 @@ def check_gpu_state_consistency(before: GPUState, after: GPUState,
     if after.throttle_reason and "Thermal" in after.throttle_reason:
         warnings_list.append(f"GPU throttling detected: {after.throttle_reason}")
     
+    return len(warnings_list) == 0, warnings_list
+
+
+# =============================================================================
+# Backend Precision Policy Guard
+# =============================================================================
+
+@dataclass(frozen=True)
+class PrecisionPolicyState:
+    """Snapshot of backend precision policy flags."""
+    matmul_allow_tf32: Optional[bool] = None
+    cudnn_allow_tf32: Optional[bool] = None
+    float32_matmul_precision: Optional[str] = None
+    allow_fp16_reduced_precision_reduction: Optional[bool] = None
+    allow_bf16_reduced_precision_reduction: Optional[bool] = None
+    cudnn_benchmark: Optional[bool] = None
+    cudnn_deterministic: Optional[bool] = None
+    deterministic_algorithms: Optional[bool] = None
+
+
+def capture_precision_policy_state() -> PrecisionPolicyState:
+    """Capture backend precision policy settings for consistency checks."""
+    if torch is None:
+        return PrecisionPolicyState()
+
+    matmul_allow_tf32 = None
+    allow_fp16_reduced_precision_reduction = None
+    allow_bf16_reduced_precision_reduction = None
+    if hasattr(torch.backends, "cuda") and hasattr(torch.backends.cuda, "matmul"):
+        matmul = torch.backends.cuda.matmul
+        if hasattr(matmul, "allow_tf32"):
+            matmul_allow_tf32 = bool(matmul.allow_tf32)
+        if hasattr(matmul, "allow_fp16_reduced_precision_reduction"):
+            allow_fp16_reduced_precision_reduction = bool(matmul.allow_fp16_reduced_precision_reduction)
+        if hasattr(matmul, "allow_bf16_reduced_precision_reduction"):
+            allow_bf16_reduced_precision_reduction = bool(matmul.allow_bf16_reduced_precision_reduction)
+
+    cudnn_allow_tf32 = None
+    cudnn_benchmark = None
+    cudnn_deterministic = None
+    if hasattr(torch.backends, "cudnn"):
+        cudnn = torch.backends.cudnn
+        if hasattr(cudnn, "allow_tf32"):
+            cudnn_allow_tf32 = bool(cudnn.allow_tf32)
+        cudnn_benchmark = bool(cudnn.benchmark)
+        cudnn_deterministic = bool(cudnn.deterministic)
+
+    float32_matmul_precision = None
+    if hasattr(torch, "get_float32_matmul_precision"):
+        float32_matmul_precision = torch.get_float32_matmul_precision()
+
+    deterministic_algorithms = None
+    if hasattr(torch, "are_deterministic_algorithms_enabled"):
+        deterministic_algorithms = bool(torch.are_deterministic_algorithms_enabled())
+
+    return PrecisionPolicyState(
+        matmul_allow_tf32=matmul_allow_tf32,
+        cudnn_allow_tf32=cudnn_allow_tf32,
+        float32_matmul_precision=float32_matmul_precision,
+        allow_fp16_reduced_precision_reduction=allow_fp16_reduced_precision_reduction,
+        allow_bf16_reduced_precision_reduction=allow_bf16_reduced_precision_reduction,
+        cudnn_benchmark=cudnn_benchmark,
+        cudnn_deterministic=cudnn_deterministic,
+        deterministic_algorithms=deterministic_algorithms,
+    )
+
+
+def check_precision_policy_consistency(
+    before: PrecisionPolicyState,
+    after: PrecisionPolicyState,
+) -> Tuple[bool, List[str]]:
+    """Detect changes in backend precision policy settings."""
+    warnings_list: List[str] = []
+    for entry in fields(PrecisionPolicyState):
+        name = entry.name
+        before_val = getattr(before, name)
+        after_val = getattr(after, name)
+        if before_val is None or after_val is None:
+            continue
+        if before_val != after_val:
+            warnings_list.append(f"{name} changed from {before_val} to {after_val}")
     return len(warnings_list) == 0, warnings_list
 
 
@@ -1644,6 +1725,9 @@ __all__ = [
     "GPUState",
     "capture_gpu_state", 
     "check_gpu_state_consistency",
+    "PrecisionPolicyState",
+    "capture_precision_policy_state",
+    "check_precision_policy_consistency",
     
     # Memory Checks
     "get_tensor_addresses",

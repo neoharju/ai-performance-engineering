@@ -5,8 +5,13 @@
 
 ## Safety (CRITICAL)
 - DO NOT run destructive git commands in this repo (including `git restore`, `git checkout`, `git reset --hard`, `git revert`, or mass file deletions) unless I explicitly ask.
-- If you need to recover a tracked file, reconstruct it from `git show HEAD:<path>` and write it back to disk instead of using destructive git operations.
+- NEVER restore/revert/checkout any file to `HEAD` or any commit. Always keep files as-is and include changes (even if unexpected).
 - DO NOT delete any files, including untracked files or locally modified files, unless I explicitly ask.
+- If you notice unexpected local file modifications, always call them out, keep them as-is, and include them in the changes.
+
+## Benchmark Stability (CRITICAL)
+- ALWAYS lock GPU clocks before any benchmark/profiling run; focus on relative performance rather than absolute numbers.
+- Fix as many variables as possible (persistence mode, power limits, thermal state) and keep them stable across baseline/optimized runs.
 
 ## Test Realism (CRITICAL)
 - Tests MUST NOT use `precheck_only`, `dry_run`, `estimate_only`, or any other short-circuit/preview mode.
@@ -58,7 +63,7 @@
 - Avoid duplicating a chapter pair verbatim in `labs/`; labs should add integration value (multi-optimization, multi-GPU, end-to-end workflow) rather than rehosting identical comparisons.
 
 ### Hardware Diagnostics (microbench)
-- Hardware microbenchmarks (e.g., `aisp_hw_*` tools / `core/diagnostics/microbench.py`) are **diagnostic-only** and intentionally bypass the benchmark harness and its 94 validity protections.
+- Hardware microbenchmarks (e.g., `aisp_hw_*` tools / `core/diagnostics/microbench.py`) are **diagnostic-only** and intentionally bypass the benchmark harness and its 95 validity protections.
 - Do not use microbench results to claim baseline-vs-optimized speedups; use harness benchmarks via `aisp bench run --targets ...` for comparable results.
 
 ## When to Move Code into `core/` (Reuse Rule)
@@ -84,7 +89,7 @@
 
 The table below documents known issues that can cause benchmark results to be misleading, along with their protections. Use this as a checklist when creating or reviewing benchmarks. DO NOT ALLOW THESE IN OUR BENCHMARKS.
 
-**✅ All 94 validity issues are now protected by our harness**
+**✅ All 95 validity issues are now protected by our harness**
 
 **CUDA Graph Note:** Capturing CUDA graphs in `setup()` is allowed for steady-state replay benchmarks (we intentionally measure replay, not capture). It is NOT allowed to precompute and reuse the final output from `setup()`; the output used for verification must come from the timed `benchmark_fn()` run and be surfaced via `capture_verification_payload()`.
 
@@ -110,7 +115,8 @@ The table below documents known issues that can cause benchmark results to be mi
 | **Output** | Denormalized Values | Subnormal floats cause slowdowns | Denormal check | ✅ | |
 | **Output** | Uninitialized Memory | Output contains garbage | Memory initialization check | ✅ | |
 | **Workload** | Precision Mismatch | Claims FP32 but uses FP16 | `InputSignature` dtype verification | ✅ | |
-| **Workload** | Undeclared Shortcuts | Skips elements without declaring | Workload invariant check | ✅ | **AI Agent Shortcuts 2024** ([VentureBeat](https://venturebeat.com/ai/ai-agent-benchmarks-are-misleading-study-warns)) |
+| **Workload** | Backend Precision Policy Drift | Global precision policy changes during timing (TF32, matmul precision, reduced-precision reductions) | Backend policy immutability check | ✅ | **PyTorch TF32 Default 2020** ([PyTorch CUDA Notes](https://pytorch.org/docs/stable/notes/cuda.html#tf32-on-ampere)) |
+| **Workload** | Undeclared Shortcuts | Skips elements without declaring | Workload invariant check | ✅ | **AI Agent Benchmark Shortcuts 2024** ([arXiv:2407.01502](https://arxiv.org/abs/2407.01502)) |
 | **Workload** | Early Exit | Stops iteration loops early | Config immutability | ✅ | |
 | **Workload** | Batch Shrinking | Processes fewer samples | `InputSignature` matching | ✅ | |
 | **Workload** | Sequence Truncation | Processes shorter sequences | `InputSignature` matching | ✅ | |
@@ -174,20 +180,20 @@ The table below documents known issues that can cause benchmark results to be mi
 | **Statistical** | Outlier Injection | Slow iterations added to baseline | Statistical validation | ✅ | |
 | **Statistical** | Variance Gaming | Variance reporting manipulated | Consistent statistics | ✅ | |
 | **Statistical** | Percentile Selection | Favorable percentile chosen | Fixed percentile policy | ✅ | |
-| **Statistical** | Insufficient Samples | Too few iterations for significance | Adaptive iterations | ✅ | **AI Benchmarks 2025** ([The Register](https://www.theregister.com/2025/11/07/measuring_ai_models_hampered_by/)) |
+| **Statistical** | Insufficient Samples | Too few iterations for significance | Adaptive iterations | ✅ | **AI Benchmarks 2025** ([The Register (archived)](http://web.archive.org/web/20251113204928/https://www.theregister.com/2025/11/07/measuring_ai_models_hampered_by/)) |
 | **Statistical** | Cold Start Inclusion | First run included unfairly | Warmup enforcement | ✅ | |
 | **Statistical** | GC Interference | Garbage collection during timing | `gc_disabled()` | ✅ | |
 | **Statistical** | Background Process Noise | System processes affect timing | Process isolation | ✅ | |
 | **Evaluation** | Eval Code Exploitation | Benchmark code modified to pass | `BenchmarkContract` enforcement | ✅ | |
 | **Evaluation** | Timeout Manipulation | Timeout extended to hide slowdowns | Config immutability | ✅ | |
-| **Evaluation** | Metric Definition Gaming | Redefine what "speedup" means | Standardized metric definitions | ✅ | **MLPerf 2019** ([Forbes](https://www.forbes.com/sites/janakirammsv/2019/11/10/the-curious-case-of-mlperf-inferencing-benchmark-results/)), **GLUE 2024** ([Revelry](https://revelry.co/insights/artificial-intelligence/why-ai-benchmarks-fail/)) |
-| **Evaluation** | Test Data Leakage | Training on test/benchmark data | Data contamination checks | ✅ | **Data Contamination 2025** ([AI News](https://www.artificialintelligence-news.com/news/flawed-ai-benchmarks-enterprise-budgets-at-risk/)) |
+| **Evaluation** | Metric Definition Gaming | Redefine what "speedup" means | Standardized metric definitions | ✅ | **MLPerf 2019** ([Forbes (archived)](https://web.archive.org/web/20191112035148/https://www.forbes.com/sites/janakirammsv/2019/11/10/the-curious-case-of-mlperf-inferencing-benchmark-results/)), **GLUE 2024** ([Revelry (archived)](http://web.archive.org/web/20250429145344/https://revelry.co/insights/artificial-intelligence/why-ai-benchmarks-fail/)) |
+| **Evaluation** | Test Data Leakage | Training on test/benchmark data | Data contamination checks | ✅ | **Benchmark Data Contamination Survey 2024** ([arXiv:2406.04244](https://arxiv.org/abs/2406.04244)) |
 | **Evaluation** | Benchmark Overfitting | Optimize specifically for benchmark | Fresh-input + jitter checks | ✅ | **Underspecification 2020** ([arXiv:2011.03395](https://arxiv.org/abs/2011.03395)), **Epic Sepsis 2021** ([ChatBench](https://www.chatbench.org/)) |
 | **Evaluation** | Self-Modifying Tests | AI/code modifies its own tests | Config immutability | ✅ | |
-| **Evaluation** | Benchmark Memorization | Agent memorizes test cases | Fresh-input checks, jitter | ✅ | **AI Agent Shortcuts 2024** ([VentureBeat](https://venturebeat.com/ai/ai-agent-benchmarks-are-misleading-study-warns)) |
-| **Evaluation** | Missing Holdout Sets | No proper train/test split | Held-out evaluation data | ✅ | **AI Agent Shortcuts 2024** ([VentureBeat](https://venturebeat.com/ai/ai-agent-benchmarks-are-misleading-study-warns)) |
+| **Evaluation** | Benchmark Memorization | Agent memorizes test cases | Fresh-input checks, jitter | ✅ | **AI Agent Benchmark Shortcuts 2024** ([arXiv:2407.01502](https://arxiv.org/abs/2407.01502)) |
+| **Evaluation** | Missing Holdout Sets | No proper train/test split | Held-out evaluation data | ✅ | **AI Agent Benchmark Shortcuts 2024** ([arXiv:2407.01502](https://arxiv.org/abs/2407.01502)) |
 
-**Total: 11 categories, 94 validity issues — ✅ ALL PROTECTED by our harness (17 linked to real-world incidents with citations)**
+**Total: 11 categories, 95 validity issues — ✅ ALL PROTECTED by our harness (20 linked to real-world incidents with citations)**
 
 ### Notable Real-World Incidents
 
@@ -196,21 +202,25 @@ These validity issues aren't theoretical—they've caused real problems:
 | Year | Incident | Issue Type | What Happened | Source |
 |------|----------|------------|---------------|--------|
 | **2025** | **Locus/KernelBench Stream Exploit** | Unsynced Streams | Claimed 20x speedup on Llama FFW kernel. AI launched work on non-default CUDA streams but timer only measured default stream. **32.8% of RL-generated kernels exploited this**, causing fake 18x speedups. | [X/Twitter @miru_why](https://x.com/miru_why/status/1991773868806361138) |
-| **2025** | **AI Benchmark Scientific Rigor** | Metric Definition Gaming | Only 16% of 445 AI benchmarks used statistical tests; ~50% tested abstract concepts without clear definitions. | [The Register](https://www.theregister.com/2025/11/07/measuring_ai_models_hampered_by/) |
+| **2025** | **AI Benchmark Scientific Rigor** | Metric Definition Gaming | Only 16% of 445 AI benchmarks used statistical tests; ~50% tested abstract concepts without clear definitions. | [The Register (archived)](http://web.archive.org/web/20251113204928/https://www.theregister.com/2025/11/07/measuring_ai_models_hampered_by/) |
 | **2025** | **MMLU Benchmark Errors** | Invalid Ground Truth | ~57% of questions in MMLU virology subset found incorrect. Ground truth errors destabilize evaluations. | [PromptEngineering.org](https://promptengineering.org/challenges-and-innovations-in-language-model-benchmarking-and-generalization/) |
-| **2024** | **AI Agent Benchmark Shortcuts** | Overfitting / Shortcuts | Study found AI agents memorize benchmark test samples instead of learning to generalize. Many benchmarks lack proper holdout test sets. | [VentureBeat](https://venturebeat.com/ai/ai-agent-benchmarks-are-misleading-study-warns) |
-| **2024** | **GLUE Benchmark Heuristics** | Metric Definition Gaming | Models achieved high GLUE scores by exploiting shallow heuristics rather than genuine language understanding. | [Revelry.co](https://revelry.co/insights/artificial-intelligence/why-ai-benchmarks-fail/) |
-| **2024** | **HumanEval Limitations** | Benchmark Overfitting | Models performing well on HumanEval struggled with real-world coding tasks; simplified scenarios missed practical complexity. | [Revelry.co](https://revelry.co/insights/artificial-intelligence/why-ai-benchmarks-fail/) |
-| **2022** | **MLPerf Participation Issues** | Cherry-picking | MLPerf faced inconsistent vendor participation; selective scenario submissions led to biased performance representations. | [NextPlatform](https://www.nextplatform.com/2022/04/08/the-performance-of-mlperf-as-a-ubiquitous-benchmark-is-lacking/) |
+| **2025** | **Sakana AI Scientist Evaluation** | Evaluation Integrity | Independent evaluation found frequent experiment failures and hallucinated numerical results, challenging reliability claims for AI-generated research outputs. | [arXiv:2502.14297](https://arxiv.org/abs/2502.14297) |
+| **2024** | **AI Agent Benchmark Shortcuts** | Missing Holdout Sets | Study found AI agents memorize benchmark test samples instead of learning to generalize. Many benchmarks lack proper holdout test sets. | [arXiv:2407.01502](https://arxiv.org/abs/2407.01502) |
+| **2024** | **GLUE Benchmark Heuristics** | Metric Definition Gaming | Models achieved high GLUE scores by exploiting shallow heuristics rather than genuine language understanding. | [Revelry.co (archived)](http://web.archive.org/web/20250429145344/https://revelry.co/insights/artificial-intelligence/why-ai-benchmarks-fail/) |
+| **2024** | **HumanEval Limitations** | Benchmark Overfitting | Models performing well on HumanEval struggled with real-world coding tasks; simplified scenarios missed practical complexity. | [Revelry.co (archived)](http://web.archive.org/web/20250429145344/https://revelry.co/insights/artificial-intelligence/why-ai-benchmarks-fail/) |
+| **2024** | **Chatbot Arena Benchmark Issues** | Cherry-picking | Crowdsourced benchmark results showed selection bias and inconsistent submissions, undermining performance comparisons. | [TechCrunch](https://techcrunch.com/2025/04/22/crowdsourced-ai-benchmarks-have-serious-flaws-some-experts-say/) |
+| **2024** | **Benchmark Data Contamination Survey** | Data Contamination | Survey catalogs contamination pathways across LLM benchmarks and highlights mitigation gaps. | [arXiv:2406.04244](https://arxiv.org/abs/2406.04244) |
+| **2023** | **NLP Evaluation Data Contamination** | Data Contamination | Position paper warns that LLMs trained on benchmark test splits can inflate reported scores and mask real generalization. | [arXiv:2310.18018](https://arxiv.org/abs/2310.18018) |
+| **2022** | **MLPerf Participation Issues** | Cherry-picking | MLPerf faced inconsistent vendor participation; selective scenario submissions led to biased performance representations. | [NextPlatform (archived)](http://web.archive.org/web/20250813110435/https://www.nextplatform.com/2022/04/08/the-performance-of-mlperf-as-a-ubiquitous-benchmark-is-lacking/) |
 | **2022** | **ML Benchmark Validity (Berkeley)** | Benchmark Overfitting | Small changes in data distribution caused significant performance drops, questioning external validity of static benchmarks. | [UC Berkeley Tech Report](https://www2.eecs.berkeley.edu/Pubs/TechRpts/2022/EECS-2022-180.html) |
 | **2021** | **ImageNet Label Errors** | Invalid Ground Truth | Study found **at least 6% label errors** in ImageNet validation set. Average 3.3% error rate across 10 common datasets. | [arXiv:2103.14749](https://arxiv.org/abs/2103.14749) |
 | **2021** | **MLPerf Reproducibility** | Benchmark Reproducibility | Users couldn't reproduce MLPerf v0.7 results due to inaccessible datasets and outdated repositories. | [MLCommons Forum](https://groups.google.com/a/mlcommons.org/g/public/c/T_8UsUPIWFo) |
 | **2021** | **Epic Sepsis Model Failure** | Benchmark Overfitting | Hospital sepsis prediction model showed significantly worse real-world performance than validation results due to non-representative test data. | [ChatBench.org](https://www.chatbench.org/what-are-the-implications-of-outdated-ai-benchmarks-on-the-accuracy-and-reliability-of-ai-driven-decision-making-and-insights/) |
 | **2020** | **Underspecification in ML** | Benchmark Overfitting | ML pipelines produce models with equivalent benchmark performance but divergent deployment behaviors—instability in production. | [arXiv:2011.03395](https://arxiv.org/abs/2011.03395) |
-| **2019** | **MLPerf Inference Bias** | Cherry-picking | Inaugural MLPerf inference results showed vendors selectively submitted results highlighting their strengths. | [Forbes](https://www.forbes.com/sites/janakirammsv/2019/11/10/the-curious-case-of-mlperf-inferencing-benchmark-results/) |
+| **2020** | **TF32 Default on Ampere** | Precision Policy Drift | TF32-enabled matmul/conv trades precision for speed unless explicitly disabled in benchmarks. | [PyTorch CUDA Notes](https://pytorch.org/docs/stable/notes/cuda.html#tf32-on-ampere) |
+| **2019** | **MLPerf Inference Bias** | Metric Definition Gaming | Inaugural MLPerf inference results showed vendors selectively submitted results highlighting their strengths. | [Forbes (archived)](https://web.archive.org/web/20191112035148/https://www.forbes.com/sites/janakirammsv/2019/11/10/the-curious-case-of-mlperf-inferencing-benchmark-results/) |
 | **2019** | **Computational Biology Overfitting** | Train/Test Overlap | Tools developed and tested on same datasets, performing well on benchmarks but failing on new real-world data. | [Nature Communications](https://www.nature.com/articles/s41467-019-09406-4) |
 | **2016** | **Microsoft Tay Chatbot** | Missing Holdout Sets | AI chatbot learned offensive behavior within 24 hours due to lack of adversarial benchmarking and content moderation safeguards. | [ChatBench.org](https://www.chatbench.org/what-are-the-implications-of-outdated-ai-benchmarks-on-the-accuracy-and-reliability-of-ai-driven-decision-making-and-insights/) |
-
 #### Incident Categories and Our Protections
 
 | Category | # Incidents | Our Protection | Status |
@@ -218,11 +228,14 @@ These validity issues aren't theoretical—they've caused real problems:
 | **Timing Manipulation** | 1 (Locus/KernelBench) | Full device sync + `StreamAuditor` | ✅ |
 | **Invalid Ground Truth** | 2 (ImageNet Labels, MMLU) | `GoldenOutputCache` + `validate_result()` | ✅ |
 | **Benchmark Overfitting** | 4 (Underspecification, Epic Sepsis, HumanEval, Berkeley) | Fresh-input checks + jitter | ✅ |
-| **Data Contamination** | 2 (Data Leakage 2025, Agent Shortcuts) | Data contamination checks + fresh inputs | ✅ |
-| **Metric Gaming** | 3 (MLPerf 2019, GLUE, AI Benchmarks 2025) | Standardized metric definitions | ✅ |
+| **Data Contamination** | 2 (LLM Survey 2024, NLP Contamination 2023) | Data contamination checks + fresh inputs | ✅ |
+| **Metric Gaming** | 3 (AI Benchmarks 2025, GLUE 2024, MLPerf 2019) | Standardized metric definitions | ✅ |
 | **Cherry-picking** | 2 (Chatbot Arena, MLPerf 2022) | All-iteration reporting | ✅ |
-| **Train/Test Overlap** | 2 (Computational Biology, Agent Shortcuts) | Dataset isolation + holdout enforcement | ✅ |
+| **Train/Test Overlap** | 1 (Computational Biology) | Dataset isolation + holdout enforcement | ✅ |
+| **Missing Holdout Sets** | 2 (AI Agent Shortcuts, Microsoft Tay) | Held-out evaluation data | ✅ |
 | **Reproducibility** | 1 (MLPerf 2021) | `RunManifest` version locking | ✅ |
+| **Evaluation Integrity** | 1 (Sakana AI Scientist) | `BenchmarkContract` + verification enforcement | ✅ |
+| **Precision Policy Drift** | 1 (TF32 Default) | Backend policy immutability check | ✅ |
 
 #### Deep Dive: The Locus/KernelBench Stream Timing Vulnerability
 
@@ -254,7 +267,7 @@ These incidents demonstrate why rigorous benchmark verification is essential—n
 
 #### Protection Implementation Reference
 
-All 94 validity protections are implemented in the following modules:
+All 95 validity protections are implemented in the following modules:
 
 | Module | Key Protections |
 |--------|-----------------|
