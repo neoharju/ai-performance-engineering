@@ -20,7 +20,7 @@ GB200/GB300 Architecture:
 - Grace CPU: 72 ARM Neoverse V2 cores (144 threads)
 - CPU Memory: 480GB-1TB LPDDR5X
 - NVLink-C2C: 900 GB/s coherent CPU↔GPU bandwidth
-- Up to 8x Blackwell B200 GPUs per system
+- Multiple Blackwell B200 GPUs per system
 - Unified memory address space
 
 Key Optimizations:

@@ -115,10 +115,10 @@ python -m cli.aisp ops distributed topology
 python -m cli.aisp ops advanced optimal --target 10 --difficulty medium
 
 # Auto-generate launch commands
-python -m cli.aisp ops distributed launch --model-params 70 --nodes 2 --gpus 8 --tp 4 --pp 2 --dp 2
+python -m cli.aisp ops distributed launch --model-params 70 --nodes 2 --gpus 4 --tp 2 --pp 2 --dp 1
 
 # Validate configuration before running
-python -m cli.aisp ops distributed validate --model-params 70 --tp 8 --dp 1
+python -m cli.aisp ops distributed validate --model-params 70 --tp 4 --dp 1
 
 # Workload-specific profile
 python -m cli.aisp ops distributed profile --model-params 70 --workload pretraining
@@ -225,7 +225,7 @@ model = analyzer.analyze("llama-3.1-70b")
 sharding = ShardingOptimizer()
 recommendations = sharding.recommend(
     model=model,
-    dp_size=8,
+    dp_size=4,
     gpu_memory_gb=80,  # H100 80GB
     batch_size=4,
     seq_length=4096,
@@ -241,8 +241,8 @@ from core.optimization.parallelism_planner import LaunchCommandGenerator, Launch
 
 config = LaunchConfig(
     num_nodes=2,
-    gpus_per_node=8,
-    tp_size=4,
+    gpus_per_node=4,
+    tp_size=2,
     pp_size=2,
     dp_size=2,
     sharding=ShardingStrategy.ZERO_3,

@@ -221,7 +221,7 @@ class ShardingOptimizer:
             reduce_scatter_gb = base_grads_gb
             
         elif strategy == ShardingStrategy.HSDP:
-            # Hybrid: shard within node (8 GPUs), replicate across nodes
+            # Hybrid: shard within node (multi-GPU), replicate across nodes
             intra_node_size = min(8, dp_size)
             inter_node_size = dp_size // intra_node_size
             
@@ -587,6 +587,5 @@ class ShardingOptimizer:
         lines.extend(["", "=" * 80])
         
         return "\n".join(lines)
-
 
 

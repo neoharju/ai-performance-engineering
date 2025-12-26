@@ -5,7 +5,7 @@ code lives in nanochat directory and is imported from here.
 
 Example runs:
 python -m labs.nanochat_fullstack.scripts.chat_eval -a ARC-Easy
-torchrun --nproc_per_node=8 -m labs.nanochat_fullstack.scripts.chat_eval -- -a ARC-Easy
+torchrun --nproc_per_node=4 -m labs.nanochat_fullstack.scripts.chat_eval -- -a ARC-Easy
 """
 
 import argparse

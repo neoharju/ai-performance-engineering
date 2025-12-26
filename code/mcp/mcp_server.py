@@ -2013,7 +2013,7 @@ def tool_benchmark_triage(params: Dict[str, Any]) -> Dict[str, Any]:
     "Identify performance bottlenecks: memory-bound, compute-bound, communication-bound, host-bound. "
     "Returns: {bottleneck_type, confidence, profile_data, llm_analysis, recommendations, availability}. "
     "⚡ FAST (~2-5s). USE FIRST when: Workload is slow and you don't know why. "
-    "Example: \"Why is my 7B model slow on 8xH100?\" or \"What's the bottleneck at batch 32, seq 4k?\". "
+    "Example: \"Why is my 7B model slow on 4xH100?\" or \"What's the bottleneck at batch 32, seq 4k?\". "
     "mode='both' (default) combines profiling data with LLM analysis for best results. "
     "WORKFLOW by bottleneck_type: "
     "• memory-bound → aisp_profile_memory, aisp_analyze_whatif(max_vram_gb=X) "
@@ -2095,7 +2095,7 @@ def tool_analyze_pareto(params: Dict[str, Any]) -> Dict[str, Any]:
     "Analyze how performance scales with workload size, sequence length, batch size, or GPU count. "
     "Returns: {scaling_efficiency, projections: [{gpus, throughput, efficiency_pct}], bottleneck_at_scale}. "
     "⚡ FAST (~2s). USE when: Projecting performance to larger inputs, planning multi-GPU scaling. "
-    "Example: \"Predict throughput if I double sequence length\" or \"How does it scale from 4 to 8 GPUs?\". "
+    "Example: \"Predict throughput if I double sequence length\" or \"How does it scale from 2 to 4 GPUs?\". "
     "WORKFLOW: aisp_gpu_topology → aisp_analyze_scaling → aisp_distributed_plan. "
     "ALSO USE: aisp_predict_scaling for specific GPU count predictions.",
     {"type": "object", "properties": with_context_params({})}
@@ -2257,7 +2257,7 @@ def tool_optimize_techniques(params: Dict[str, Any]) -> Dict[str, Any]:
     "Plan parallelism strategy: recommend DP/TP/PP/FSDP layout for model size and GPU count. "
     "Returns: {recommended_layout: {tp, pp, dp}, memory_per_gpu_gb, communication_volume, rationale}. "
     "⚡ FAST (~1s). USE when: Setting up distributed training, choosing parallelism degrees. "
-    "Example: \"Plan 70B on 2 nodes x 8 GPUs\" or \"What TP/PP for 14B on 4 GPUs?\". "
+    "Example: \"Plan 70B on 2 nodes x 4 GPUs\" or \"What TP/PP for 14B on 4 GPUs?\". "
     "PARALLELISM explained: "
     "• TP (Tensor Parallel): Split layers across GPUs; needs NVLink; TP ≤ 8 typically "
     "• PP (Pipeline Parallel): Split model stages; good for multi-node "
@@ -2300,7 +2300,7 @@ def tool_distributed_plan(params: Dict[str, Any]) -> Dict[str, Any]:
     "Get NCCL tuning recommendations: environment variables, IB settings, collective algorithms. "
     "Returns: {env_vars: {NCCL_*: value}, algorithm_hints, ib_recommendations, debug_tips}. "
     "USE when: Tuning NCCL for multi-node training, debugging collective performance, IB/RDMA setup. "
-    "Example: \"NCCL settings for 2-node 8xH100\" or \"Tune NCCL for InfiniBand\". "
+    "Example: \"NCCL settings for 2-node 4xH100\" or \"Tune NCCL for InfiniBand\". "
     "ALSO USE: aisp_hw_nccl for NCCL bandwidth testing, aisp_info_network for IB status. ⚡ FAST (~1s). WORKFLOW: aisp_distributed_plan → aisp_distributed_nccl → apply env vars.",
     {"type": "object", "properties": with_context_params({
         "nodes": {"type": "integer", "description": "Number of nodes", "default": 1},
@@ -3850,7 +3850,7 @@ def tool_analyze_comm_overlap(params: Dict[str, Any]) -> Dict[str, Any]:
     "Cloud cost estimation for training/inference workloads. "
     "Returns: {hourly_cost, monthly_cost, cloud_comparison, recommendations}. "
     "⚡ FAST (~1s). USE when: Planning cloud deployments, comparing providers. "
-    "Example: \"Estimate 8xH100 monthly cost\" or \"Compare AWS vs GCP pricing\". "
+    "Example: \"Estimate 4xH100 monthly cost\" or \"Compare AWS vs GCP pricing\". "
     "WORKFLOW: aisp_distributed_plan → aisp_cost_estimate → choose provider. "
     "ALSO USE: aisp_analyze_energy for power/efficiency considerations.",
     {"type": "object", "properties": with_context_params({
@@ -3970,7 +3970,7 @@ def tool_nsys_summary(params: Dict[str, Any]) -> Dict[str, Any]:
     "Predict performance scaling to more GPUs/larger batches. "
     "Returns: {current_perf, predicted_perf, scaling_efficiency, bottleneck_at_scale}. "
     "⚡ FAST (~2s). USE when: Planning scale-up, predicting multi-GPU performance. "
-    "Example: \"Predict 8-GPU scaling\" or \"How will throughput scale from 1 to 4 GPUs?\". "
+    "Example: \"Predict 4-GPU scaling\" or \"How will throughput scale from 1 to 4 GPUs?\". "
     "WORKFLOW: aisp_gpu_topology → aisp_predict_scaling → aisp_distributed_plan. "
     "NOTE: Scaling efficiency typically 80-90% for well-optimized workloads.",
     {"type": "object", "properties": with_context_params({
@@ -4164,7 +4164,7 @@ def tool_hw_ib(params: Dict[str, Any]) -> Dict[str, Any]:
     "Get NCCL collective bandwidth test command and check if nccl-tests is available. "
     "Returns: {tool_available, command, install_instructions, collectives_list}. "
     "USE when: Measuring collective communication bandwidth, benchmarking NCCL performance. "
-    "Example: \"Test NCCL all_reduce bandwidth\" or \"Benchmark 8-GPU allreduce\". "
+    "Example: \"Test NCCL all_reduce bandwidth\" or \"Benchmark 4-GPU allreduce\". "
     "Collectives: all_reduce, all_gather, reduce_scatter, broadcast, reduce, alltoall. ⚡ FAST (~1s). WORKFLOW: aisp_hw_nccl → tune NCCL env vars. NOT FOR: IB hardware (use aisp_hw_ib).",
     {"type": "object", "properties": with_context_params({
         "collective": {"type": "string", "description": "Collective type: all_reduce, all_gather, reduce_scatter, broadcast, reduce, alltoall", "enum": ["all_reduce", "all_gather", "reduce_scatter", "broadcast", "reduce", "alltoall"], "default": "all_reduce"},
@@ -4273,7 +4273,7 @@ def tool_hw_p2p(params: Dict[str, Any]) -> Dict[str, Any]:
     "Generate SLURM job script for cluster submission with optimal settings. "
     "Returns: {script: <slurm_script_content>, filename_suggestion, notes}. "
     "USE when: Submitting training jobs to SLURM clusters, setting up multi-node runs. "
-    "Example: \"Create SLURM script for 2 nodes x 8 GPUs\" or \"Generate sbatch for 70B training\". "
+    "Example: \"Create SLURM script for 2 nodes x 4 GPUs\" or \"Generate sbatch for 70B training\". "
     "Includes: resource requests, NCCL env vars, torchrun launch command. ⚡ FAST (~1s). WORKFLOW: aisp_distributed_plan → aisp_cluster_slurm → submit. NOT FOR: torchrun only (use aisp_launch_plan).",
     {"type": "object", "properties": with_context_params({
         "model": {

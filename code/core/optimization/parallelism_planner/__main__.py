@@ -20,10 +20,10 @@ Examples:
     python -m core.optimization.parallelism_planner recommend llama-3.1-70b --training
     
     # Sharding recommendations
-    python -m core.optimization.parallelism_planner sharding llama-3.1-70b --dp 8 --memory 192
+    python -m core.optimization.parallelism_planner sharding llama-3.1-70b --dp 4 --memory 192
     
     # Generate launch commands for multi-node training
-    python -m core.optimization.parallelism_planner launch --nodes 2 --gpus 8 --tp 4 --pp 2 --dp 2 --sharding zero3
+    python -m core.optimization.parallelism_planner launch --nodes 2 --gpus 4 --tp 2 --pp 2 --dp 1 --sharding zero3
     
     # Cost analysis
     python -m core.optimization.parallelism_planner pareto llama-3.1-70b --gpu-cost 4.0
@@ -36,6 +36,4 @@ from .cli import main
 
 if __name__ == "__main__":
     main()
-
-
 

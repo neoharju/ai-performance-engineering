@@ -1,6 +1,6 @@
 /**
- * NVSHMEM Tensor Parallel Kernels for 8x Blackwell B200
- * =====================================================
+ * NVSHMEM Tensor Parallel Kernels for Multi-GPU Blackwell B200
+ * ============================================================
  *
  * Low-level CUDA kernels for tensor parallelism using NVSHMEM 3.4+ on
  * Blackwell B200 GPUs with NVLink 5.0.
@@ -13,9 +13,9 @@
  * 5. Strided access patterns for sharded tensors
  *
  * Hardware Requirements:
- * - 8x NVIDIA Blackwell B200 GPUs (SM 10.0, NVLink 5.0 @ 1800 GB/s)
+ * - 2-4x NVIDIA Blackwell B200 GPUs (SM 10.0, NVLink 5.0 @ 1800 GB/s)
  * - CUDA 13.0+, NVSHMEM 3.4+
- * - NVSwitch for all-to-all communication
+ * - NVSwitch preferred for all-to-all communication
  *
  * Performance Targets:
  * - AllGather latency: < 10μs for < 1MB tensors
@@ -28,9 +28,9 @@
  *        -lnvshmem -lcuda -o nvshmem_tensor_parallel
  *
  * Run:
- *   nvshmemrun -np 8 ./nvshmem_tensor_parallel --test column_parallel
- *   nvshmemrun -np 8 ./nvshmem_tensor_parallel --test row_parallel
- *   nvshmemrun -np 8 ./nvshmem_tensor_parallel --test all
+ *   nvshmemrun -np 4 ./nvshmem_tensor_parallel --test column_parallel
+ *   nvshmemrun -np 4 ./nvshmem_tensor_parallel --test row_parallel
+ *   nvshmemrun -np 4 ./nvshmem_tensor_parallel --test all
  *
  * Educational Notes:
  * ------------------

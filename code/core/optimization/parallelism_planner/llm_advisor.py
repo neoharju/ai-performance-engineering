@@ -350,14 +350,14 @@ Provide ONLY the JSON output, no additional text.
         """Return advice with prompts when LLM is unavailable."""
         
         # Generate basic engine-based recommendations
-        from .advisor import ParallelismAdvisor, create_mock_topology_8xh100
+        from .advisor import ParallelismAdvisor, create_mock_topology_h100_multigpu
         from .model_analyzer import ModelAnalyzer
         
         analyzer = ModelAnalyzer()
         arch = analyzer.analyze(request.context.model_name)
         
         advisor = ParallelismAdvisor(auto_detect_topology=False)
-        advisor.set_topology(create_mock_topology_8xh100())
+        advisor.set_topology(create_mock_topology_h100_multigpu())
         
         result = advisor.recommend(
             model=request.context.model_name,

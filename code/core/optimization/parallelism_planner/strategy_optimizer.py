@@ -597,31 +597,31 @@ if __name__ == "__main__":
     from .topology_detector import TopologyInfo, GPUInfo, InterconnectInfo
     from .model_analyzer import ModelAnalyzer
     
-    # Create a sample topology (8x B200 with NVSwitch)
+    # Create a sample topology (B200 multi-GPU)
     gpus = [
         GPUInfo(i, "NVIDIA B200", "10.0", 192, 148, "blackwell", True)
-        for i in range(8)
+        for i in range(4)
     ]
     
     topology = TopologyInfo(
-        num_gpus=8,
+        num_gpus=4,
         gpus=gpus,
-        total_memory_gb=192 * 8,
+        total_memory_gb=192 * 4,
         interconnects=[],
-        p2p_matrix=[[True] * 8 for _ in range(8)],
-        bandwidth_matrix=[[900.0] * 8 for _ in range(8)],
+        p2p_matrix=[[True] * 4 for _ in range(4)],
+        bandwidth_matrix=[[900.0] * 4 for _ in range(4)],
         has_nvlink=True,
-        has_nvswitch=True,
+        has_nvswitch=False,
         nvlink_version="5.0",
         max_nvlink_bandwidth_gbps=900,
         numa_nodes=1,
-        gpu_numa_mapping={i: 0 for i in range(8)},
+        gpu_numa_mapping={i: 0 for i in range(4)},
         numa_distance_matrix=[[10]],
         cpu_type="aarch64",
         is_grace_cpu=True,
         has_nvlink_c2c=True,
         num_nodes=1,
-        gpus_per_node=8,
+        gpus_per_node=4,
     )
     
     analyzer = ModelAnalyzer()
@@ -637,4 +637,3 @@ if __name__ == "__main__":
     )
     
     print(optimizer.format_recommendations(recommendations))
-

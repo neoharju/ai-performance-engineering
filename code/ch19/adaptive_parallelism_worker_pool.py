@@ -23,7 +23,7 @@ Key features:
 - SLA-aware dispatching
 
 Usage:
-    pool_manager = AdaptiveParallelismManager(num_gpus=8, model_name="deepseek-r1")
+    pool_manager = AdaptiveParallelismManager(num_gpus=4, model_name="deepseek-r1")
     result = pool_manager.inference(prompt="...", max_tokens=100)
 """
 
@@ -266,32 +266,31 @@ class AdaptiveParallelismManager:
         """
         Initialize worker pools with different parallelism strategies.
         
-        For an 8-GPU system:
-        - Pool 1: TP=4, PP=1 (low latency, short sequences)
-        - Pool 2: TP=2, PP=2 (hybrid, medium sequences)
-        - Pool 3: TP=2, PP=4 (high throughput, long sequences)
+        For a 4-GPU system:
+        - Pool 1: TP=2, PP=1 (low latency, short sequences)
+        - Pool 2: TP=1, PP=2 (hybrid, longer sequences)
         """
-        if self.num_gpus == 8:
-            # Pool 1: Tensor-parallel only (GPUs 0-3)
+        if self.num_gpus == 4:
+            # Pool 1: Tensor-parallel only (GPUs 0-1)
             # Best for: Short latency-sensitive requests
             pool1_config = WorkerPoolConfig(
                 strategy=ParallelismStrategy.TENSOR_PARALLEL,
-                tp_degree=4,
+                tp_degree=2,
                 pp_degree=1,
-                gpu_ids=[0, 1, 2, 3],
+                gpu_ids=[0, 1],
                 max_seq_len=4096,
                 max_batch_size=32,
                 target_latency_ms=50.0
             )
             self.pools.append(WorkerPool(pool1_config, self.model_name))
             
-            # Pool 2: Hybrid TP+PP (GPUs 4-7)
+            # Pool 2: Pipeline parallel (GPUs 2-3)
             # Best for: Long sequences, high memory pressure
             pool2_config = WorkerPoolConfig(
-                strategy=ParallelismStrategy.HYBRID_TP_PP,
-                tp_degree=2,
+                strategy=ParallelismStrategy.PIPELINE_PARALLEL,
+                tp_degree=1,
                 pp_degree=2,
-                gpu_ids=[4, 5, 6, 7],
+                gpu_ids=[2, 3],
                 max_seq_len=1000000,  # Support very long contexts
                 max_batch_size=16,
                 target_latency_ms=200.0
@@ -516,7 +515,7 @@ if __name__ == '__main__':
     print("=" * 70)
     
     # Initialize manager
-    manager = AdaptiveParallelismManager(num_gpus=8, model_name="deepseek-r1")
+    manager = AdaptiveParallelismManager(num_gpus=4, model_name="deepseek-r1")
     
     print("\nInitialized worker pools:")
     for i, pool in enumerate(manager.pools):

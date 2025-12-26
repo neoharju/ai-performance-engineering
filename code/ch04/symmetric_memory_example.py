@@ -419,7 +419,7 @@ def main():
     if world_size < 2:
         if rank == 0:
             print("This example requires at least 2 GPUs.")
-            print("Run with: torchrun --nproc_per_node=2 symmetric_memory_example.py")
+            print("Run with: torchrun --nproc_per_node <num_gpus> symmetric_memory_example.py")
         return
     
     # Check for 4-GPU configuration

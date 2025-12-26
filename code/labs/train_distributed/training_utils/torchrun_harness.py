@@ -6,6 +6,8 @@ import hashlib
 from pathlib import Path
 from typing import Dict, List, Optional
 
+import torch
+
 from core.harness.benchmark_harness import (
     BaseBenchmark,
     BenchmarkConfig,
@@ -48,11 +50,28 @@ class TorchrunScriptBenchmark(BaseBenchmark):
     def skip_output_verification(self) -> bool:
         return True
 
+    def _resolve_nproc_per_node(self) -> Optional[int]:
+        if self._default_nproc_per_node is None and not self._multi_gpu_required:
+            return None
+        if self._default_nproc_per_node is None:
+            if not torch.cuda.is_available():
+                raise RuntimeError("CUDA required for multi-GPU torchrun benchmarks")
+            requested = torch.cuda.device_count()
+        else:
+            requested = int(self._default_nproc_per_node)
+        if self._multi_gpu_required and requested < 2:
+            raise RuntimeError("multi_gpu_required benchmarks need >=2 GPUs")
+        if torch.cuda.is_available():
+            available = torch.cuda.device_count()
+            if requested > available:
+                raise RuntimeError(f"nproc_per_node={requested} exceeds available GPUs ({available})")
+        return requested
+
     def get_config(self) -> BenchmarkConfig:
         cfg = BenchmarkConfig(
             launch_via=LaunchVia.TORCHRUN,
             multi_gpu_required=self._multi_gpu_required,
-            nproc_per_node=self._default_nproc_per_node,
+            nproc_per_node=self._resolve_nproc_per_node(),
         )
         cfg.target_label = self._target_label
         return cfg
@@ -72,11 +91,12 @@ class TorchrunScriptBenchmark(BaseBenchmark):
     
     def get_input_signature(self) -> Optional[dict]:
         """Return input signature for verification (static script identity)."""
+        resolved_nproc = self._resolve_nproc_per_node()
         identity = (
             f"target={self._target_label}|"
             f"script={self._script_path.name}|"
             f"multi_gpu_required={int(self._multi_gpu_required)}|"
-            f"nproc_per_node={self._default_nproc_per_node}"
+            f"nproc_per_node={resolved_nproc}"
         )
         digest = hashlib.sha256(identity.encode("utf-8")).digest()
         workload_id = int.from_bytes(digest[:4], byteorder="little", signed=False) % 10_000_000 + 1

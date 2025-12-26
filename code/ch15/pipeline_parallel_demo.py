@@ -1,9 +1,9 @@
 """pipeline_parallel_demo.py - Chapter 15 pipeline-parallel (PP) demo (tool).
 
-Minimal 2-stage pipeline example using torch.distributed send/recv.
+Minimal multi-stage pipeline example using torch.distributed send/recv.
 
 Run with torchrun, e.g.:
-  torchrun --nproc_per_node 2 ch15/pipeline_parallel_demo.py
+  torchrun --nproc_per_node <num_gpus> ch15/pipeline_parallel_demo.py
 """
 
 from __future__ import annotations
@@ -37,8 +37,15 @@ def _init_dist() -> tuple[int, int, torch.device]:
     return rank, world_size, device
 
 
+def _weight_for_stage(stage_idx: int, hidden: int, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
+    gen = torch.Generator(device="cpu")
+    gen.manual_seed(1234 + stage_idx)
+    weight = torch.randn(hidden, hidden, generator=gen, dtype=torch.float32)
+    return weight.to(device=device, dtype=dtype)
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Chapter 15 pipeline parallel demo (2-stage)")
+    parser = argparse.ArgumentParser(description="Chapter 15 pipeline parallel demo (multi-stage)")
     parser.add_argument("--batch", type=int, default=64, help="Batch size.")
     parser.add_argument("--hidden", type=int, default=4096, help="Hidden dimension.")
     parser.add_argument("--iters", type=int, default=50, help="Timed iterations.")
@@ -50,8 +57,8 @@ def main() -> int:
         raise RuntimeError("CUDA is required for pipeline_parallel_demo.py")
 
     rank, world_size, device = _init_dist()
-    if world_size != 2:
-        raise RuntimeError(f"pipeline_parallel_demo.py requires world_size=2, got {world_size}")
+    if world_size < 2:
+        raise RuntimeError("pipeline_parallel_demo.py requires world_size >= 2")
 
     dtype = torch.float16 if args.dtype == "fp16" else torch.bfloat16
     hidden = int(args.hidden)
@@ -60,9 +67,8 @@ def main() -> int:
     torch.manual_seed(42)
     torch.cuda.manual_seed_all(42)
 
-    # Deterministic weights (both ranks create the same tensors).
-    w1 = torch.randn(hidden, hidden, device=device, dtype=dtype)
-    w2 = torch.randn(hidden, hidden, device=device, dtype=dtype)
+    # Stage-specific weight (deterministic across ranks).
+    w_stage = _weight_for_stage(rank, hidden, device, dtype)
 
     # Buffers for send/recv.
     act = torch.empty(batch, hidden, device=device, dtype=dtype)
@@ -72,24 +78,26 @@ def main() -> int:
     if rank == 0:
         x0 = torch.randn(batch, hidden, device=device, dtype=dtype)
 
-    def stage0_forward(x: torch.Tensor) -> torch.Tensor:
-        return torch.relu(x @ w1.t())
-
-    def stage1_forward(x: torch.Tensor) -> torch.Tensor:
-        return x @ w2.t()
+    def stage_forward(x: torch.Tensor, *, is_last: bool) -> torch.Tensor:
+        y = x @ w_stage.t()
+        return y if is_last else torch.relu(y)
 
     # Warmup.
     with torch.no_grad():
         for _ in range(int(args.warmup)):
             if rank == 0:
                 assert x0 is not None
-                act.copy_(stage0_forward(x0))
+                act.copy_(stage_forward(x0, is_last=False))
                 dist.send(act, dst=1)
-                dist.recv(out, src=1)
-            else:
-                dist.recv(act, src=0)
-                out.copy_(stage1_forward(act))
+                dist.recv(out, src=world_size - 1)
+            elif rank == world_size - 1:
+                dist.recv(act, src=rank - 1)
+                out.copy_(stage_forward(act, is_last=True))
                 dist.send(out, dst=0)
+            else:
+                dist.recv(act, src=rank - 1)
+                out.copy_(stage_forward(act, is_last=False))
+                dist.send(out, dst=rank + 1)
         torch.cuda.synchronize(device)
         dist.barrier()
 
@@ -99,13 +107,17 @@ def main() -> int:
         for _ in range(int(args.iters)):
             if rank == 0:
                 assert x0 is not None
-                act.copy_(stage0_forward(x0))
+                act.copy_(stage_forward(x0, is_last=False))
                 dist.send(act, dst=1)
-                dist.recv(out, src=1)
-            else:
-                dist.recv(act, src=0)
-                out.copy_(stage1_forward(act))
+                dist.recv(out, src=world_size - 1)
+            elif rank == world_size - 1:
+                dist.recv(act, src=rank - 1)
+                out.copy_(stage_forward(act, is_last=True))
                 dist.send(out, dst=0)
+            else:
+                dist.recv(act, src=rank - 1)
+                out.copy_(stage_forward(act, is_last=False))
+                dist.send(out, dst=rank + 1)
         torch.cuda.synchronize(device)
         dist.barrier()
     elapsed_ms = (time.perf_counter() - t0) * 1000.0 / max(int(args.iters), 1)
@@ -117,13 +129,20 @@ def main() -> int:
     max_diff = 0.0
     if rank == 0:
         assert x0 is not None
-        ref = stage1_forward(stage0_forward(x0))
+        ref = x0
+        for stage_idx in range(world_size):
+            w_ref = _weight_for_stage(stage_idx, hidden, device, dtype)
+            ref = ref @ w_ref.t()
+            if stage_idx < world_size - 1:
+                ref = torch.relu(ref)
         max_diff = float((out.float() - ref.float()).abs().max().item())
-        print(f"pipeline_parallel_demo: world=2 -> {worst_ms:.3f} ms/iter, max_abs_diff={max_diff:.3e}")
+        print(
+            f"pipeline_parallel_demo: world={world_size} -> {worst_ms:.3f} ms/iter, "
+            f"max_abs_diff={max_diff:.3e}"
+        )
 
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

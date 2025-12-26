@@ -61,6 +61,15 @@ def _require_torchcomms() -> None:
         raise RuntimeError("torchcomms functional collectives are required for optimized_torchcomms")
 
 
+def _resolve_world_size() -> int:
+    if not torch.cuda.is_available():
+        raise RuntimeError("CUDA required for torchcomms benchmark")
+    world_size = torch.cuda.device_count()
+    if world_size < 2:
+        raise RuntimeError("optimized_torchcomms requires >=2 GPUs.")
+    return world_size
+
+
 def _build_block(hidden: int, device: torch.device) -> nn.Sequential:
     return nn.Sequential(
         nn.Linear(hidden, hidden * 4),
@@ -147,7 +156,7 @@ class OptimizedTorchcommsBenchmark(BaseBenchmark):
     def get_config(self) -> BenchmarkConfig:
         return BenchmarkConfig(
             launch_via=LaunchVia.TORCHRUN,
-            nproc_per_node=2,
+            nproc_per_node=_resolve_world_size(),
             iterations=50,
             warmup=5,
             multi_gpu_required=True,
@@ -167,13 +176,14 @@ class OptimizedTorchcommsBenchmark(BaseBenchmark):
         )
 
     def get_input_signature(self) -> dict:
+        world_size = _resolve_world_size()
         signature = simple_signature(
             batch_size=_DEFAULT_BATCH,
             dtype="float32",
             hidden_size=_DEFAULT_HIDDEN,
             precision_flags=PrecisionFlags(tf32=False),
         )
-        signature.world_size = 2
+        signature.world_size = world_size
         signature.collective_type = "all_reduce"
         return signature
 

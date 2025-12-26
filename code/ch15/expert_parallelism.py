@@ -7,7 +7,7 @@ Single-GPU local-overlap demo:
   python ch15/expert_parallelism.py --mode local
 
 Distributed all-to-all demo (requires torchrun):
-  torchrun --nproc_per_node 4 ch15/expert_parallelism.py --mode distributed
+  torchrun --nproc_per_node <num_gpus> ch15/expert_parallelism.py --mode distributed
 
 Or via the CLI:
   python -m cli.aisp demos ch15-expert-parallel -- --mode local

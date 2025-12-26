@@ -42,10 +42,10 @@ class BaselineKVCacheBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.device = resolve_device()
         self.tensor_dtype = torch.bfloat16
         self.batch_size = 16
-        self.hidden_dim = 8192
+        self.hidden_dim = 16384
         self.num_heads = 64
         self.prefill_seq = 4096
-        self.decode_seq = 64
+        self.decode_seq = 128
         self.decode_steps = 128
         self.prefill_inputs: List[torch.Tensor] = []
         self.decode_inputs: List[torch.Tensor] = []
@@ -98,6 +98,7 @@ class BaselineKVCacheBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.runtime_recipe = recipe
         self.register_workload_metadata(tokens_per_iteration=float(tokens_per_iteration))
         self._calibrate_fp8(recipe)
+        self._warmup_runtime(recipe)
         torch.cuda.synchronize()
 
     def _calibrate_fp8(self, recipe) -> None:
@@ -112,6 +113,21 @@ class BaselineKVCacheBenchmark(VerificationPayloadMixin, BaseBenchmark):
             for decode in self.decode_inputs:
                 _ = self.model(decode, self.cache, offset)
                 offset += decode.shape[1]
+        reset_cache(self.cache)
+
+    def _warmup_runtime(self, recipe) -> None:
+        if self.model is None or self.cache is None or recipe is None:
+            return
+        reset_cache(self.cache)
+        with te_autocast(enabled=True, recipe=recipe):
+            offset = 0
+            for prefill in self.prefill_inputs:
+                _ = self.model(prefill, self.cache, offset)
+                offset += prefill.shape[1]
+            for decode in self.decode_inputs:
+                _ = self.model(decode, self.cache, offset)
+                offset += decode.shape[1]
+        torch.cuda.synchronize()
         reset_cache(self.cache)
 
     def benchmark_fn(self) -> None:

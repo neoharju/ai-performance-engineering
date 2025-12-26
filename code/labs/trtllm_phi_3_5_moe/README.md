@@ -1,7 +1,7 @@
-# Lab - TensorRT-LLM gpt-oss-20b
+# Lab - TensorRT-LLM Phi-3.5-MoE
 
 ## Summary
-Compares Hugging Face Transformers generation against TensorRT-LLM inference for gpt-oss-20b, using identical prompts and greedy decoding.
+Compares Hugging Face Transformers generation against TensorRT-LLM inference for Phi-3.5-MoE, using identical prompts and greedy decoding.
 
 ## Learning Goals
 - Measure runtime speedups from TensorRT-LLM kernels and engine optimizations.
@@ -11,19 +11,20 @@ Compares Hugging Face Transformers generation against TensorRT-LLM inference for
 ## Files
 | File | Description |
 | --- | --- |
-| `baseline_trtllm_gpt_oss_20b.py` | Transformers baseline (eager attention). |
-| `optimized_trtllm_gpt_oss_20b.py` | TensorRT-LLM optimized generation. |
+| `baseline_trtllm_phi_3_5_moe.py` | Transformers baseline (eager attention). |
+| `optimized_trtllm_phi_3_5_moe.py` | TensorRT-LLM optimized generation. |
 | `trtllm_common.py` | Shared prompt/token helpers. |
 
 ## Running
 ```bash
 # Baseline vs optimized (pass engine path for TRT-LLM)
-python -m cli.aisp bench run --targets labs/trtllm_gpt_oss_20b \
-  --target-extra-arg labs/trtllm_gpt_oss_20b:optimized_trtllm_gpt_oss_20b="--engine-path /path/to/engine.plan"
+python -m cli.aisp bench run --targets labs/trtllm_phi_3_5_moe \
+  --target-extra-arg labs/trtllm_phi_3_5_moe:optimized_trtllm_phi_3_5_moe="--engine-path /path/to/engine.plan"
 ```
 
 ## Notes
-- Requires local gpt-oss-20b weights at `gpt-oss-20b/original` (override with `--model-path`).
+- Requires local Phi-3.5-MoE weights at `phi-3.5-moe/original` (override with `--model-path`).
+- Recommended source: `microsoft/Phi-3.5-MoE-instruct`.
 - TRT-LLM must be built with `output_generation_logits=True` support; the benchmark validates `generation_logits`.
 - Keep TRT-LLM precision aligned with the baseline (e.g., FP16) to pass output verification.
 - `trtllm_common.load_trtllm_runtime()` loads the runtime submodule directly and calls `_common._init()` to avoid full-package imports.

@@ -43,8 +43,8 @@ QUICK START:
     aisp bench run -t ch07  # Run benchmarks
     
 EXAMPLES:
-    # Get optimization recommendations for 70B model on 8 GPUs
-    aisp optimize recommend --model-size 70 --gpus 8
+    # Get optimization recommendations for 70B model on 4 GPUs
+    aisp optimize recommend --model-size 70 --gpus 4
     
     # Profile with Nsight Systems
     aisp profile nsys python train.py

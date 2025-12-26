@@ -36,6 +36,15 @@ _DEFAULT_BATCH = 256
 _DEFAULT_HIDDEN = 4096
 
 
+def _resolve_world_size() -> int:
+    if not torch.cuda.is_available():
+        raise RuntimeError("CUDA required for torchcomms benchmark")
+    world_size = torch.cuda.device_count()
+    if world_size < 2:
+        raise RuntimeError("baseline_torchcomms requires >=2 GPUs.")
+    return world_size
+
+
 def _init_distributed() -> tuple[int, int, int]:
     if "RANK" not in os.environ or "WORLD_SIZE" not in os.environ:
         raise RuntimeError("baseline_torchcomms requires torchrun (RANK/WORLD_SIZE missing).")
@@ -125,7 +134,7 @@ class BaselineTorchcommsBenchmark(BaseBenchmark):
     def get_config(self) -> BenchmarkConfig:
         return BenchmarkConfig(
             launch_via=LaunchVia.TORCHRUN,
-            nproc_per_node=2,
+            nproc_per_node=_resolve_world_size(),
             iterations=50,
             warmup=5,
             multi_gpu_required=True,
@@ -145,13 +154,14 @@ class BaselineTorchcommsBenchmark(BaseBenchmark):
         )
 
     def get_input_signature(self) -> dict:
+        world_size = _resolve_world_size()
         signature = simple_signature(
             batch_size=_DEFAULT_BATCH,
             dtype="float32",
             hidden_size=_DEFAULT_HIDDEN,
             precision_flags=PrecisionFlags(tf32=False),
         )
-        signature.world_size = 2
+        signature.world_size = world_size
         signature.collective_type = "all_reduce"
         return signature
 

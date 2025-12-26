@@ -584,8 +584,8 @@ if __name__ == "__main__":
     # Demo
     config = LaunchConfig(
         num_nodes=2,
-        gpus_per_node=8,
-        tp_size=4,
+        gpus_per_node=4,
+        tp_size=2,
         pp_size=2,
         dp_size=2,
         sharding=ShardingStrategy.ZERO_3,

@@ -38,7 +38,7 @@ from core.optimization.moe_inference import (  # noqa: E402
     allocate_kv_cache,
 )
 
-_DEFAULT_WORLD_SIZE = int(os.getenv("AISP_DISAGG_WORLD_SIZE", "4"))
+_ENV_WORLD_SIZE = "AISP_DISAGG_WORLD_SIZE"
 
 
 @dataclass(frozen=True)
@@ -86,6 +86,31 @@ def _build_moe_config(cfg: DisaggConfig) -> MoeInferenceConfig:
         router_noise=0.0,
         dtype=cfg.dtype,
     )
+
+
+def _resolve_world_size() -> int:
+    if not torch.cuda.is_available():
+        raise RuntimeError("CUDA required for multi-GPU disaggregation")
+    available = torch.cuda.device_count()
+    if available < 2:
+        raise RuntimeError("disaggregated_inference_multigpu requires >=2 GPUs.")
+    override = os.getenv(_ENV_WORLD_SIZE)
+    if override is not None:
+        requested = int(override)
+        if requested < 2:
+            raise RuntimeError(f"{_ENV_WORLD_SIZE} must be >= 2 (got {requested}).")
+        if requested > available:
+            raise RuntimeError(
+                f"{_ENV_WORLD_SIZE}={requested} exceeds available GPUs ({available})."
+            )
+        if requested % 2 != 0:
+            raise RuntimeError(f"{_ENV_WORLD_SIZE} must be even for prefill/decode pairing.")
+        return requested
+    if available % 2 != 0:
+        raise RuntimeError(
+            f"{_ENV_WORLD_SIZE} must be set to an even value when device_count={available}."
+        )
+    return available
 
 
 def _init_distributed() -> Tuple[int, int, torch.device]:
@@ -156,10 +181,10 @@ def _run_torchrun_worker(
     warmup: int,
 ) -> None:
     rank, world_size, device = _init_distributed()
-    expected_world_size = _DEFAULT_WORLD_SIZE
+    expected_world_size = _resolve_world_size()
     if world_size != expected_world_size:
         raise RuntimeError(
-            f"Expected world_size={expected_world_size} (set AISP_DISAGG_WORLD_SIZE), got {world_size}."
+            f"Expected world_size={expected_world_size} (set {_ENV_WORLD_SIZE}), got {world_size}."
         )
     if world_size % 2 != 0:
         raise RuntimeError("world_size must be even (prefill ranks + decode ranks)")
@@ -276,7 +301,7 @@ class _DisaggregatedInferenceMultiGPUBenchmark(VerificationPayloadMixin, BaseBen
     def __init__(self, *, overlap: bool, label: str) -> None:
         super().__init__()
         self.cfg = DisaggConfig()
-        self.world_size = _DEFAULT_WORLD_SIZE
+        self.world_size = _resolve_world_size()
         if self.world_size % 2 != 0:
             raise RuntimeError("world_size must be even for disaggregated inference")
         self.num_pairs = self.world_size // 2
@@ -406,7 +431,7 @@ class _DisaggregatedInferenceMultiGPUBenchmark(VerificationPayloadMixin, BaseBen
             script_path=Path(__file__).resolve(),
             script_args=[],
             env={
-                "AISP_DISAGG_WORLD_SIZE": str(self.world_size),
+                _ENV_WORLD_SIZE: str(self.world_size),
                 "NCCL_DEBUG": "WARN",
                 "NCCL_P2P_LEVEL": "NVL",
                 "NCCL_P2P_DISABLE": "0",

@@ -116,7 +116,7 @@ class ProfileGenerator:
         # Calculate optimal parallelism
         # For pretraining: maximize throughput, use large batches
         
-        # TP within NVLink domain (typically 8 GPUs)
+        # TP within NVLink domain (typically a single node)
         tp = min(8, self.num_gpus) if self.has_nvlink else 1
         
         # PP for very large models
@@ -865,6 +865,5 @@ def list_available_profiles() -> List[Dict[str, str]]:
         {"name": "moe", "description": "Mixture-of-Experts training"},
         {"name": "cost_optimized", "description": "Cost-efficient training configuration"}
     ]
-
 
 

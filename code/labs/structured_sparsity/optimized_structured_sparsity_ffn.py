@@ -95,8 +95,9 @@ class OptimizedStructuredSparsityFFNLab(VerificationPayloadMixin, BaseBenchmark)
         return BenchmarkConfig(
             iterations=8,
             warmup=5,
-            nsys_nvtx_include=["structured_sparsity"],
+            nsys_nvtx_include=["structured_sparsity_ffn_lab"],
             enable_cuda_graph=True,
+            ncu_replay_mode="application",
         )
 
     def get_workload_metadata(self) -> Optional[WorkloadMetadata]:

@@ -24,7 +24,7 @@ def main():
     # MCTS command
     mcts_parser = subparsers.add_parser("mcts", help="Run MCTS optimization search")
     mcts_parser.add_argument("--model-size", type=float, default=70, help="Model size in billions")
-    mcts_parser.add_argument("--num-gpus", type=int, default=8, help="Number of GPUs")
+    mcts_parser.add_argument("--num-gpus", type=int, default=4, help="Number of GPUs")
     mcts_parser.add_argument("--gpu-memory", type=float, default=80, help="GPU memory in GB")
     mcts_parser.add_argument("--gpu-arch", default="hopper", help="GPU architecture")
     mcts_parser.add_argument("--goal", default="throughput", 
@@ -179,5 +179,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-
 

@@ -112,7 +112,7 @@ TOOL_METADATA = {
         "speed": "⚡ FAST (~2s)",
         "use_when": "Planning multi-GPU scaling, predicting speedup",
         "not_for": "Single GPU optimization",
-        "examples": ["How will 8 GPUs scale?", "Predict multi-GPU speedup"],
+        "examples": ["How will 4 GPUs scale?", "Predict multi-GPU speedup"],
     },
     "analyze.whatif": {
         "tags": "analyze, whatif, simulation, prediction, upgrade",
@@ -931,7 +931,6 @@ CONSOLIDATED_TOOLS = {
 # Total: 50 tools (down from 88)
 # Core: 4, GPU: 4, System: 3, Profile: 5, Analyze: 5, Optimize: 3
 # Distributed: 3, Inference: 2, Benchmark: 4, AI: 3, Export: 3, HW: 10, HF: 1
-
 
 
 

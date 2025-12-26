@@ -1,4 +1,4 @@
-"""Optimized TensorRT-LLM generation for gpt-oss-20b."""
+"""Baseline Transformers generate for Phi-3.5-MoE."""
 
 from __future__ import annotations
 
@@ -14,27 +14,21 @@ if str(REPO_ROOT) not in sys.path:
 
 from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata
-from labs.trtllm_gpt_oss_20b.trtllm_common import (
-    build_prompt_tokens,
-    load_trtllm_runtime,
-    parse_trtllm_args,
-    slice_logits,
-)
+from labs.trtllm_phi_3_5_moe.trtllm_common import build_prompt_tokens, parse_trtllm_args, slice_logits
 
 
-class OptimizedTrtLlmGptOssBenchmark(VerificationPayloadMixin, BaseBenchmark):
-    """TensorRT-LLM optimized generation for gpt-oss-20b."""
+class BaselineTrtLlmPhi35MoeBenchmark(VerificationPayloadMixin, BaseBenchmark):
+    """Baseline HF Transformers generation for Phi-3.5-MoE."""
 
     def __init__(self) -> None:
         super().__init__()
         args = parse_trtllm_args()
         self.model_path = Path(args.model_path)
-        self.engine_path = Path(args.engine_path) if args.engine_path is not None else None
         self.prompt_len = args.prompt_len
         self.max_new_tokens = args.max_new_tokens
         self.batch_size = args.batch_size
         self.vocab_slice = args.vocab_slice
-        self.runner = None
+        self.model = None
         self.tokenizer = None
         self.input_ids: Optional[torch.Tensor] = None
         self.attention_mask: Optional[torch.Tensor] = None
@@ -51,29 +45,19 @@ class OptimizedTrtLlmGptOssBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
     def setup(self) -> None:
         if not torch.cuda.is_available():
-            raise RuntimeError("CUDA is required for the TRT-LLM gpt-oss-20b benchmark")
+            raise RuntimeError("CUDA is required for the TRT-LLM Phi-3.5-MoE baseline")
         if not self.model_path.exists():
             raise RuntimeError(
                 f"Model path not found: {self.model_path}. "
-                "Provide --model-path to a local gpt-oss-20b checkout."
+                "Provide --model-path to a local Phi-3.5-MoE checkout."
             )
-        if self.engine_path is None:
-            raise RuntimeError("--engine-path is required for TensorRT-LLM benchmarks")
-        if not self.engine_path.exists():
-            raise RuntimeError(f"Engine path not found: {self.engine_path}")
         torch.manual_seed(42)
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(42)
         try:
-            from transformers import AutoTokenizer
+            from transformers import AutoModelForCausalLM, AutoTokenizer
         except ImportError as exc:
-            raise RuntimeError("Transformers is required for tokenizer support") from exc
-        try:
-            runtime = load_trtllm_runtime()
-        except Exception as exc:
-            raise RuntimeError("TensorRT-LLM is required for the optimized benchmark") from exc
-        ModelRunner = runtime.ModelRunner
-        SamplingConfig = runtime.SamplingConfig
+            raise RuntimeError("Transformers is required for the baseline TRT-LLM lab") from exc
 
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_path)
         input_ids, attention_mask = build_prompt_tokens(
@@ -84,41 +68,34 @@ class OptimizedTrtLlmGptOssBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.input_ids = input_ids.to(self.device)
         self.attention_mask = attention_mask.to(self.device)
 
-        if self.engine_path.is_dir():
-            if not hasattr(ModelRunner, "from_dir"):
-                raise RuntimeError("ModelRunner.from_dir is not available; provide an engine file path")
-            self.runner = ModelRunner.from_dir(str(self.engine_path))
-        else:
-            self.runner = ModelRunner.from_engine(str(self.engine_path))
-
-        self.sampling_config = SamplingConfig(
-            end_id=int(self.tokenizer.eos_token_id),
-            pad_id=int(self.tokenizer.pad_token_id),
-            max_new_tokens=self.max_new_tokens,
-            num_beams=1,
-            return_dict=True,
-            top_k=1,
-            top_p=0.0,
-        )
+        self.model = AutoModelForCausalLM.from_pretrained(
+            self.model_path,
+            torch_dtype=torch.float16,
+            attn_implementation="eager",
+            trust_remote_code=False,
+        ).to(self.device)
+        self.model.eval()
         self._synchronize()
 
     def benchmark_fn(self) -> None:
-        if self.runner is None or self.input_ids is None:
+        if self.model is None or self.input_ids is None or self.attention_mask is None:
             raise RuntimeError("Benchmark not initialized")
-        with self._nvtx_range("optimized_trtllm_gpt_oss"):
-            batch_inputs = [self.input_ids[i] for i in range(self.batch_size)]
-            outputs = self.runner.generate(
-                batch_inputs,
-                sampling_config=self.sampling_config,
-                output_generation_logits=True,
-            )
-            if not isinstance(outputs, dict) or "generation_logits" not in outputs:
-                raise RuntimeError("TensorRT-LLM generate must return generation_logits when requested")
-            generation_logits = outputs["generation_logits"]
-            if not generation_logits:
-                raise RuntimeError("TensorRT-LLM generate returned empty generation_logits")
-            logits = generation_logits[0]
-            self.output = slice_logits(logits, self.vocab_slice).float()
+        with self._nvtx_range("baseline_trtllm_phi_3_5_moe"):
+            with torch.inference_mode():
+                outputs = self.model.generate(
+                    input_ids=self.input_ids,
+                    attention_mask=self.attention_mask,
+                    max_new_tokens=self.max_new_tokens,
+                    do_sample=False,
+                    num_beams=1,
+                    use_cache=True,
+                    output_scores=True,
+                    return_dict_in_generate=True,
+                )
+                if not outputs.scores:
+                    raise RuntimeError("Transformers generate did not return scores")
+                logits = outputs.scores[0]
+                self.output = slice_logits(logits, self.vocab_slice).float()
         self._synchronize()
         if self.output is None:
             raise RuntimeError("benchmark_fn() must produce output for verification")
@@ -127,11 +104,14 @@ class OptimizedTrtLlmGptOssBenchmark(VerificationPayloadMixin, BaseBenchmark):
         if self.output is None or self.input_ids is None:
             raise RuntimeError("setup() and benchmark_fn() must run before capture_verification_payload()")
         verify_output = self.output[:1, :128]
+        parameter_count = 0
+        if self.model is not None:
+            parameter_count = sum(p.numel() for p in self.model.parameters())
         self._set_verification_payload(
             inputs={"input_ids": self.input_ids},
             output=verify_output.detach().clone(),
             batch_size=int(self.batch_size),
-            parameter_count=0,
+            parameter_count=parameter_count,
             precision_flags={
                 "fp16": True,
                 "bf16": False,
@@ -146,7 +126,7 @@ class OptimizedTrtLlmGptOssBenchmark(VerificationPayloadMixin, BaseBenchmark):
         )
 
     def teardown(self) -> None:
-        self.runner = None
+        self.model = None
         self.tokenizer = None
         self.input_ids = None
         self.attention_mask = None
@@ -166,7 +146,7 @@ class OptimizedTrtLlmGptOssBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
 
 def get_benchmark() -> BaseBenchmark:
-    return OptimizedTrtLlmGptOssBenchmark()
+    return BaselineTrtLlmPhi35MoeBenchmark()
 
 
 if __name__ == "__main__":

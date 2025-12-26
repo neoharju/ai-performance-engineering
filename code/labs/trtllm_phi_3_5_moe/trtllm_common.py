@@ -1,4 +1,4 @@
-"""Shared helpers for the TRT-LLM gpt-oss-20b lab."""
+"""Shared helpers for the TRT-LLM Phi-3.5-MoE lab."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ import sys
 import torch
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_MODEL_PATH = REPO_ROOT / "gpt-oss-20b" / "original"
+DEFAULT_MODEL_PATH = REPO_ROOT / "phi-3.5-moe" / "original"
 PROMPT_TEXT = "Explain GPU kernel fusion in one sentence."
 
 

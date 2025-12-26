@@ -77,11 +77,8 @@ class BaselineStructuredSparsityFFNBenchmark(VerificationPayloadMixin, BaseBench
             },
             output_tolerance=(1e-2, 1e-2),
             signature_overrides={
-                "ffn_hidden": self.cfg.hidden_size,
-                "ffn_size": self.cfg.ffn_size,
-                "seq_len": self.cfg.seq_len,
                 "sparsity_ratio": 0.5,
-                "ffn_kind": "swiglu",
+                "pruning_enabled": True,
             },
         )
 
@@ -96,7 +93,7 @@ class BaselineStructuredSparsityFFNBenchmark(VerificationPayloadMixin, BaseBench
         return BenchmarkConfig(
             iterations=8,
             warmup=5,
-            nsys_nvtx_include=["structured_sparsity"],
+            nsys_nvtx_include=["structured_sparsity_ffn"],
         )
 
     def get_workload_metadata(self) -> Optional[WorkloadMetadata]:

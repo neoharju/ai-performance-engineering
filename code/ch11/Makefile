@@ -3,7 +3,8 @@
 
 include ../core/common/cuda_arch.mk
 
-NVCC_FLAGS = $(CUDA_NVCC_ARCH_FLAGS)
+NVCC_ALLOW_UNSUPPORTED = --allow-unsupported-compiler
+NVCC_FLAGS = $(CUDA_NVCC_ARCH_FLAGS) $(NVCC_ALLOW_UNSUPPORTED)
 SUFFIX = $(TARGET_SUFFIX)
 
 # Auto-detect all .cu files and derive targets (no manual list maintenance)

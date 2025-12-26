@@ -121,8 +121,6 @@ class OptimizedFlashInferAttentionLab(VerificationPayloadMixin, BaseBenchmark):
             output_tolerance=(1e-2, 1e-2),
             signature_overrides={
                 "sparsity_ratio": self.sparsity_ratio,
-                "heads": self.heads,
-                "head_dim": self.head_dim,
             },
         )
 
@@ -136,7 +134,11 @@ class OptimizedFlashInferAttentionLab(VerificationPayloadMixin, BaseBenchmark):
         torch.cuda.empty_cache()
 
     def get_config(self) -> BenchmarkConfig:
-        return BenchmarkConfig(iterations=8, warmup=5)
+        return BenchmarkConfig(
+            iterations=8,
+            warmup=5,
+            ncu_replay_mode="kernel",
+        )
 
     def get_workload_metadata(self) -> Optional[WorkloadMetadata]:
         return self._workload

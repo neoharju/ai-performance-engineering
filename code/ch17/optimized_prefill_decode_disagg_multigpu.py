@@ -1,65 +1,51 @@
-"""Optimized prefill/decode wrapper that skips when <2 GPUs are available."""
+"""Optimized disaggregated prefill/decode benchmark (multi-GPU torchrun).
+
+Chapter 17: Scaling Disaggregated Prefill and Decode Pipelines
+
+Optimizations:
+- Overlap prefill and decode by pipelining transfers per request.
+"""
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
+import argparse
 
-repo_root = Path(__file__).parent.parent
-if str(repo_root) not in sys.path:
-    sys.path.insert(0, str(repo_root))
-
-from typing import Optional
-
-import torch
-
-from core.benchmark.verification_mixin import VerificationPayloadMixin
-from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig
+from ch17.baseline_prefill_decode_disagg_multigpu import (  # noqa: E402
+    PrefillDecodeConfig,
+    _PrefillDecodeMultiGPUBenchmark,
+    _run_torchrun_worker,
+)
+from core.harness.benchmark_harness import BaseBenchmark  # noqa: E402
 
 
-class _SkipBenchmark(VerificationPayloadMixin, BaseBenchmark):
-    def __init__(self):
-        super().__init__()
-        self.register_workload_metadata(requests_per_iteration=1.0)
+class OptimizedPrefillDecodeDisaggMultiGPUBenchmark(_PrefillDecodeMultiGPUBenchmark):
+    """Pipelined prefill/decode overlap across multi-GPU ranks."""
 
-    def get_config(self) -> BenchmarkConfig:
-        return BenchmarkConfig(iterations=1, warmup=5)
-
-    def get_custom_metrics(self) -> Optional[dict]:
-        """Return domain-specific metrics using standardized helper."""
-        from core.benchmark.metrics import compute_inference_metrics
-        return compute_inference_metrics(
-            ttft_ms=getattr(self, '_ttft_ms', 50.0),
-            tpot_ms=getattr(self, '_tpot_ms', 10.0),
-            total_tokens=getattr(self, 'total_tokens', 256),
-            total_requests=getattr(self, 'total_requests', 1),
-            batch_size=getattr(self, 'batch_size', 1),
-            max_batch_size=getattr(self, 'max_batch_size', 32),
-        )
-
-    def benchmark_fn(self) -> None:
-        raise RuntimeError("SKIPPED: prefill/decode optimized multigpu requires >=2 GPUs")
-
-    def get_verify_output(self) -> torch.Tensor:
-        """Return output tensor for verification comparison."""
-        raise RuntimeError("Multi-GPU required - verification not supported on single GPU")
-
-    def get_input_signature(self) -> dict:
-        """Return input signature for verification."""
-        raise RuntimeError("SKIPPED: prefill/decode multigpu requires >=2 GPUs")
-
-    def get_output_tolerance(self) -> tuple:
-        """Return tolerance for numerical comparison."""
-        return (0.1, 1.0)
+    def __init__(self) -> None:
+        super().__init__(overlap=True, label="optimized_prefill_decode_disagg_multigpu")
 
 
 def get_benchmark() -> BaseBenchmark:
-    if torch.cuda.device_count() < 2:
-        return _SkipBenchmark()
-    from ch17.optimized_prefill_decode_disagg import OptimizedDisaggregatedBenchmark
-    return OptimizedDisaggregatedBenchmark()
+    return OptimizedPrefillDecodeDisaggMultiGPUBenchmark()
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--iters", type=int, default=4)
+    parser.add_argument("--warmup", type=int, default=3)
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = _parse_args()
+    _run_torchrun_worker(
+        PrefillDecodeConfig(),
+        overlap=True,
+        label="optimized_prefill_decode_disagg_multigpu",
+        iters=int(args.iters),
+        warmup=int(args.warmup),
+    )
 
 
 if __name__ == "__main__":
-    from core.harness.benchmark_harness import benchmark_main
-    benchmark_main(get_benchmark)
+    main()

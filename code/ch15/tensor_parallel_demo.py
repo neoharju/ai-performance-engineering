@@ -1,7 +1,7 @@
 """tensor_parallel_demo.py - Chapter 15 tensor-parallel (TP) demo (tool).
 
 Run with torchrun, e.g.:
-  torchrun --nproc_per_node 2 ch15/tensor_parallel_demo.py
+  torchrun --nproc_per_node <num_gpus> ch15/tensor_parallel_demo.py
 """
 
 from __future__ import annotations
@@ -100,4 +100,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

@@ -30,8 +30,8 @@ class CUDAGraphRouterBenchmark(VerificationPayloadMixin, BaseBenchmark):
         super().__init__()
         self.data: Optional[torch.Tensor] = None
         self.route_flag: int = 0
-        self.N = 1 << 12  # Smaller buffers to match baseline
-        self.iterations = 8000
+        self.N = 1 << 10  # Smaller buffers to match baseline
+        self.iterations = 32000
         self._extension = None
         self._workload = WorkloadMetadata(tokens_per_iteration=float(self.N * self.iterations))
 

@@ -634,13 +634,12 @@ if __name__ == "__main__":
     optimizer = ShardingOptimizer()
     recommendations = optimizer.recommend(
         model=model,
-        world_size=8,
+        world_size=4,
         gpu_memory_gb=80,
         batch_size=4,
         seq_length=4096,
         bandwidth_gbps=900,
-        gpus_per_node=8,
+        gpus_per_node=4,
     )
     
     print(optimizer.format_recommendations(recommendations))
-

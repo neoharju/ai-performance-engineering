@@ -21,7 +21,7 @@ python -m cli.aisp bench run --targets labs/structured_sparsity --profile minima
 ```
 
 ## Notes
-- Defaults match gpt-oss-20b dimensions (hidden=2880, ffn=2880, seq_len=4096, batch=4).
+- Defaults match an LLM-scale FFN block (hidden=6144, ffn=24576, seq_len=8192, batch=8).
 - Use larger batch or sequence lengths if your GPU is underutilized.
 - Requires cuSPARSELt-enabled PyTorch builds.
 

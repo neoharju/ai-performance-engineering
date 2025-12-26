@@ -6,6 +6,7 @@ from core.utils.extension_loader_template import load_cuda_extension_v2
 from core.profiling.nvtx_stub import ensure_nvtx_stub
 
 NVTX_CFLAG = "-DENABLE_NVTX_PROFILING"
+NVCC_ALLOW_UNSUPPORTED = "--allow-unsupported-compiler"
 _NVTX_STUB_LIB = ensure_nvtx_stub()
 NVTX_LDFLAGS = [f"-L{_NVTX_STUB_LIB.parent}", "-lnvToolsExt"]
 
@@ -14,7 +15,7 @@ _COMMON_HEADERS = _EXTENSION_DIR.parent.parent / "core" / "common" / "headers"
 
 
 def _cuda_flags() -> list[str]:
-    return ["-lineinfo", f"-I{_COMMON_HEADERS}", NVTX_CFLAG]
+    return ["-lineinfo", f"-I{_COMMON_HEADERS}", NVTX_CFLAG, NVCC_ALLOW_UNSUPPORTED]
 
 
 def load_kernel_fusion_extension():

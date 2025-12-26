@@ -668,7 +668,7 @@ ENTRIES["ch15"] = chapter_entry(
     ],
     notes=[
         "`disaggregated_inference_multigpu.py` can run purely in simulation mode; set `--simulate-network` when hardware isn't wired for NVLink pooling.",
-        "Set `AISP_DISAGG_WORLD_SIZE=<num_gpus>` to run the disaggregated pipeline on the desired GPU count (defaults to 4).",
+        "Set `AISP_DISAGG_WORLD_SIZE=<num_gpus>` to run the disaggregated pipeline on the desired GPU count (defaults to all visible GPUs, even count).",
         "`Makefile` wraps the MPI/UCX targets needed for the multi-node decode experiments.",
     ],
 )
@@ -736,7 +736,7 @@ ENTRIES["ch17"] = chapter_entry(
     ],
     notes=[
         "`blackwell_profiling_guide.py` walks through Nsight Systems/Compute captures and interpreting roofline vs occupancy bottlenecks for routing-heavy workloads.",
-        "`baseline_prefill_decode_disagg_multigpu.py` can run in simulation-only mode by passing `--simulate-fabric`, avoiding the need for multi-node hardware while iterating on routing logic.",
+        "`baseline_prefill_decode_disagg_multigpu.py` runs via torchrun and defaults to all visible GPUs (even count); set `AISP_DISAGG_WORLD_SIZE` to override.",
     ],
 )
 

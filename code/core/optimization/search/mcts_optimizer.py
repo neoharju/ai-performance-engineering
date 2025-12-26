@@ -824,7 +824,7 @@ def main():
     
     parser = argparse.ArgumentParser(description="MCTS Optimization Search")
     parser.add_argument("--model-size", type=float, default=70, help="Model size in billions")
-    parser.add_argument("--num-gpus", type=int, default=8, help="Number of GPUs")
+    parser.add_argument("--num-gpus", type=int, default=4, help="Number of GPUs")
     parser.add_argument("--gpu-memory", type=float, default=80, help="GPU memory in GB")
     parser.add_argument("--gpu-arch", default="hopper", help="GPU architecture")
     parser.add_argument("--goal", default="throughput", choices=["throughput", "memory", "balanced"])
@@ -888,5 +888,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-
 

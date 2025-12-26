@@ -472,26 +472,30 @@ def create_cluster_preset_dgx_gb200_nvl72() -> ClusterTopology:
     )
 
 
-def create_cluster_preset_8xb200_single_node() -> ClusterTopology:
-    """Create single node 8x B200 preset."""
+def create_cluster_preset_b200_single_node(num_gpus: int = 8) -> ClusterTopology:
+    """Create single-node B200 preset for a configurable GPU count."""
+    if num_gpus < 2:
+        raise ValueError("num_gpus must be >=2 for multi-GPU presets")
+
+    has_nvswitch = num_gpus >= 8
     nodes = [
         NodeSpec(
             node_id=0,
             hostname="b200-node",
-            gpus_per_node=8,
+            gpus_per_node=num_gpus,
             gpu_memory_gb=192,
             gpu_name="NVIDIA B200",
             nvlink_bandwidth_gbps=900,
-            has_nvswitch=True,
+            has_nvswitch=has_nvswitch,
             numa_nodes=1,
         )
     ]
-    
+
     return ClusterTopology(
         num_nodes=1,
         nodes=nodes,
-        total_gpus=8,
-        gpus_per_node=8,
+        total_gpus=num_gpus,
+        gpus_per_node=num_gpus,
         network_type=NetworkType.TCP,
         network_bandwidth_gbps=0,
         nics_per_node=0,
@@ -502,3 +506,4 @@ def create_cluster_preset_8xb200_single_node() -> ClusterTopology:
         cross_node_nvlink_bandwidth_gbps=0,
         is_grace_blackwell=True,
     )
+

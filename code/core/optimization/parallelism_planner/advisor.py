@@ -326,65 +326,81 @@ class ParallelismAdvisor:
         )
 
 
-def create_mock_topology_8xb200() -> TopologyInfo:
-    """Create a mock 8x B200 topology for testing."""
+def create_mock_topology_b200_multigpu(num_gpus: int = 4) -> TopologyInfo:
+    """Create a mock B200 multi-GPU topology for testing."""
     from .topology_detector import GPUInfo
-    
+
+    if num_gpus < 2:
+        raise ValueError("num_gpus must be >=2 for multi-GPU topology")
+
     gpus = [
         GPUInfo(i, "NVIDIA B200", "10.0", 192, 148, "blackwell", True)
-        for i in range(8)
+        for i in range(num_gpus)
     ]
     
     return TopologyInfo(
-        num_gpus=8,
+        num_gpus=num_gpus,
         gpus=gpus,
-        total_memory_gb=192 * 8,
+        total_memory_gb=192 * num_gpus,
         interconnects=[],
-        p2p_matrix=[[True] * 8 for _ in range(8)],
-        bandwidth_matrix=[[900.0] * 8 for _ in range(8)],
+        p2p_matrix=[[True] * num_gpus for _ in range(num_gpus)],
+        bandwidth_matrix=[[900.0] * num_gpus for _ in range(num_gpus)],
         has_nvlink=True,
-        has_nvswitch=True,
+        has_nvswitch=num_gpus >= 8,
         nvlink_version="5.0",
         max_nvlink_bandwidth_gbps=900,
         numa_nodes=1,
-        gpu_numa_mapping={i: 0 for i in range(8)},
+        gpu_numa_mapping={i: 0 for i in range(num_gpus)},
         numa_distance_matrix=[[10]],
         cpu_type="aarch64",
         is_grace_cpu=True,
         has_nvlink_c2c=True,
         num_nodes=1,
-        gpus_per_node=8,
+        gpus_per_node=num_gpus,
     )
 
 
-def create_mock_topology_8xh100() -> TopologyInfo:
-    """Create a mock 8x H100 topology for testing."""
+def create_mock_topology_h100_multigpu(num_gpus: int = 4) -> TopologyInfo:
+    """Create a mock H100 multi-GPU topology for testing."""
     from .topology_detector import GPUInfo
-    
+
+    if num_gpus < 2:
+        raise ValueError("num_gpus must be >=2 for multi-GPU topology")
+
     gpus = [
         GPUInfo(i, "NVIDIA H100", "9.0", 80, 132, "hopper", True)
-        for i in range(8)
+        for i in range(num_gpus)
     ]
-    
+
+    has_nvswitch = num_gpus >= 8
+    numa_nodes = 1 if num_gpus <= 4 else 2
+    if numa_nodes == 1:
+        gpu_numa_mapping = {i: 0 for i in range(num_gpus)}
+        numa_distance_matrix = [[10]]
+    else:
+        gpus_per_numa = max(1, num_gpus // numa_nodes)
+        gpu_numa_mapping = {i: i // gpus_per_numa for i in range(num_gpus)}
+        numa_distance_matrix = [[10, 20], [20, 10]]
+
     return TopologyInfo(
-        num_gpus=8,
+        num_gpus=num_gpus,
         gpus=gpus,
-        total_memory_gb=80 * 8,
+        total_memory_gb=80 * num_gpus,
         interconnects=[],
-        p2p_matrix=[[True] * 8 for _ in range(8)],
-        bandwidth_matrix=[[600.0] * 8 for _ in range(8)],
+        p2p_matrix=[[True] * num_gpus for _ in range(num_gpus)],
+        bandwidth_matrix=[[600.0] * num_gpus for _ in range(num_gpus)],
         has_nvlink=True,
-        has_nvswitch=True,
+        has_nvswitch=has_nvswitch,
         nvlink_version="4.0",
         max_nvlink_bandwidth_gbps=600,
-        numa_nodes=2,
-        gpu_numa_mapping={i: i // 4 for i in range(8)},
-        numa_distance_matrix=[[10, 20], [20, 10]],
+        numa_nodes=numa_nodes,
+        gpu_numa_mapping=gpu_numa_mapping,
+        numa_distance_matrix=numa_distance_matrix,
         cpu_type="x86_64",
         is_grace_cpu=False,
         has_nvlink_c2c=False,
         num_nodes=1,
-        gpus_per_node=8,
+        gpus_per_node=num_gpus,
     )
 
 
@@ -408,7 +424,7 @@ Examples:
     python -m core.optimization.parallelism_planner.advisor llama-3.1-70b --seq-length 131072
     
     # Use mock topology (no GPU required)
-    python -m core.optimization.parallelism_planner.advisor llama-3.1-70b --mock-topology 8xB200
+    python -m core.optimization.parallelism_planner.advisor llama-3.1-70b --mock-topology b200 --mock-gpus 4
         """,
     )
     
@@ -421,8 +437,10 @@ Examples:
                         default="throughput", help="Optimization goal")
     parser.add_argument("--training", "-t", action="store_true",
                         help="Configure for training (default: inference)")
-    parser.add_argument("--mock-topology", choices=["8xB200", "8xH100"],
+    parser.add_argument("--mock-topology", choices=["b200", "h100"],
                         help="Use mock topology instead of detection")
+    parser.add_argument("--mock-gpus", type=int, default=4,
+                        help="GPU count for mock topology (default: 4)")
     parser.add_argument("--json", "-j", action="store_true",
                         help="Output as JSON")
     parser.add_argument("--list-presets", action="store_true",
@@ -440,17 +458,17 @@ Examples:
     
     # Set topology
     if args.mock_topology:
-        if args.mock_topology == "8xB200":
-            advisor.set_topology(create_mock_topology_8xb200())
+        if args.mock_topology == "b200":
+            advisor.set_topology(create_mock_topology_b200_multigpu(args.mock_gpus))
         else:
-            advisor.set_topology(create_mock_topology_8xh100())
+            advisor.set_topology(create_mock_topology_h100_multigpu(args.mock_gpus))
     else:
         try:
             advisor.detect_topology()
         except RuntimeError as e:
             print(f"Warning: Could not detect topology: {e}")
-            print("Using mock 8xB200 topology...")
-            advisor.set_topology(create_mock_topology_8xb200())
+            print("Using mock B200 multi-GPU topology...")
+            advisor.set_topology(create_mock_topology_b200_multigpu())
     
     try:
         if args.json:
@@ -474,6 +492,4 @@ Examples:
     except ValueError as e:
         print(f"Error: {e}")
         sys.exit(1)
-
-
 

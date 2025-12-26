@@ -4,7 +4,7 @@ Loads a checkpoint, and:
 - Samples from the model
 
 Example run as:
-torchrun --standalone --nproc_per_node=8 -m labs.nanochat_fullstack.scripts.base_loss
+torchrun --standalone --nproc_per_node=4 -m labs.nanochat_fullstack.scripts.base_loss
 """
 import os
 from contextlib import nullcontext

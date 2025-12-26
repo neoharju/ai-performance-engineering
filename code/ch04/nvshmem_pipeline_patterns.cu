@@ -6,7 +6,7 @@
  *  1. Lock-free producer/consumer queue shared between GPUs
  *  2. Double-buffered pipeline handoff with overlapping compute/transfer
  *
- * Designed for 8x Blackwell B200 but will run on any multi-GPU system.
+ * Designed for multi-GPU Blackwell B200 but will run on any multi-GPU system.
  */
 
 #include <cstdio>

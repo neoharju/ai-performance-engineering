@@ -14,7 +14,7 @@ NVSHMEM vs NCCL Benchmark (Conceptual)
 =====================================
 
 Micro-benchmark comparing NCCL collectives against PyTorch 2.10 symmetric
-memory (NVSHMEM-backed) operations on 8x Blackwell B200 GPUs.
+memory (NVSHMEM-backed) operations on multi-GPU Blackwell B200 systems.
 
 Measurements:
 - Latency (µs) for small message sizes (1 KB - 1 MB)
@@ -24,7 +24,7 @@ The script degrades gracefully when NVSHMEM/symmetric memory is missing,
 reporting NCCL numbers only so it can run on non-Blackwell hardware.
 
 Usage:
-    torchrun --nproc_per_node=8 nvshmem_vs_nccl_benchmark.py \
+    torchrun --nproc_per_node=<num_gpus> nvshmem_vs_nccl_benchmark.py \
         --min-bytes 1024 --max-bytes 67108864 --steps 6
 """
 

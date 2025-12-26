@@ -478,11 +478,11 @@ int main() {
     printf("     nvcc -O3 -std=c++17 -arch=sm_100 -DUSE_NVSHMEM \\\n");
     printf("          -I$NVSHMEM_HOME/include -L$NVSHMEM_HOME/lib -lnvshmem \\\n");
     printf("          nvshmem_advanced_multigpu.cu -o nvshmem_advanced\n");
-    printf("  4. Run: nvshmemrun -np 8 ./nvshmem_advanced\n\n");
+    printf("  4. Run: nvshmemrun -np 4 ./nvshmem_advanced\n\n");
     
-    benchmark_ring_allreduce(0, 8);
-    benchmark_double_buffered_allreduce(0, 8);
-    benchmark_recursive_halving_doubling(0, 8);
+    benchmark_ring_allreduce(0, 4);
+    benchmark_double_buffered_allreduce(0, 4);
+    benchmark_recursive_halving_doubling(0, 4);
     #endif
     
     return 0;

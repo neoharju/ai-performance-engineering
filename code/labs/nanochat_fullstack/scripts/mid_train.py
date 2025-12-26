@@ -6,7 +6,7 @@ python -m labs.nanochat_fullstack.scripts.mid_train
 
 Or torchrun for training:
 
-torchrun --standalone --nproc_per_node=8 -m labs.nanochat_fullstack.scripts.mid_train -- --device_batch_size=16
+torchrun --standalone --nproc_per_node=4 -m labs.nanochat_fullstack.scripts.mid_train -- --device_batch_size=16
 """
 
 from collections import deque

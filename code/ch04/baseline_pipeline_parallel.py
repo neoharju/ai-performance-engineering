@@ -41,6 +41,42 @@ _DEFAULT_LAYERS = 8
 _DEFAULT_MICRO_BATCHES = 8
 
 
+def _resolve_world_size() -> int:
+    if not torch.cuda.is_available():
+        raise RuntimeError("CUDA required for pipeline-parallel benchmark")
+    world_size = torch.cuda.device_count()
+    if world_size < 2:
+        raise RuntimeError("baseline_pipeline_parallel requires >=2 GPUs.")
+    return world_size
+
+
+def _resolve_num_layers(num_layers: Optional[int], world_size: int) -> int:
+    base = _DEFAULT_LAYERS if num_layers is None else int(num_layers)
+    if base % world_size == 0:
+        return base
+    if num_layers is not None:
+        raise ValueError("num_layers must be divisible by world_size")
+    return world_size * ((base + world_size - 1) // world_size)
+
+
+def _resolve_batch_config(
+    batch_size: Optional[int],
+    num_micro_batches: Optional[int],
+    world_size: int,
+) -> tuple[int, int]:
+    if num_micro_batches is None:
+        micro_batches = max(_DEFAULT_MICRO_BATCHES, world_size)
+    else:
+        micro_batches = int(num_micro_batches)
+    batch = _DEFAULT_BATCH if batch_size is None else int(batch_size)
+    if batch % micro_batches == 0:
+        return batch, micro_batches
+    if batch_size is not None:
+        raise ValueError("batch_size must be divisible by num_micro_batches")
+    adjusted_batch = micro_batches * ((batch + micro_batches - 1) // micro_batches)
+    return adjusted_batch, micro_batches
+
+
 def _init_distributed() -> tuple[int, int, int]:
     if "RANK" not in os.environ or "WORLD_SIZE" not in os.environ:
         raise RuntimeError("baseline_pipeline_parallel requires torchrun (RANK/WORLD_SIZE missing).")
@@ -68,19 +104,17 @@ def _build_stage_layers(hidden: int, layers_per_stage: int, device: torch.device
 def _run_worker(
     iters: int,
     warmup: int,
-    batch_size: int,
+    batch_size: Optional[int],
     seq_length: int,
     hidden: int,
-    num_layers: int,
-    num_micro_batches: int,
+    num_layers: Optional[int],
+    num_micro_batches: Optional[int],
 ) -> None:
     rank, world_size, local_rank = _init_distributed()
     if world_size < 2:
         raise RuntimeError("baseline_pipeline_parallel requires >=2 GPUs.")
-    if num_layers % world_size != 0:
-        raise ValueError("num_layers must be divisible by world_size")
-    if batch_size % num_micro_batches != 0:
-        raise ValueError("batch_size must be divisible by num_micro_batches")
+    num_layers = _resolve_num_layers(num_layers, world_size)
+    batch_size, num_micro_batches = _resolve_batch_config(batch_size, num_micro_batches, world_size)
 
     torch.manual_seed(42)
     torch.cuda.manual_seed_all(42)
@@ -165,11 +199,26 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Baseline pipeline parallel benchmark")
     parser.add_argument("--iters", type=int, default=3)
     parser.add_argument("--warmup", type=int, default=5)
-    parser.add_argument("--batch-size", type=int, default=_DEFAULT_BATCH)
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=None,
+        help="Global batch size (defaults to a world_size-aligned value).",
+    )
     parser.add_argument("--seq-length", type=int, default=_DEFAULT_SEQ)
     parser.add_argument("--hidden-size", type=int, default=_DEFAULT_HIDDEN)
-    parser.add_argument("--num-layers", type=int, default=_DEFAULT_LAYERS)
-    parser.add_argument("--micro-batches", type=int, default=_DEFAULT_MICRO_BATCHES)
+    parser.add_argument(
+        "--num-layers",
+        type=int,
+        default=None,
+        help="Layer count (defaults to a world_size-aligned value).",
+    )
+    parser.add_argument(
+        "--micro-batches",
+        type=int,
+        default=None,
+        help="Micro-batch count (defaults to a world_size-aligned value).",
+    )
     args = parser.parse_args()
     _run_worker(
         args.iters,
@@ -200,7 +249,7 @@ class BaselinePipelineParallelBenchmark(BaseBenchmark):
     def get_config(self) -> BenchmarkConfig:
         return BenchmarkConfig(
             launch_via=LaunchVia.TORCHRUN,
-            nproc_per_node=2,
+            nproc_per_node=_resolve_world_size(),
             iterations=3,
             warmup=5,
             multi_gpu_required=True,
@@ -220,20 +269,23 @@ class BaselinePipelineParallelBenchmark(BaseBenchmark):
         )
 
     def get_input_signature(self) -> dict:
-        layers_per_stage = _DEFAULT_LAYERS // 2
+        world_size = _resolve_world_size()
+        num_layers = _resolve_num_layers(None, world_size)
+        batch_size, _ = _resolve_batch_config(None, None, world_size)
+        layers_per_stage = num_layers // world_size
         signature = simple_signature(
-            batch_size=_DEFAULT_BATCH,
+            batch_size=batch_size,
             dtype="bfloat16",
             seq_length=_DEFAULT_SEQ,
             hidden_size=_DEFAULT_HIDDEN,
-            num_layers=_DEFAULT_LAYERS,
+            num_layers=num_layers,
             precision_flags=PrecisionFlags(bf16=True, tf32=False),
         )
-        signature.world_size = 2
-        signature.pipeline_stages = 2
+        signature.world_size = world_size
+        signature.pipeline_stages = world_size
         signature.pipeline_stage_boundaries = [
-            (0, layers_per_stage - 1),
-            (layers_per_stage, _DEFAULT_LAYERS - 1),
+            (stage_idx * layers_per_stage, (stage_idx + 1) * layers_per_stage - 1)
+            for stage_idx in range(world_size)
         ]
         signature.collective_type = "send_recv"
         return signature

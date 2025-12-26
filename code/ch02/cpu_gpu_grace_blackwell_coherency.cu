@@ -7,7 +7,7 @@
  * 
  * GB200/GB300 Architecture:
  * - Grace CPU: 72 ARM Neoverse V2 cores, LPDDR5X memory (480GB-1TB)
- * - Blackwell GPU: Up to 8x B200 (180GB each = 1.44TB total)
+ * - Blackwell GPU: Multi-GPU B200/B300 (example: 180GB each)
  * - NVLink-C2C: 900 GB/s coherent CPU↔GPU interconnect
  * - Unified address space: CPU and GPU can access same memory
  * 

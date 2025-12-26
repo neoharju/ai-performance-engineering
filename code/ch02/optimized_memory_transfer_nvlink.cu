@@ -55,7 +55,7 @@ struct SystemInfo {
     int num_gpus;
     size_t gpu_memory;
     int cpu_numa_nodes;
-    bool is_8xb200;
+    bool is_b200_multigpu;
     bool has_nvswitch;
 };
 
@@ -116,26 +116,26 @@ SystemInfo detect_system_capabilities() {
     printf("GPU Memory: %.2f GB per GPU\n", info.gpu_memory / (1024.0 * 1024.0 * 1024.0));
     printf("Number of GPUs: %d\n", info.num_gpus);
     
-    // Check for 8x Blackwell/GB configuration
-    if (info.num_gpus == 8 && (is_blackwell || is_grace_blackwell)) {
+    // Check for multi-GPU Blackwell/GB configuration
+    if (info.num_gpus >= 2 && (is_blackwell || is_grace_blackwell)) {
         float mem_gb = info.gpu_memory / (1024.0 * 1024.0 * 1024.0);
         if (mem_gb > 170.0 && mem_gb < 190.0) {
-            info.is_8xb200 = true;
-            printf("✓ 8x B200 GPU configuration detected\n");
+            info.is_b200_multigpu = true;
+            printf("✓ B200 multi-GPU configuration detected\n");
             printf("  Total memory: %.2f TB (%.0f GB per GPU)\n", 
                    info.num_gpus * mem_gb / 1024.0, mem_gb);
             printf("  Total SMs: %d (148 per GPU)\n", info.num_gpus * 148);
             printf("  NVLink 5.0: 1800 GB/s per GPU pair (bidirectional)\n");
         } else if (mem_gb >= 270.0 && mem_gb <= 300.0) {
-            info.is_8xb200 = true;
-            printf("✓ 8x B300 GPU configuration detected\n");
+            info.is_b200_multigpu = true;
+            printf("✓ B300 multi-GPU configuration detected\n");
             printf("  Total memory: %.2f TB (%.0f GB per GPU)\n",
                    info.num_gpus * mem_gb / 1024.0, mem_gb);
             printf("  Total SMs: %d (148 per GPU)\n", info.num_gpus * 148);
             printf("  NVLink 5.0: 1800 GB/s per GPU pair (bidirectional)\n");
         } else if (is_grace_blackwell) {
-            info.is_8xb200 = true;
-            printf("✓ 8x Grace-Blackwell configuration detected\n");
+            info.is_b200_multigpu = true;
+            printf("✓ Grace-Blackwell multi-GPU configuration detected\n");
             printf("  Total memory: %.2f TB (%.0f GB per GPU)\n",
                    info.num_gpus * mem_gb / 1024.0, mem_gb);
             printf("  Grace coherence + NVLink-C2C enabled\n");
@@ -183,15 +183,15 @@ SystemInfo detect_system_capabilities() {
             }
         }
         
-        // Check for NVSwitch (for 8-GPU configurations)
-        if (info.num_gpus >= 8) {
+        // Check for NVSwitch on multi-GPU systems.
+        if (info.num_gpus >= 2) {
             #ifdef __linux__
             FILE* topo = popen("nvidia-smi topo -m 2>/dev/null | grep -i nvswitch", "r");
             if (topo) {
                 char line[256];
                 if (fgets(line, sizeof(line), topo)) {
                     info.has_nvswitch = true;
-                    printf("✓ NVSwitch detected (optimal for 8-GPU topology)\n");
+                    printf("✓ NVSwitch detected (optimal for dense multi-GPU topology)\n");
                 }
                 pclose(topo);
             }
@@ -357,25 +357,27 @@ void demonstrate_page_migration() {
 }
 
 // ============================================================================
-// 8-GPU P2P Bandwidth Benchmarks
+// Multi-GPU P2P Bandwidth Benchmarks
 // ============================================================================
 
-void benchmark_8gpu_p2p_bandwidth(const SystemInfo& info) {
-    if (!info.is_8xb200) {
-        printf("\n⚠ 8-GPU P2P benchmark requires 8x B200 GPUs (found %d)\n", info.num_gpus);
+void benchmark_multigpu_p2p_bandwidth(const SystemInfo& info) {
+    if (!info.is_b200_multigpu) {
+        printf("\n⚠ Multi-GPU P2P benchmark requires B200/B300-class GPUs (found %d GPU(s))\n",
+               info.num_gpus);
         return;
     }
     
-    printf("\n=== 8-GPU P2P Bandwidth Benchmark ===\n");
+    const int max_gpus = info.num_gpus;
+    printf("\n=== Multi-GPU P2P Bandwidth Benchmark ===\n");
     printf("Testing NVLink 5.0 bandwidth between all GPU pairs\n\n");
     
     const size_t transfer_size = 256 * 1024 * 1024;  // 256 MB
     const int iterations = 100;
     
     // Enable P2P access between all GPU pairs
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < max_gpus; i++) {
         CUDA_CHECK(cudaSetDevice(i));
-        for (int j = 0; j < 8; j++) {
+        for (int j = 0; j < max_gpus; j++) {
             if (i != j) {
                 int can_access;
                 CUDA_CHECK(cudaDeviceCanAccessPeer(&can_access, i, j));
@@ -405,8 +407,8 @@ void benchmark_8gpu_p2p_bandwidth(const SystemInfo& info) {
     }
     
     // Allocate memory on each GPU
-    float* d_data[8];
-    for (int i = 0; i < 8; i++) {
+    std::vector<float*> d_data(max_gpus, nullptr);
+    for (int i = 0; i < max_gpus; i++) {
         CUDA_CHECK(cudaSetDevice(i));
         CUDA_CHECK(cudaMalloc(&d_data[i], transfer_size));
     }
@@ -418,8 +420,8 @@ void benchmark_8gpu_p2p_bandwidth(const SystemInfo& info) {
     double total_bandwidth = 0.0;
     int pair_count = 0;
     
-    for (int src = 0; src < 8; src++) {
-        for (int dst = src + 1; dst < 8; dst++) {
+    for (int src = 0; src < max_gpus; src++) {
+        for (int dst = src + 1; dst < max_gpus; dst++) {
             CUDA_CHECK(cudaSetDevice(src));
             
             // Warmup
@@ -447,7 +449,7 @@ void benchmark_8gpu_p2p_bandwidth(const SystemInfo& info) {
     }
     
     // Summary
-    printf("\n8-GPU P2P Summary:\n");
+    printf("\nMulti-GPU P2P Summary:\n");
     printf("  Average bandwidth: %.2f GB/s per pair\n", total_bandwidth / pair_count);
     printf("  Total pairs: %d\n", pair_count);
     
@@ -460,16 +462,16 @@ void benchmark_8gpu_p2p_bandwidth(const SystemInfo& info) {
     }
     
     // Cleanup
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < max_gpus; i++) {
         CUDA_CHECK(cudaSetDevice(i));
         CUDA_CHECK(cudaFree(d_data[i]));
     }
     
-    printf("\nRecommendations for 8x B200:\n");
+    printf("\nRecommendations for multi-GPU B200:\n");
     printf("  - Use NCCL 2.28 with NVLS for optimal collectives\n");
-    printf("  - Tensor Parallel: Split across 2, 4, or 8 GPUs\n");
+    printf("  - Tensor Parallel: Split across 2, 4, or all GPUs\n");
     printf("  - Data Parallel: Remaining GPUs for batch parallelism\n");
-    printf("  - Monitor with: nvidia-smi dmon -s u -i 0,1,2,3,4,5,6,7\n");
+    printf("  - Monitor with: nvidia-smi dmon -s u -i <gpu_ids>\n");
 }
 
 // ============================================================================
@@ -644,9 +646,9 @@ int main() {
     // Demonstrate page migration
     demonstrate_page_migration();
     
-    // NEW: 8-GPU P2P benchmarks
-    if (info.is_8xb200) {
-        benchmark_8gpu_p2p_bandwidth(info);
+    // NEW: multi-GPU P2P benchmarks
+    if (info.is_b200_multigpu) {
+        benchmark_multigpu_p2p_bandwidth(info);
     }
     
     // NEW: GB200/GB300 coherent memory
@@ -663,13 +665,15 @@ int main() {
     printf("4. cudaMemAdvise optimizes migration for CUDA 13\n");
     printf("5. Prefer pinned memory for frequent transfers\n");
     
-    if (info.is_8xb200) {
-        printf("\n✓ 8x B200 GPU Configuration Detected\n");
-        printf("  - Total memory: 1.44 TB (180 GB per GPU)\n");
+    if (info.is_b200_multigpu) {
+        float mem_gb = info.gpu_memory / (1024.0 * 1024.0 * 1024.0);
+        printf("\n✓ B200/B300 multi-GPU Configuration Detected\n");
+        printf("  - Total memory: %.2f TB (%.0f GB per GPU)\n",
+               info.num_gpus * mem_gb / 1024.0, mem_gb);
         printf("  - NVLink 5.0: 1800 GB/s per GPU pair\n");
         printf("  - Recommendations:\n");
         printf("    * Use NCCL 2.28 for collectives\n");
-        printf("    * Hybrid parallelism: TP=2/DP=4 or TP=4/DP=2\n");
+        printf("    * Hybrid parallelism: choose TP/DP to match model size\n");
         printf("    * Monitor bandwidth: nvidia-smi dmon -s u\n");
     }
     
@@ -684,7 +688,7 @@ int main() {
         printf("    * Store large KV caches in CPU memory\n");
     }
     
-    if (!info.is_grace_blackwell && !info.is_8xb200) {
+    if (!info.is_grace_blackwell && !info.is_b200_multigpu) {
         printf("\n⚠ Standard GPU Configuration\n");
         if (info.has_pcie_5) {
             printf("  Connection: PCIe 5.0 (~128 GB/s)\n");

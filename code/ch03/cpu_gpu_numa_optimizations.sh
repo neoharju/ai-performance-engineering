@@ -5,7 +5,7 @@
 #
 # Optimizes system settings for GB200/GB300 superchips:
 # - Grace CPU: 72 ARM Neoverse V2 cores, LPDDR5X memory
-# - Blackwell GPU: Up to 8x B200 (180GB each)
+# - Blackwell GPU: Multi-GPU B200/B300 (example: 180GB each)
 # - NVLink-C2C: 900 GB/s CPU↔GPU coherent bandwidth
 #
 # Usage:
@@ -206,7 +206,16 @@ apply_optimizations() {
 #!/bin/bash
 # Helper script to bind process to NUMA node matching GPU
 GPU_ID=${1:-0}
-NUMA_NODE=$((GPU_ID / 4))  # Assume 4 GPUs per NUMA node for 8-GPU system
+GPU_COUNT=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | wc -l || echo 1)
+NUMA_NODES=$(numactl --hardware 2>/dev/null | grep "available:" | awk '{print $2}')
+if [[ -z "$NUMA_NODES" || "$NUMA_NODES" -lt 1 ]]; then
+  NUMA_NODES=1
+fi
+GPUS_PER_NUMA=$(( (GPU_COUNT + NUMA_NODES - 1) / NUMA_NODES ))
+if [[ "$GPUS_PER_NUMA" -lt 1 ]]; then
+  GPUS_PER_NUMA=1
+fi
+NUMA_NODE=$((GPU_ID / GPUS_PER_NUMA))
 
 echo "Binding to NUMA node $NUMA_NODE for GPU $GPU_ID"
 exec numactl --cpunodebind=$NUMA_NODE --membind=$NUMA_NODE "${@:2}"

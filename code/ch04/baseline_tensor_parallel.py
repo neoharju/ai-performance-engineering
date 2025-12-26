@@ -39,6 +39,24 @@ _DEFAULT_HIDDEN = 4096
 _DEFAULT_LAYERS = 4
 
 
+def _resolve_world_size() -> int:
+    if not torch.cuda.is_available():
+        raise RuntimeError("CUDA required for tensor-parallel benchmark")
+    world_size = torch.cuda.device_count()
+    if world_size < 2:
+        raise RuntimeError("baseline_tensor_parallel requires >=2 GPUs.")
+    return world_size
+
+
+def _resolve_hidden(hidden: Optional[int], world_size: int) -> int:
+    base = _DEFAULT_HIDDEN if hidden is None else int(hidden)
+    if base % world_size == 0:
+        return base
+    if hidden is not None:
+        raise ValueError("hidden_size must be divisible by world_size")
+    return world_size * ((base + world_size - 1) // world_size)
+
+
 def _init_distributed() -> tuple[int, int, int]:
     if "RANK" not in os.environ or "WORLD_SIZE" not in os.environ:
         raise RuntimeError("baseline_tensor_parallel requires torchrun (RANK/WORLD_SIZE missing).")
@@ -72,14 +90,13 @@ def _run_worker(
     warmup: int,
     batch: int,
     seq_length: int,
-    hidden: int,
+    hidden: Optional[int],
     num_layers: int,
 ) -> None:
     rank, world_size, local_rank = _init_distributed()
     if world_size < 2:
         raise RuntimeError("baseline_tensor_parallel requires >=2 GPUs.")
-    if hidden % world_size != 0:
-        raise ValueError("hidden_size must be divisible by world_size")
+    hidden = _resolve_hidden(hidden, world_size)
 
     torch.manual_seed(42)
     torch.cuda.manual_seed_all(42)
@@ -128,7 +145,12 @@ def main() -> None:
     parser.add_argument("--warmup", type=int, default=5)
     parser.add_argument("--batch-size", type=int, default=_DEFAULT_BATCH)
     parser.add_argument("--seq-length", type=int, default=_DEFAULT_SEQ)
-    parser.add_argument("--hidden-size", type=int, default=_DEFAULT_HIDDEN)
+    parser.add_argument(
+        "--hidden-size",
+        type=int,
+        default=None,
+        help="Hidden size (defaults to a world_size-aligned value).",
+    )
     parser.add_argument("--num-layers", type=int, default=_DEFAULT_LAYERS)
     args = parser.parse_args()
     _run_worker(
@@ -159,7 +181,7 @@ class BaselineTensorParallelBenchmark(BaseBenchmark):
     def get_config(self) -> BenchmarkConfig:
         return BenchmarkConfig(
             launch_via=LaunchVia.TORCHRUN,
-            nproc_per_node=2,
+            nproc_per_node=_resolve_world_size(),
             iterations=3,
             warmup=5,
             multi_gpu_required=True,
@@ -179,15 +201,17 @@ class BaselineTensorParallelBenchmark(BaseBenchmark):
         )
 
     def get_input_signature(self) -> dict:
+        world_size = _resolve_world_size()
+        hidden = _resolve_hidden(None, world_size)
         signature = simple_signature(
             batch_size=_DEFAULT_BATCH,
             dtype="bfloat16",
             seq_length=_DEFAULT_SEQ,
-            hidden_size=_DEFAULT_HIDDEN,
+            hidden_size=hidden,
             num_layers=_DEFAULT_LAYERS,
             precision_flags=PrecisionFlags(bf16=True, tf32=False),
         )
-        signature.world_size = 2
+        signature.world_size = world_size
         signature.collective_type = "all_gather"
         return signature
 

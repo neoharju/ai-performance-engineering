@@ -29,6 +29,11 @@
 - Let's consider all options and find the best speedup 
 - Make sure we're staying with the intent of the example and within the context of the chapter (book/chXX.md).
 
+## Multi-GPU Defaults (CRITICAL)
+- Multi-GPU scripts should use all visible GPUs by default unless explicitly overridden.
+- If an example must specify a fixed GPU count, use 2 or 4 GPUs (prefer 4).
+- Replace hard-coded 8-GPU example counts with 4 GPUs.
+
 ## Benchmarks vs Tools/Demos (CRITICAL)
 
 ### Benchmarks (comparable baseline vs optimized)

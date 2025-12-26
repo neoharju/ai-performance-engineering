@@ -18,7 +18,7 @@ This example shows how to enable the experimental Async Tensor Parallelism
 feature that ships with TorchTitan (https://github.com/pytorch/torchtitan).
 Run it with torchrun on a node with multiple CUDA devices, e.g.:
 
-    torchrun --nproc_per_node=2 extras/ch04/torchtitan_async_tp_demo.py --tp-degree 2
+    torchrun --nproc_per_node <num_gpus> extras/ch04/torchtitan_async_tp_demo.py --tp-degree <num_gpus>
 
 The script:
   * creates a simple MLP and shards it with torch.distributed.tensor.parallel,

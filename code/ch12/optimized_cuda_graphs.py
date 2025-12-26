@@ -31,8 +31,8 @@ class OptimizedCudaGraphsBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def __init__(self):
         super().__init__()
         self.data = None
-        self.N = 1 << 12  # Smaller buffers to make launch overhead dominant
-        self.iterations = 8000  # More iterations to emphasize launch overhead
+        self.N = 1 << 10  # Smaller buffers to make launch overhead dominant
+        self.iterations = 32000  # More iterations to emphasize launch overhead
         self._extension = None
         self._verify_input: Optional[torch.Tensor] = None
         self._workload = WorkloadMetadata(

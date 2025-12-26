@@ -248,7 +248,7 @@ class OptimizedKVCacheNaivePoolBenchmark(VerificationPayloadMixin, BaseBenchmark
     
     def get_config(self) -> BenchmarkConfig:
         return BenchmarkConfig(
-            iterations=3,
+            iterations=1,
             warmup=5,
             enable_memory_tracking=False,
             enable_profiling=False,

@@ -122,6 +122,95 @@ def configure_nccl_for_blackwell(
     return env_vars
 
 
+def configure_nccl_for_multigpu(
+    *,
+    num_gpus: int | None = None,
+    enable_nvlink_c2c: bool = True,
+    enable_tce: bool = True,
+    enable_nvls: bool = True,
+    num_channels: int | None = None,
+    verbose: bool = True,
+) -> Dict[str, str]:
+    """Configure NCCL 2.28 optimized for multi-GPU Blackwell/GB topologies.
+
+    Args:
+        num_gpus: GPU count (defaults to all available GPUs)
+        enable_nvlink_c2c: Enable NVLink-C2C for Grace-Blackwell
+        enable_tce: Enable Tensor Core Engine for collectives
+        enable_nvls: Enable NVLink Sharp (NVLS) when available
+        num_channels: Override NCCL channels (auto-derived if None)
+        verbose: Print configuration details
+
+    Returns:
+        Dictionary of environment variables set
+    """
+    if num_gpus is None:
+        if not torch.cuda.is_available():
+            raise RuntimeError("CUDA is required to configure NCCL for multi-GPU.")
+        num_gpus = torch.cuda.device_count()
+    if num_gpus < 2:
+        raise ValueError(f"num_gpus must be >=2, got {num_gpus}")
+
+    env_vars = configure_nccl_for_blackwell(
+        enable_nvlink_c2c=enable_nvlink_c2c,
+        enable_tce=enable_tce,
+        algo="Ring,Tree",
+        verbose=False,
+    )
+
+    if num_channels is None:
+        if num_gpus >= 8:
+            num_channels = 16
+        elif num_gpus >= 4:
+            num_channels = 12
+        else:
+            num_channels = 8
+
+    os.environ["NCCL_NCHANNELS_PER_NET_PEER"] = str(num_channels)
+    env_vars["NCCL_NCHANNELS_PER_NET_PEER"] = str(num_channels)
+
+    if enable_nvls and num_gpus >= 4:
+        os.environ["NCCL_NVLS_ENABLE"] = "1"
+        env_vars["NCCL_NVLS_ENABLE"] = "1"
+        os.environ["NCCL_ALGO"] = "Tree,Ring,NVLS"
+        env_vars["NCCL_ALGO"] = "Tree,Ring,NVLS"
+    else:
+        os.environ["NCCL_ALGO"] = "Tree,Ring"
+        env_vars["NCCL_ALGO"] = "Tree,Ring"
+
+    if num_gpus >= 8:
+        os.environ["NCCL_BUFFSIZE"] = str(64 * 1024 * 1024)
+        os.environ["NCCL_MIN_NCHANNELS"] = str(max(8, num_channels // 2))
+        os.environ["NCCL_MAX_NCHANNELS"] = str(num_channels)
+    elif num_gpus >= 4:
+        os.environ["NCCL_BUFFSIZE"] = str(32 * 1024 * 1024)
+        os.environ["NCCL_MIN_NCHANNELS"] = str(max(4, num_channels // 2))
+        os.environ["NCCL_MAX_NCHANNELS"] = str(num_channels)
+    else:
+        os.environ["NCCL_BUFFSIZE"] = str(16 * 1024 * 1024)
+        os.environ["NCCL_MIN_NCHANNELS"] = str(max(2, num_channels // 2))
+        os.environ["NCCL_MAX_NCHANNELS"] = str(num_channels)
+
+    env_vars["NCCL_BUFFSIZE"] = os.environ["NCCL_BUFFSIZE"]
+    env_vars["NCCL_MIN_NCHANNELS"] = os.environ["NCCL_MIN_NCHANNELS"]
+    env_vars["NCCL_MAX_NCHANNELS"] = os.environ["NCCL_MAX_NCHANNELS"]
+
+    if enable_nvlink_c2c:
+        os.environ["NCCL_NVLINK_C2C_ENABLE"] = "1"
+        env_vars["NCCL_NVLINK_C2C_ENABLE"] = "1"
+
+    if verbose:
+        print("=" * 80)
+        print(f"NCCL 2.28 Configuration for {num_gpus}x Blackwell/GB GPUs")
+        print("=" * 80)
+        for key in sorted(env_vars.keys()):
+            if key.startswith("NCCL_"):
+                print(f"  {key}={env_vars[key]}")
+        print("=" * 80)
+
+    return env_vars
+
+
 def verify_nccl_configuration() -> Dict[str, Any]:
     """Verify NCCL configuration and GPU topology.
 
@@ -196,98 +285,6 @@ def print_nccl_topology() -> None:
     print("=" * 80)
 
 
-def configure_nccl_for_8xB200(
-    enable_nvlink_c2c: bool = True,
-    enable_tce: bool = True,
-    enable_nvls: bool = True,
-    num_channels: int = 8,
-    verbose: bool = True,
-) -> Dict[str, str]:
-    """Configure NCCL 2.28 optimized for 8x Blackwell/GB GPU topology.
-
-    8x Blackwell/GB Configuration:
-    - Total: 1184 SMs (148 per GPU)
-    - Memory: 1.44 TB HBM3e total
-    - Bandwidth: 62.4 TB/s aggregate
-    - NVLink 5.0: 1800 GB/s bidirectional per GPU pair
-    - Power: 11.2 kW total (1400W per GPU)
-
-    Args:
-        enable_nvlink_c2c: Enable NVLink-C2C for GB200/GB300
-        enable_tce: Enable Tensor Core Engine for collectives
-        enable_nvls: Enable NVLink Sharp (NVLS) for 8-GPU optimizations
-        num_channels: Number of channels (4, 8, or 16 - tune for workload)
-        verbose: Print configuration details
-
-    Returns:
-        Dictionary of environment variables set
-    """
-    # 1. Base Blackwell configuration
-    env_vars = configure_nccl_for_blackwell(
-        enable_nvlink_c2c=enable_nvlink_c2c,
-        enable_tce=enable_tce,
-        algo="Ring,Tree",
-        verbose=False,
-    )
-
-    # 2. 8-GPU specific: Channels (tune based on model size)
-    os.environ["NCCL_NCHANNELS_PER_NET_PEER"] = str(num_channels)
-    env_vars["NCCL_NCHANNELS_PER_NET_PEER"] = str(num_channels)
-
-    # 3. Enable NVLS (NVLink Sharp) for 8-GPU configurations
-    if enable_nvls:
-        os.environ["NCCL_NVLS_ENABLE"] = "1"
-        env_vars["NCCL_NVLS_ENABLE"] = "1"
-
-    # 4. Optimize for 8-GPU topology
-    os.environ["NCCL_ALGO"] = "Tree,Ring,NVLS"
-    env_vars["NCCL_ALGO"] = "Tree,Ring,NVLS"
-
-    # 5. Buffer sizes optimized for 8 GPUs
-    os.environ["NCCL_BUFFSIZE"] = str(64 * 1024 * 1024)  # 64 MB
-    env_vars["NCCL_BUFFSIZE"] = str(64 * 1024 * 1024)
-
-    # 6. Min/Max NCCL Ring thresholds for 8 GPUs
-    os.environ["NCCL_MIN_NCHANNELS"] = str(max(4, num_channels // 2))
-    os.environ["NCCL_MAX_NCHANNELS"] = str(num_channels)
-    env_vars["NCCL_MIN_NCHANNELS"] = str(max(4, num_channels // 2))
-    env_vars["NCCL_MAX_NCHANNELS"] = str(num_channels)
-
-    # 7. Tuned for 148 SMs per GPU = 1184 total SMs
-    os.environ["NCCL_NTHREADS"] = "512"
-    env_vars["NCCL_NTHREADS"] = "512"
-
-    # 8. GB200/GB300 specific: Enable Grace CPU coherency
-    if enable_nvlink_c2c:
-        os.environ["NCCL_NVLINK_C2C_ENABLE"] = "1"
-        os.environ["NCCL_GRACE_BLACKWELL"] = "1"
-        env_vars["NCCL_NVLINK_C2C_ENABLE"] = "1"
-        env_vars["NCCL_GRACE_BLACKWELL"] = "1"
-
-    # 9. Topology hints for 8 GPUs
-    os.environ["NCCL_TOPO_FILE"] = ""  # Auto-detect
-    env_vars["NCCL_TOPO_FILE"] = "auto"
-
-    if verbose:
-        print("=" * 80)
-        print("NCCL 2.28 Configuration for 8x Blackwell/GB GPUs")
-        print("=" * 80)
-        print("\nHardware Configuration:")
-        print("  GPUs: 8x Blackwell B200")
-        print("  Total SMs: 1184 (148 per GPU)")
-        print("  Total Memory: 1.44 TB HBM3e")
-        print("  Aggregate Bandwidth: 62.4 TB/s")
-        print("  NVLink 5.0: 1800 GB/s bidirectional per pair")
-        print("  Power Budget: 11.2 kW total")
-        print("\nNCCL Configuration:")
-        for key in sorted(env_vars.keys()):
-            if key.startswith("NCCL_"):
-                print(f"  {key}={env_vars[key]}")
-        print("=" * 80)
-
-    return env_vars
-
-
 def configure_nccl_for_gb200_gb300(verbose: bool = True) -> Dict[str, str]:
     """Configure NCCL specifically for GB200/GB300 Grace-Blackwell Superchips.
 
@@ -303,8 +300,9 @@ def configure_nccl_for_gb200_gb300(verbose: bool = True) -> Dict[str, str]:
     Returns:
         Dictionary of environment variables set
     """
-    # Start with 8x B200 config as base
-    env_vars = configure_nccl_for_8xB200(
+    # Start with multi-GPU config as base
+    env_vars = configure_nccl_for_multigpu(
+        num_gpus=torch.cuda.device_count() if torch.cuda.is_available() else 4,
         enable_nvlink_c2c=True,
         enable_tce=True,
         enable_nvls=True,
@@ -353,8 +351,8 @@ def configure_nccl_for_gb200_gb300(verbose: bool = True) -> Dict[str, str]:
     return env_vars
 
 
-def detect_8xb200_topology() -> Dict[str, Any]:
-    """Detect 8x Blackwell/GB GPU topology and NVLink configuration.
+def detect_b200_multigpu_topology() -> Dict[str, Any]:
+    """Detect multi-GPU Blackwell/GB GPU topology and NVLink configuration.
 
     Returns:
         Dictionary with topology information
@@ -365,15 +363,15 @@ def detect_8xb200_topology() -> Dict[str, Any]:
     num_gpus = torch.cuda.device_count()
     info: Dict[str, Any] = {
         "num_gpus": num_gpus,
-        "is_8xb200": False,
+        "is_b200_multigpu": False,
         "has_nvswitch": False,
         "has_grace_cpu": False,
         "nvlink_topology": "unknown",
         "gpus": [],
     }
 
-    if num_gpus != 8:
-        info["warning"] = f"Expected 8 GPUs, found {num_gpus}"
+    if num_gpus < 2:
+        info["warning"] = f"Expected >=2 GPUs, found {num_gpus}"
         return info
 
     # Check if all GPUs are Blackwell B200
@@ -392,10 +390,10 @@ def detect_8xb200_topology() -> Dict[str, Any]:
             }
         )
 
-    info["is_8xb200"] = all_blackwell
+    info["is_b200_multigpu"] = all_blackwell
 
     # Check P2P access pattern to infer topology
-    if num_gpus == 8:
+    if num_gpus >= 2:
         p2p_matrix = []
         for i in range(num_gpus):
             row = []
@@ -430,12 +428,12 @@ def detect_8xb200_topology() -> Dict[str, Any]:
     return info
 
 
-def print_8xb200_topology() -> None:
-    """Print topology information for 8x Blackwell/GB configuration."""
-    info = detect_8xb200_topology()
+def print_multigpu_topology() -> None:
+    """Print topology information for multi-GPU Blackwell/GB configuration."""
+    info = detect_b200_multigpu_topology()
 
     print("\n" + "=" * 80)
-    print("8x Blackwell/GB GPU Topology Detection")
+    print("Multi-GPU Blackwell/GB GPU Topology Detection")
     print("=" * 80)
 
     if "error" in info:
@@ -446,10 +444,10 @@ def print_8xb200_topology() -> None:
         print(f"⚠ Warning: {info['warning']}")
 
     print(f"Number of GPUs: {info['num_gpus']}")
-    status = "✓ Yes" if info["is_8xb200"] else "✗ No"
-    print(f"8x Blackwell/GB Configuration: {status}")
+    status = "✓ Yes" if info["is_b200_multigpu"] else "✗ No"
+    print(f"B200/GB multi-GPU Configuration: {status}")
 
-    if info["is_8xb200"]:
+    if info["is_b200_multigpu"]:
         print(f"\nTopology: {info['nvlink_topology']}")
         if info["has_nvswitch"]:
             print("  ✓ NVSwitch detected (all-to-all connectivity)")
@@ -531,18 +529,18 @@ def main() -> None:
     """Run NCCL configuration and benchmarks."""
     num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
 
-    topology = detect_8xb200_topology()
+    topology = detect_b200_multigpu_topology()
     is_grace_blackwell = topology.get("has_grace_cpu", False)
 
-    if num_gpus == 8:
-        print("Detected 8 GPUs - using optimized 8x Blackwell/GB configuration")
-        print_8xb200_topology()
+    if num_gpus >= 2:
+        print(f"Detected {num_gpus} GPUs - using optimized multi-GPU Blackwell/GB configuration")
+        print_multigpu_topology()
         print()
         if is_grace_blackwell:
             print("Grace CPU detected - using GB200/GB300 configuration")
             configure_nccl_for_gb200_gb300(verbose=True)
         else:
-            configure_nccl_for_8xB200(verbose=True)
+            configure_nccl_for_multigpu(num_gpus=num_gpus, verbose=True)
     else:
         print(f"Detected {num_gpus} GPUs - using standard Blackwell/GB configuration")
         configure_nccl_for_blackwell(verbose=True)

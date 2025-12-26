@@ -13,7 +13,7 @@ Collects distributed-training recipes for Blackwell clusters: DDP, FSDP, ZeRO-1/
 | Path | Description |
 | --- | --- |
 | `baseline_ddp.py`, `optimized_ddp.py`, `baseline_ddp_flash.py`, `optimized_ddp_flash.py`, `ddp.py` | DDP workloads including flash-attention aware overlap tuning. |
-| `baseline_ddp_compression.py`, `optimized_ddp_int8_compression.py`, `optimized_ddp_powersgd_compression.py`, `ddp_compression.py` | DDP gradient compression hooks (INT8 + PowerSGD) with a configurable communication payload. |
+| `baseline_ddp_compression_multigpu.py`, `optimized_ddp_compression_multigpu_int8.py`, `optimized_ddp_compression_multigpu_powersgd.py`, `ddp_compression.py` | DDP gradient compression hooks (INT8 + PowerSGD) with a configurable communication payload. |
 | `baseline_fsdp.py`, `optimized_fsdp.py`, `train_fsdp.py` | FSDP scripts that demonstrate shard-by-shard memory savings. |
 | `baseline_symmem_training.py`, `optimized_symmem_training.py` | Symmetric-memory strategies for optimizer state replication. |
 | `baseline_zero1.py`, `baseline_zero2.py`, `baseline_zero3.py`, `optimized_zero1.py`, `optimized_zero2.py`, `optimized_zero3.py`, `zero1.py`, `zero2.py`, `zero3.py` | ZeRO implementations (1/2/3) plus helpers for parameter partitioning. |

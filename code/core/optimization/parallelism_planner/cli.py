@@ -14,10 +14,10 @@ Usage:
     python -m core.optimization.parallelism_planner recommend llama-3.1-70b --training
     
     # Sharding recommendations
-    python -m core.optimization.parallelism_planner sharding llama-3.1-70b --dp 8 --memory 80
+    python -m core.optimization.parallelism_planner sharding llama-3.1-70b --dp 4 --memory 80
     
     # Generate launch commands
-    python -m core.optimization.parallelism_planner launch --nodes 2 --gpus 8 --tp 4 --pp 2 --dp 2
+    python -m core.optimization.parallelism_planner launch --nodes 2 --gpus 4 --tp 2 --pp 2 --dp 1
     
     # Pareto analysis
     python -m core.optimization.parallelism_planner pareto llama-3.1-70b --gpu-cost 4.0
@@ -35,24 +35,31 @@ import sys
 from pathlib import Path
 
 
+def _resolve_mock_topology(choice: str, mock_gpus: int = 4):
+    from .advisor import create_mock_topology_b200_multigpu, create_mock_topology_h100_multigpu
+
+    if choice == "b200":
+        return create_mock_topology_b200_multigpu(mock_gpus)
+    if choice == "h100":
+        return create_mock_topology_h100_multigpu(mock_gpus)
+    raise ValueError("Use --mock-topology b200 or h100 to use a mock topology")
+
+
 def cmd_recommend(args):
     """Handle recommend subcommand."""
-    from .advisor import ParallelismAdvisor, create_mock_topology_8xb200, create_mock_topology_8xh100
+    from .advisor import ParallelismAdvisor
     
     advisor = ParallelismAdvisor(auto_detect_topology=False)
     
     # Set topology
     if args.mock_topology:
-        if args.mock_topology == "8xB200":
-            advisor.set_topology(create_mock_topology_8xb200())
-        else:
-            advisor.set_topology(create_mock_topology_8xh100())
+        advisor.set_topology(_resolve_mock_topology(args.mock_topology, args.mock_gpus))
     else:
         try:
             advisor.detect_topology()
         except RuntimeError:
-            print("Warning: Could not detect topology, using mock 8xB200...")
-            advisor.set_topology(create_mock_topology_8xb200())
+            print("Warning: Could not detect topology, using mock B200 multi-GPU...")
+            advisor.set_topology(_resolve_mock_topology("b200", args.mock_gpus))
     
     if args.json:
         result = advisor.recommend(
@@ -166,7 +173,7 @@ def cmd_launch(args):
 
 def cmd_pareto(args):
     """Handle pareto subcommand."""
-    from .advisor import ParallelismAdvisor, create_mock_topology_8xb200
+    from .advisor import ParallelismAdvisor
     from .pareto_analysis import ParetoAnalyzer, ConfigurationPoint
     
     # Get parallelism recommendations
@@ -174,7 +181,7 @@ def cmd_pareto(args):
     try:
         advisor.detect_topology()
     except RuntimeError:
-        advisor.set_topology(create_mock_topology_8xb200())
+        advisor.set_topology(_resolve_mock_topology("b200"))
     
     result = advisor.recommend(
         model=args.model,
@@ -264,21 +271,17 @@ def cmd_presets(args):
 def cmd_topology(args):
     """Handle topology subcommand."""
     from .topology_detector import TopologyDetector
-    from .advisor import create_mock_topology_8xb200, create_mock_topology_8xh100
     
     detector = TopologyDetector()
     
     if args.mock:
-        if args.mock == "8xB200":
-            topology = create_mock_topology_8xb200()
-        else:
-            topology = create_mock_topology_8xh100()
+        topology = _resolve_mock_topology(args.mock, args.mock_gpus)
     else:
         try:
             topology = detector.detect()
         except RuntimeError as e:
             print(f"Error detecting topology: {e}")
-            print("Use --mock 8xB200 or --mock 8xH100 to use a mock topology")
+            print("Use --mock b200 or --mock h100 to use a mock topology")
             sys.exit(1)
     
     if args.json:
@@ -332,21 +335,17 @@ def cmd_estimate(args):
 def cmd_compare(args):
     """Handle compare subcommand (multi-model comparison)."""
     from .extras import ModelComparator
-    from .advisor import create_mock_topology_8xb200, create_mock_topology_8xh100
     from .topology_detector import TopologyDetector
     
     # Get topology
     if args.mock_topology:
-        if args.mock_topology == "8xB200":
-            topology = create_mock_topology_8xb200()
-        else:
-            topology = create_mock_topology_8xh100()
+        topology = _resolve_mock_topology(args.mock_topology, args.mock_gpus)
     else:
         try:
             detector = TopologyDetector()
             topology = detector.detect()
         except RuntimeError:
-            topology = create_mock_topology_8xb200()
+            topology = _resolve_mock_topology("b200")
     
     comparator = ModelComparator()
     results = comparator.compare(
@@ -391,7 +390,7 @@ def cmd_validate(args):
     """Handle validate subcommand (configuration validation)."""
     from .validation import validate_full_configuration, ConfigValidator
     from .model_analyzer import ModelAnalyzer
-    from .advisor import ParallelismAdvisor, create_mock_topology_8xb200
+    from .advisor import ParallelismAdvisor
     
     # Get model info
     analyzer = ModelAnalyzer()
@@ -403,7 +402,7 @@ def cmd_validate(args):
         advisor.detect_topology()
         topology = advisor.topology
     except RuntimeError:
-        topology = create_mock_topology_8xb200()
+        topology = _resolve_mock_topology("b200")
     
     # Get memory estimate (returns dict with breakdown)
     mem_estimate = arch.estimate_memory_gb(
@@ -524,7 +523,7 @@ def cmd_optimize(args):
     """Handle optimize subcommand (advanced optimizations)."""
     from .advanced_optimizations import get_advanced_optimization_report
     from .model_analyzer import ModelAnalyzer
-    from .advisor import ParallelismAdvisor, create_mock_topology_8xb200
+    from .advisor import ParallelismAdvisor
     
     analyzer = ModelAnalyzer()
     arch = analyzer.analyze(args.model)
@@ -535,7 +534,7 @@ def cmd_optimize(args):
         advisor.detect_topology()
         topology = advisor.topology
     except RuntimeError:
-        topology = create_mock_topology_8xb200()
+        topology = _resolve_mock_topology("b200")
     
     model_config = {
         "parameters_billions": arch.total_params_billion,
@@ -619,7 +618,7 @@ def cmd_optimize(args):
 def cmd_profile(args):
     """Handle profile subcommand (workload-specific profiles)."""
     from .performance_profiles import get_performance_profile, list_available_profiles
-    from .advisor import ParallelismAdvisor, create_mock_topology_8xb200
+    from .advisor import ParallelismAdvisor
     from .model_analyzer import ModelAnalyzer
     
     if args.list:
@@ -645,7 +644,7 @@ def cmd_profile(args):
         advisor.detect_topology()
         topology = advisor.topology
     except RuntimeError:
-        topology = create_mock_topology_8xb200()
+        topology = _resolve_mock_topology("b200")
     
     # Get per-GPU memory from first GPU or divide total
     gpu_memory_gb = topology.gpus[0].memory_gb if topology.gpus else topology.total_memory_gb / max(1, topology.num_gpus)
@@ -751,7 +750,7 @@ def cmd_bottleneck(args):
     """Handle bottleneck subcommand."""
     from .bottleneck_analysis import analyze_bottlenecks
     from .model_analyzer import ModelAnalyzer
-    from .advisor import ParallelismAdvisor, create_mock_topology_8xb200
+    from .advisor import ParallelismAdvisor
     
     analyzer = ModelAnalyzer()
     arch = analyzer.analyze(args.model)
@@ -761,7 +760,7 @@ def cmd_bottleneck(args):
         advisor.detect_topology()
         topology = advisor.topology
     except RuntimeError:
-        topology = create_mock_topology_8xb200()
+        topology = _resolve_mock_topology("b200")
     
     gpu_memory_gb = topology.gpus[0].memory_gb if topology.gpus else topology.total_memory_gb / max(1, topology.num_gpus)
     
@@ -905,7 +904,7 @@ def cmd_batchsize(args):
     """Handle batch-size subcommand."""
     from .auto_tuning import find_max_batch_size
     from .model_analyzer import ModelAnalyzer
-    from .advisor import ParallelismAdvisor, create_mock_topology_8xb200
+    from .advisor import ParallelismAdvisor
     
     analyzer = ModelAnalyzer()
     arch = analyzer.analyze(args.model)
@@ -915,7 +914,7 @@ def cmd_batchsize(args):
         advisor.detect_topology()
         topology = advisor.topology
     except RuntimeError:
-        topology = create_mock_topology_8xb200()
+        topology = _resolve_mock_topology("b200")
     
     gpu_memory_gb = topology.gpus[0].memory_gb if topology.gpus else topology.total_memory_gb / max(1, topology.num_gpus)
     
@@ -954,7 +953,7 @@ def cmd_autotune(args):
     """Handle auto-tune subcommand."""
     from .auto_tuning import auto_tune_config
     from .model_analyzer import ModelAnalyzer
-    from .advisor import ParallelismAdvisor, create_mock_topology_8xb200
+    from .advisor import ParallelismAdvisor
     
     analyzer = ModelAnalyzer()
     arch = analyzer.analyze(args.model)
@@ -964,7 +963,7 @@ def cmd_autotune(args):
         advisor.detect_topology()
         topology = advisor.topology
     except RuntimeError:
-        topology = create_mock_topology_8xb200()
+        topology = _resolve_mock_topology("b200")
     
     gpu_memory_gb = topology.gpus[0].memory_gb if topology.gpus else topology.total_memory_gb / max(1, topology.num_gpus)
     
@@ -1010,7 +1009,7 @@ def cmd_inference(args):
     """Handle inference subcommand."""
     from .inference_optimization import get_inference_optimization_report
     from .model_analyzer import ModelAnalyzer
-    from .advisor import ParallelismAdvisor, create_mock_topology_8xb200
+    from .advisor import ParallelismAdvisor
     
     analyzer = ModelAnalyzer()
     arch = analyzer.analyze(args.model)
@@ -1020,7 +1019,7 @@ def cmd_inference(args):
         advisor.detect_topology()
         topology = advisor.topology
     except RuntimeError:
-        topology = create_mock_topology_8xb200()
+        topology = _resolve_mock_topology("b200")
     
     gpu_memory_gb = topology.gpus[0].memory_gb if topology.gpus else topology.total_memory_gb / max(1, topology.num_gpus)
     gpu_arch = topology.gpus[0].architecture if topology.gpus else 'hopper'
@@ -1322,7 +1321,7 @@ def cmd_rlhf(args):
     if args.compare:
         result = calculator.get_optimal_config(
             arch.total_params_billion,
-            num_gpus=8,
+            num_gpus=4,
             gpu_memory_gb=args.memory,
         )
         if args.json:
@@ -2264,7 +2263,8 @@ def main():
     recommend_parser.add_argument("-g", "--goal", choices=["throughput", "latency", "memory", "efficiency"], 
                                   default="throughput", help="Optimization goal")
     recommend_parser.add_argument("-t", "--training", action="store_true", help="Configure for training")
-    recommend_parser.add_argument("--mock-topology", choices=["8xB200", "8xH100"], help="Use mock topology")
+    recommend_parser.add_argument("--mock-topology", choices=["b200", "h100"], help="Use mock topology")
+    recommend_parser.add_argument("--mock-gpus", type=int, default=4, help="GPU count for mock topology")
     recommend_parser.add_argument("-j", "--json", action="store_true", help="Output as JSON")
     recommend_parser.set_defaults(func=cmd_recommend)
     
@@ -2357,7 +2357,8 @@ def main():
         "topology",
         help="Detect or display hardware topology",
     )
-    topology_parser.add_argument("--mock", choices=["8xB200", "8xH100"], help="Use mock topology")
+    topology_parser.add_argument("--mock", choices=["b200", "h100"], help="Use mock topology")
+    topology_parser.add_argument("--mock-gpus", type=int, default=4, help="GPU count for mock topology")
     topology_parser.add_argument("-j", "--json", action="store_true", help="Output as JSON")
     topology_parser.set_defaults(func=cmd_topology)
     
@@ -2403,7 +2404,8 @@ def main():
     compare_parser.add_argument("-b", "--batch-size", type=int, default=1, help="Batch size")
     compare_parser.add_argument("-s", "--seq-length", type=int, default=2048, help="Sequence length")
     compare_parser.add_argument("-t", "--training", action="store_true", help="Configure for training")
-    compare_parser.add_argument("--mock-topology", choices=["8xB200", "8xH100"], help="Use mock topology")
+    compare_parser.add_argument("--mock-topology", choices=["b200", "h100"], help="Use mock topology")
+    compare_parser.add_argument("--mock-gpus", type=int, default=4, help="GPU count for mock topology")
     compare_parser.add_argument("-j", "--json", action="store_true", help="Output as JSON")
     compare_parser.set_defaults(func=cmd_compare)
     
@@ -2808,4 +2810,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

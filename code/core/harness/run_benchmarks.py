@@ -5968,7 +5968,7 @@ def main():
     parser.add_argument(
         '--ncu-metric-set',
         choices=['auto', 'minimal', 'deep_dive', 'roofline'],
-        default='auto',
+        default='minimal',
         help='Nsight Compute metric preset (auto/minimal/deep_dive/roofline). Auto follows the profile preset.'
     )
     parser.add_argument(

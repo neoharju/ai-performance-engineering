@@ -87,7 +87,10 @@ from torch.distributed.device_mesh import init_device_mesh
 
 # Import our optimized configurations
 try:
-    from extras.ch04.nccl_blackwell_config import configure_nccl_for_8xB200, detect_8xb200_topology
+    from extras.ch04.nccl_blackwell_config import (
+        configure_nccl_for_multigpu,
+        detect_b200_multigpu_topology,
+    )
     from extras.ch04.gb200_grace_numa_optimization import setup_grace_affinity, detect_grace_cpu
     CUSTOM_CONFIGS_AVAILABLE = True
 except ImportError:
@@ -243,10 +246,14 @@ def setup_multigpu_distributed(tp_size: int = 2, dp_size: Optional[int] = None) 
     # Configure NCCL for multi-GPU Blackwell
     if CUSTOM_CONFIGS_AVAILABLE:
         if world_size >= 8:
-            configure_nccl_for_8xB200(num_channels=8, verbose=(rank == 0))
-            topology = detect_8xb200_topology()
-            if rank == 0 and topology.get("is_8xb200"):
-                print("B200 multi-GPU topology detected and optimized")
+            topology = detect_b200_multigpu_topology()
+            if topology.get("is_b200_multigpu"):
+                configure_nccl_for_multigpu(
+                    num_gpus=topology.get("num_gpus", world_size),
+                    verbose=(rank == 0),
+                )
+                if rank == 0:
+                    print("B200 multi-GPU topology detected and optimized")
         else:
             os.environ.setdefault("NCCL_ALGO", "Tree,Ring")
             os.environ.setdefault("NCCL_NCHANNELS_PER_NET_PEER", "8")

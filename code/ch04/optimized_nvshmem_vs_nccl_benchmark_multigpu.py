@@ -13,10 +13,10 @@ import argparse
 import torch
 import torch.distributed as dist
 from ch04.nccl_blackwell_config import (
-    configure_nccl_for_8xB200,
     configure_nccl_for_blackwell,
     configure_nccl_for_gb200_gb300,
-    detect_8xb200_topology,
+    configure_nccl_for_multigpu,
+    detect_b200_multigpu_topology,
 )
 from ch04.nvshmem_vs_nccl_benchmark import benchmark, init_distributed
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig
@@ -26,15 +26,15 @@ from typing import Optional
 
 def _configure_blackwell_nccl() -> None:
     try:
-        topo = detect_8xb200_topology()
+        topo = detect_b200_multigpu_topology()
     except Exception:
         configure_nccl_for_blackwell(verbose=False)
         return
 
     if topo.get("has_grace_cpu"):
         configure_nccl_for_gb200_gb300(verbose=False)
-    elif topo.get("num_gpus", 0) >= 8 and topo.get("is_8xb200"):
-        configure_nccl_for_8xB200(verbose=False)
+    elif topo.get("num_gpus", 0) >= 2 and topo.get("is_b200_multigpu"):
+        configure_nccl_for_multigpu(num_gpus=topo.get("num_gpus", 2), verbose=False)
     else:
         configure_nccl_for_blackwell(verbose=False)
 

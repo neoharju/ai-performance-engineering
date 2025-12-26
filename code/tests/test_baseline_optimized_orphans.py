@@ -56,6 +56,8 @@ IGNORE_DIRS = {
     "profiling_results",
     "hta_output",
     "gpt-oss-20b",
+    "mixtral-8x7b",
+    "phi-3.5-moe",
     "third_party",
 }
 

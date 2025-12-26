@@ -15,11 +15,11 @@ class KVCacheWorkload:
 
     # Reduced footprint to avoid allocator fragmentation on large B200 runs while
     # keeping enough work to show >1.05x speedups.
-    batch_size: int = 2
-    num_layers: int = 4
-    num_heads: int = 16
+    batch_size: int = 1
+    num_layers: int = 2
+    num_heads: int = 8
     head_dim: int = 64
-    sequence_lengths: Tuple[int, ...] = (512, 1024, 2048, 2048, 2048)
+    sequence_lengths: Tuple[int, ...] = (256, 512, 1024)
     dtype: torch.dtype = torch.float16
     page_size: int = 256
     block_size: int = 128

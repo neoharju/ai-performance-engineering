@@ -70,51 +70,52 @@ def detect_gb200_gb300() -> bool:
         pass  # /proc/cpuinfo doesn't exist (not Linux)
     return False
 
-def setup_8xb200_optimized(
+def setup_multigpu_optimized(
     backend: str = "nccl",
     tp_size: int = 2,
-    dp_size: int = 4,
+    dp_size: Optional[int] = None,
 ) -> Tuple[int, int, int, int]:
     """
-    Initialize distributed environment optimized for 8x B200 GPUs.
-    
-    8x B200 Configuration:
-    - Total: 1184 SMs, 1.44 TB HBM3e, 62.4 TB/s bandwidth
-    - NVLink 5.0: 1800 GB/s bidirectional per GPU pair
-    - Recommended: TP=2/4, DP=4/2
-    for hybrid parallelism
-    
+    Initialize distributed environment optimized for multi-GPU B200 systems.
+
     Args:
-        
-            
-            
-            backend: Communication backend (default: nccl)
-        tp_size: Tensor parallel size (2 or 4 for 8 GPUs)
-        dp_size: 
-            
-            
-            Data parallel size (4 or 2 for 8 GPUs)
-    
+        backend: Communication backend (default: nccl)
+        tp_size: Tensor parallel size (must divide world_size)
+        dp_size: Data parallel size (defaults to world_size / tp_size)
+
     Returns:
         (rank, local_rank, world_size, local_world_size)
     """
-    assert tp_size * dp_size == 8, f"tp_size * dp_size must equal 8 for 8x B200, got {tp_size} * {dp_size}"
+    world_size = int(os.environ.get("WORLD_SIZE", "1"))
+    if world_size < 2:
+        raise RuntimeError("Multi-GPU setup requires WORLD_SIZE >= 2.")
+    if dp_size is None:
+        if world_size % tp_size != 0:
+            raise ValueError(
+                f"tp_size must divide world_size ({world_size}), got {tp_size}"
+            )
+        dp_size = world_size // tp_size
+    if tp_size * dp_size != world_size:
+        raise ValueError(
+            f"tp_size * dp_size must equal world_size ({world_size}), got {tp_size} * {dp_size}"
+        )
+
     # Use optimized NCCL config
     try:
-        from extras.ch04.nccl_blackwell_config import configure_nccl_for_8xB200, detect_8xb200_topology
-        topology = detect_8xb200_topology()
-        if topology.get("is_8xb200", False):
-            # Detect if Grace-Blackwell
-            is_grace = detect_gb200_gb300()
-            if is_grace:
-                from extras.ch04.nccl_blackwell_config import configure_nccl_for_gb200_gb300
-                configure_nccl_for_gb200_gb300(verbose=False)
-            else:
-                configure_nccl_for_8xB200(num_channels=8, verbose=False)
+        from extras.ch04.nccl_blackwell_config import (
+            configure_nccl_for_gb200_gb300,
+            configure_nccl_for_multigpu,
+        )
+        is_grace = detect_gb200_gb300()
+        if is_grace:
+            configure_nccl_for_gb200_gb300(verbose=False)
+        else:
+            configure_nccl_for_multigpu(num_gpus=world_size, verbose=False)
     except ImportError:
         pass
+
     # Fall back to manual config
-    return setup_blackwell_distributed(backend=backend) 
+    return setup_blackwell_distributed(backend=backend)
 
 def setup_blackwell_distributed(
     backend: str = "nccl",
@@ -147,8 +148,8 @@ def setup_blackwell_distributed(
     
     # Configure NCCL for Blackwell
     if backend == "nccl":
-        # Detect 8x B200 configuration
-        is_8gpu = local_world_size == 8
+        # Detect multi-GPU configuration
+        is_large_node = local_world_size >= 8
         
         # Blackwell-specific NCCL optimizations
         os.environ.setdefault("NCCL_SOCKET_IFNAME", "eth0")  # Adjust as needed
@@ -158,36 +159,34 @@ def setup_blackwell_distributed(
         os.environ.setdefault("NCCL_NVLS_ENABLE", "1")  # NVLink-C2C
         os.environ.setdefault("NCCL_PROTO", "Simple")  # Protocol
         
-        # Optimize for 8x B200 (148 SMs per GPU = 1184 total)
-        if is_8gpu:
-            os.environ.setdefault("NCCL_ALGO", "Tree,Ring,NVLS")  # Add NVLS for 8 GPUs
-            os.environ.setdefault("NCCL_NCHANNELS_PER_NET_PEER", "16")  # More channels for 8 GPUs
-            os.environ.setdefault("NCCL_BUFFSIZE", str(64 * 1024 * 1024))  # 64MB for 1.44TB total
+        # Optimize for larger nodes
+        if is_large_node:
+            os.environ.setdefault("NCCL_ALGO", "Tree,Ring,NVLS")
+            os.environ.setdefault("NCCL_NCHANNELS_PER_NET_PEER", "16")
+            os.environ.setdefault("NCCL_BUFFSIZE", str(64 * 1024 * 1024))
             os.environ.setdefault("NCCL_MIN_NCHANNELS", "8")
             os.environ.setdefault("NCCL_MAX_NCHANNELS", "32")
+        elif local_world_size >= 4:
+            os.environ.setdefault("NCCL_ALGO", "Tree,Ring")
+            os.environ.setdefault("NCCL_NCHANNELS_PER_NET_PEER", "12")
+            os.environ.setdefault("NCCL_BUFFSIZE", str(32 * 1024 * 1024))
         else:
             os.environ.setdefault("NCCL_ALGO", "Tree,Ring")
             os.environ.setdefault("NCCL_NCHANNELS_PER_NET_PEER", "8")
-            os.environ.setdefault("NCCL_BUFFSIZE", "8388608")  # 8MB
+            os.environ.setdefault("NCCL_BUFFSIZE", "8388608")
         
         if rank == 0:
             print("=" * 70)
-            print(f"NCCL Configuration for Blackwell ({'8x B200' if is_8gpu else 'Standard'})")
+            print(f"NCCL Configuration for Blackwell ({local_world_size} GPU node)")
             print("=" * 70)
-            if is_8gpu:
-                print(" 8x B200 Optimizations Enabled:")
-                print(f" Total SMs: 1184 (148 per GPU)")
-                print(f" Total Memory: 1.44 TB HBM3e")
-                print(f" Aggregate Bandwidth: 62.4 TB/s")
-                print(f" NVLink 5.0: 1800 GB/s per pair")
-                print(f" P2P Level: {os.environ.get('NCCL_P2P_LEVEL', 'default')}")
-                print(f" NVLS (NVLink-C2C): {os.environ.get('NCCL_NVLS_ENABLE', '0')}")
-                print(f" Algorithms: {os.environ.get('NCCL_ALGO', 'default')}")
-                print(f" Channels per peer: {os.environ.get('NCCL_NCHANNELS_PER_NET_PEER', 'default')}")
-                print(f" Buffer size: {int(os.environ.get('NCCL_BUFFSIZE', '2097152')) / 1024 / 1024:.1f} MB")
-                if detect_gb200_gb300():
-                    print(" GB200/GB300 Grace-Blackwell detected")
-                    print(" → CPU-GPU: 900 GB/s NVLink-C2C")
+            print(f" P2P Level: {os.environ.get('NCCL_P2P_LEVEL', 'default')}")
+            print(f" NVLS (NVLink-C2C): {os.environ.get('NCCL_NVLS_ENABLE', '0')}")
+            print(f" Algorithms: {os.environ.get('NCCL_ALGO', 'default')}")
+            print(f" Channels per peer: {os.environ.get('NCCL_NCHANNELS_PER_NET_PEER', 'default')}")
+            print(f" Buffer size: {int(os.environ.get('NCCL_BUFFSIZE', '2097152')) / 1024 / 1024:.1f} MB")
+            if detect_gb200_gb300():
+                print(" GB200/GB300 Grace-Blackwell detected")
+                print(" → CPU-GPU: 900 GB/s NVLink-C2C")
             print("=" * 70)
         
         if rank == 0:
@@ -198,11 +197,11 @@ def setup_blackwell_distributed(
             print(f" Ranks per node: {local_world_size}")
             print(f" Number of nodes: {world_size // local_world_size}")
             print(f" Backend: {backend}")
-            if local_world_size == 8:
-                print("\n Recommended Parallelism for 8x B200:")
-                print(" - TP=2, DP=4 (moderate model size, <20B params)")
-                print(" - TP=4, DP=2 (large model, 20B-100B params)")
-                print(" - TP=8, DP=1 (very large model, >100B params)")
+            if local_world_size >= 2:
+                print("\n Recommended Parallelism (single-node):")
+                print(" - Choose TP to fit model memory")
+                print(" - Use remaining GPUs for DP replicas")
+                print(" - Ensure TP divides local_world_size")
             print("=" * 70 + "\n")
     
     return rank, local_rank, world_size, local_world_size
@@ -310,23 +309,28 @@ class MultiNodeTransformer(nn.Module):
         logits = self.lm_head(x)
         return logits
 
-def create_8xb200_device_mesh(tp_size: int = 2, dp_size: int = 4):
+def create_multigpu_device_mesh(tp_size: int = 2, dp_size: Optional[int] = None):
     """
-    Create optimal 2D device mesh for 8x B200 GPUs.
-    
-    8x B200 Recommended Configurations:
-    - TP=2, DP=4: Moderate models (<20B params), balanced communication
-    - TP=4, DP=2: Large models (20-100B params), more model parallelism
-    - TP=8, DP=1: Very large models (>100B params), maximum model parallelism
-    
+    Create optimal 2D device mesh for multi-GPU B200 GPUs.
+
     Args:
-        tp_size: Tensor parallel size (2, 4, or 8)
-        dp_size: Data parallel size (4, 2, or 1)
+        tp_size: Tensor parallel size (must divide world_size)
+        dp_size: Data parallel size (defaults to world_size / tp_size)
     
     Returns:
         2D device mesh with "dp" and "tp" dimensions
     """
-    assert tp_size * dp_size == 8, f"tp_size * dp_size must equal 8, got {tp_size} * {dp_size}"
+    world_size = dist.get_world_size()
+    if dp_size is None:
+        if world_size % tp_size != 0:
+            raise ValueError(
+                f"tp_size must divide world_size ({world_size}), got {tp_size}"
+            )
+        dp_size = world_size // tp_size
+    if tp_size * dp_size != world_size:
+        raise ValueError(
+            f"tp_size * dp_size must equal world_size ({world_size}), got {tp_size} * {dp_size}"
+        )
     
     # Create 2D mesh: [data_parallel, tensor_parallel]
     # TP uses intra-node NVLink (low latency, high bandwidth)
@@ -339,7 +343,7 @@ def create_8xb200_device_mesh(tp_size: int = 2, dp_size: int = 4):
     rank = dist.get_rank()
     if rank == 0:
         print("\n" + "=" * 70)
-        print(f"8x B200 Device Mesh Configuration")
+        print("Multi-GPU Device Mesh Configuration")
         print("=" * 70)
         print(f" Mesh shape: ({dp_size}, {tp_size}) - (DP, TP)")
         print(f" Total GPUs: {dp_size * tp_size}")
@@ -349,8 +353,9 @@ def create_8xb200_device_mesh(tp_size: int = 2, dp_size: int = 4):
         print(f" Data Parallel: {dp_size} groups")
         print(f" → Cross-group: NCCL AllReduce")
         print("\nMemory Distribution:")
-        print(f" Per TP group: {180 * tp_size:.0f} GB (model sharded {tp_size}x)")
-        print(f" Total capacity: {180 * 8:.0f} GB HBM3e")
+        mem_per_gpu_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+        print(f" Per TP group: {mem_per_gpu_gb * tp_size:.0f} GB (model sharded {tp_size}x)")
+        print(f" Total capacity: {mem_per_gpu_gb * world_size:.0f} GB HBM3e")
         print("=" * 70)
     return device_mesh
 
@@ -547,11 +552,11 @@ def train_multi_node(
 # Bandwidth Benchmark
 # ============================================================================ 
 
-def benchmark_8xb200_bandwidth(
+def benchmark_multigpu_bandwidth(
     sizes: List[int] | None = None,
     num_iters: int = 100,
 ) -> Dict[str, float]:
-    """Run a suite of collectives tuned for an 8x B200 topology."""
+    """Run a suite of collectives tuned for a multi-GPU topology."""
     if sizes is None:
         sizes = [1 << 20, 10 << 20, 100 << 20, 500 << 20]
 
@@ -562,7 +567,7 @@ def benchmark_8xb200_bandwidth(
 
     if rank == 0:
         print("\n" + "=" * 70)
-        print("8x B200 Bandwidth Benchmark")
+        print("Multi-GPU Bandwidth Benchmark")
         print("=" * 70)
 
     def _bench(collective: Callable[[], None]) -> float:
@@ -669,8 +674,8 @@ def benchmark_multi_node_bandwidth(
     world_size = dist.get_world_size()
     local_world_size = torch.cuda.device_count()
 
-    if local_world_size == 8 and world_size == 8:
-        return benchmark_8xb200_bandwidth(sizes, num_iters)
+    if local_world_size == world_size and local_world_size >= 2:
+        return benchmark_multigpu_bandwidth(sizes, num_iters)
 
     device = torch.device("cuda", torch.cuda.current_device())
     results: Dict[str, float] = {}
@@ -752,8 +757,8 @@ def main() -> None:
 
     if rank == 0:
         print("\n[2/3] Setting up hybrid parallel configuration...")
-    if local_world_size == 8 and world_size == 8:
-        device_mesh = create_8xb200_device_mesh(tp_size=2, dp_size=4)
+    if local_world_size == world_size and local_world_size >= 2:
+        device_mesh = create_multigpu_device_mesh(tp_size=2)
     else:
         device_mesh = init_device_mesh(
             "cuda",

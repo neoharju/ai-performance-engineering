@@ -182,8 +182,18 @@ class InferenceConfig:
         available_gpus = torch.cuda.device_count()
         if available_gpus == 0:
             raise RuntimeError("Chapter 15 requires at least one supported GPU.")
-        self.num_gpus = min(self.num_gpus, available_gpus)
-        self.num_speculative_tokens = max(1, int(self.num_speculative_tokens))
+        self.num_gpus = int(self.num_gpus)
+        if self.num_gpus < 1:
+            raise RuntimeError("num_gpus must be >= 1")
+        if self.num_gpus > available_gpus:
+            raise RuntimeError(
+                f"num_gpus={self.num_gpus} exceeds available GPUs ({available_gpus})."
+            )
+        if self.use_disaggregated and self.num_gpus < 2:
+            raise RuntimeError("Disaggregated inference requires >= 2 GPUs.")
+        self.num_speculative_tokens = int(self.num_speculative_tokens)
+        if self.num_speculative_tokens < 1:
+            raise ValueError("num_speculative_tokens must be >= 1")
         if self.moe_activation_precision:
             self.moe_activation_precision = self.moe_activation_precision.lower()
 

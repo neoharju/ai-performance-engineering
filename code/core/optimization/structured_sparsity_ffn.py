@@ -74,7 +74,7 @@ class StructuredSparsityFFN:
             device=self.device,
             dtype=self.cfg.dtype,
         )
-        self.w2_algo = self._mm_search(self.w2_compressed, probe, transpose_result=False)
+        self.w2_algo = self._mm_search(self.w2_compressed, probe, transpose_result=True)
 
     def dense_forward(self) -> torch.Tensor:
         if self.input is None or self.w1 is None or self.w3 is None or self.w2 is None:
@@ -95,12 +95,12 @@ class StructuredSparsityFFN:
             or self.w2_algo is None
         ):
             raise RuntimeError("Structured sparsity tensors not initialized")
-        y1 = self._sparse_mm(self.w1_compressed, self.input_t, self.w1_algo, transpose_result=False)
-        y3 = self._sparse_mm(self.w3_compressed, self.input_t, self.w3_algo, transpose_result=False)
-        act = F.silu(y1) * y3
-        if not act.is_contiguous():
-            act = act.contiguous()
-        return self._sparse_mm(self.w2_compressed, act, self.w2_algo, transpose_result=False)
+        y1_t = self._sparse_mm(self.w1_compressed, self.input_t, self.w1_algo, transpose_result=False)
+        y3_t = self._sparse_mm(self.w3_compressed, self.input_t, self.w3_algo, transpose_result=False)
+        act_t = F.silu(y1_t) * y3_t
+        if not act_t.is_contiguous():
+            act_t = act_t.contiguous()
+        return self._sparse_mm(self.w2_compressed, act_t, self.w2_algo, transpose_result=True)
 
     def teardown(self) -> None:
         self.input = None

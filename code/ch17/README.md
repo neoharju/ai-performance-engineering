@@ -45,4 +45,4 @@ python -m cli.aisp demos ch17-moe-router-topology
 
 ## Notes
 - `blackwell_profiling_guide.py` walks through Nsight Systems/Compute captures and interpreting roofline vs occupancy bottlenecks for routing-heavy workloads.
-- `baseline_prefill_decode_disagg_multigpu.py` can run in simulation-only mode by passing `--simulate-fabric`, avoiding the need for multi-node hardware while iterating on routing logic.
+- `baseline_prefill_decode_disagg_multigpu.py` runs via torchrun and defaults to all visible GPUs (even count); set `AISP_DISAGG_WORLD_SIZE` to override.

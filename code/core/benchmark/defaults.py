@@ -145,7 +145,7 @@ class BenchmarkDefaults:
     
     # Output defaults
     profiling_output_dir: Optional[str] = None
-    ncu_metric_set: str = "auto"  # 'auto', 'deep_dive', 'roofline', 'minimal'
+    ncu_metric_set: str = "minimal"  # 'auto', 'deep_dive', 'roofline', 'minimal'
     ncu_replay_mode: str = "kernel"  # 'kernel' or 'application'
     
     @classmethod

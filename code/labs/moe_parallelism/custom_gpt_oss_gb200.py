@@ -67,7 +67,7 @@ PLAN_GPT_OSS = ParallelismPlan(
     stage_layers=[12] * 8,
     cross_node_ep=False,
     notes=[
-        "Each pipeline stage fits inside one NVSwitch island (8 GPUs) for NVLink-only TP/EP",
+        "Each pipeline stage fits inside one NVSwitch island (multi-GPU) for NVLink-only TP/EP",
         "Nine DP replicas map cleanly onto 72 GB200 GPUs-per-island (8 racks of NVL72)",
         "24 micro-batches keep ≥2×PP chunks in flight so pipeline bubbles stay low",
     ],

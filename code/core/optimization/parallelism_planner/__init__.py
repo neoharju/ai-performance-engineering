@@ -43,7 +43,7 @@ from .cluster_config import (
     NetworkType,
     create_cluster_preset_dgx_h100_8x,
     create_cluster_preset_dgx_gb200_nvl72,
-    create_cluster_preset_8xb200_single_node,
+    create_cluster_preset_b200_single_node,
 )
 
 # Sharding strategies (ZeRO, FSDP, HSDP)
@@ -250,7 +250,7 @@ __all__ = [
     "NetworkType",
     "create_cluster_preset_dgx_h100_8x",
     "create_cluster_preset_dgx_gb200_nvl72",
-    "create_cluster_preset_8xb200_single_node",
+    "create_cluster_preset_b200_single_node",
     
     # Sharding
     "ShardingOptimizer",
