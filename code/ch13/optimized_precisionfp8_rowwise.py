@@ -1,4 +1,4 @@
-"""optimized_precisionfp8.py - torchao FP8 training benchmark."""
+"""optimized_precisionfp8_rowwise.py - torchao FP8 training benchmark (rowwise)."""
 
 from __future__ import annotations
 
@@ -27,16 +27,13 @@ from core.harness.benchmark_harness import (
 
 
 class SimpleModel(nn.Module):
-    """Two-layer MLP used for torchao Float8Linear runs.
-    
-    Note: Must match baseline_precisionfp8.py architecture for output verification.
-    """
+    """Two-layer MLP used for torchao Float8Linear runs."""
 
     def __init__(self, hidden_dim: int = 1024):
         super().__init__()
         self.fc1 = nn.Linear(hidden_dim, hidden_dim * 2)
         self.fc2 = nn.Linear(hidden_dim * 2, hidden_dim)
-        self.relu = nn.ReLU()  # Match baseline
+        self.relu = nn.ReLU()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.relu(self.fc1(x))
@@ -44,8 +41,8 @@ class SimpleModel(nn.Module):
         return x
 
 
-class OptimizedFP8Benchmark(VerificationPayloadMixin, BaseBenchmark):
-    """Optimized FP8 path using torchao Float8Linear training kernels."""
+class OptimizedFP8RowwiseBenchmark(VerificationPayloadMixin, BaseBenchmark):
+    """Optimized FP8 path using torchao Float8Linear rowwise scaling."""
 
     signature_equivalence_group = "ch13_precisionfp8_precision"
     signature_equivalence_ignore_fields = ("precision_flags",)
@@ -59,7 +56,7 @@ class OptimizedFP8Benchmark(VerificationPayloadMixin, BaseBenchmark):
         self.targets_fp16: Optional[torch.Tensor] = None
         self.optimizer: Optional[torch.optim.Optimizer] = None
         self.criterion: Optional[nn.Module] = None
-        self.output: Optional[torch.Tensor] = None  # For output verification
+        self.output: Optional[torch.Tensor] = None
         self._verify_input: Optional[torch.Tensor] = None
         self._verify_input_fp16: Optional[torch.Tensor] = None
         self.parameter_count: int = 0
@@ -80,12 +77,10 @@ class OptimizedFP8Benchmark(VerificationPayloadMixin, BaseBenchmark):
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(42)
 
-        # Harness provides seeding - creation order must match baseline
         model = SimpleModel(hidden_dim=self.hidden_dim).to(self.device).half().train()
-        fp8_config = Float8LinearConfig.from_recipe_name(Float8LinearRecipeName.TENSORWISE)
+        fp8_config = Float8LinearConfig.from_recipe_name(Float8LinearRecipeName.ROWWISE)
         model = convert_to_float8_training(model, config=fp8_config)
-        
-        # Create inputs/targets in same order as baseline for verification
+
         self.inputs = torch.randn(
             self.batch_size,
             self.hidden_dim,
@@ -102,14 +97,13 @@ class OptimizedFP8Benchmark(VerificationPayloadMixin, BaseBenchmark):
         self._verify_input_fp16 = self._verify_input.to(torch.float16)
         self.inputs_fp16 = self.inputs.to(torch.float16)
         self.targets_fp16 = self.targets.to(torch.float16)
-        
+
         self.model = model
         self.parameter_count = sum(p.numel() for p in self.model.parameters())
-        
+
         self.optimizer = torch.optim.SGD(self.model.parameters(), lr=0.01)
         self.criterion = nn.MSELoss()
 
-        # Warmup (will modify model weights, but output already saved)
         for _ in range(5):
             self._train_step()
         self._synchronize()
@@ -131,7 +125,7 @@ class OptimizedFP8Benchmark(VerificationPayloadMixin, BaseBenchmark):
     def benchmark_fn(self) -> None:
         if self._verify_input is None or self._verify_input_fp16 is None:
             raise RuntimeError("Verification input not initialized")
-        with self._nvtx_range("optimized_precisionfp8"):
+        with self._nvtx_range("optimized_precisionfp8_rowwise"):
             self._train_step()
             with torch.no_grad():
                 verify_out = self.model(self._verify_input_fp16)
@@ -175,7 +169,6 @@ class OptimizedFP8Benchmark(VerificationPayloadMixin, BaseBenchmark):
         )
 
     def get_custom_metrics(self) -> Optional[dict]:
-        """Return domain-specific metrics using standardized helper."""
         from core.benchmark.metrics import compute_precision_metrics
         return compute_precision_metrics(
             fp32_time_ms=getattr(self, '_fp32_ms', 10.0),
@@ -190,12 +183,10 @@ class OptimizedFP8Benchmark(VerificationPayloadMixin, BaseBenchmark):
 
 
 def get_benchmark() -> BaseBenchmark:
-    return OptimizedFP8Benchmark()
+    return OptimizedFP8RowwiseBenchmark()
 
 
 if __name__ == "__main__":  # pragma: no cover
-    from core.harness.benchmark_harness import BenchmarkHarness, BenchmarkMode
-
     benchmark = get_benchmark()
     harness = BenchmarkHarness(
         mode=BenchmarkMode.CUSTOM,
@@ -203,4 +194,4 @@ if __name__ == "__main__":  # pragma: no cover
     )
     result = harness.benchmark(benchmark)
     timing = result.timing.mean_ms if result.timing else 0.0
-    print(f"\nOptimized Precision FP8 (torchao Float8Linear, precisionfp8 pair): {timing:.3f} ms")
+    print(f"\nOptimized Precision FP8 (torchao rowwise): {timing:.3f} ms")

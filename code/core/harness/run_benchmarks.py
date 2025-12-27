@@ -6059,7 +6059,7 @@ def main():
         [sys.executable, str(precompile_path)],
         capture_output=True,
         text=True,
-        timeout=60,  # 60s - pre-compilation can take time for multiple extensions
+        timeout=300,  # Pre-compilation can take multiple minutes on fresh builds
         check=True  # Fail if script fails
     )
     logger.info(result.stdout)

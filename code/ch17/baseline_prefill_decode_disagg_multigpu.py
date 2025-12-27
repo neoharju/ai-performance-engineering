@@ -33,6 +33,7 @@ from core.harness.benchmark_harness import (
 )
 
 _ENV_WORLD_SIZE = "AISP_DISAGG_WORLD_SIZE"
+_ENV_PREFILL_RANKS = "AISP_DISAGG_PREFILL_RANKS"
 
 
 @dataclass(frozen=True)
@@ -106,14 +107,35 @@ def _resolve_world_size() -> int:
             raise RuntimeError(
                 f"{_ENV_WORLD_SIZE}={requested} exceeds available GPUs ({available})."
             )
-        if requested % 2 != 0:
-            raise RuntimeError(f"{_ENV_WORLD_SIZE} must be even for prefill/decode pairing.")
         return requested
-    if available % 2 != 0:
-        raise RuntimeError(
-            f"{_ENV_WORLD_SIZE} must be set to an even value when device_count={available}."
-        )
     return available
+
+
+def _resolve_prefill_ranks(world_size: int) -> int:
+    override = os.getenv(_ENV_PREFILL_RANKS)
+    if override is not None:
+        requested = int(override)
+        if requested < 1:
+            raise RuntimeError(f"{_ENV_PREFILL_RANKS} must be >= 1 (got {requested}).")
+        if requested >= world_size:
+            raise RuntimeError(
+                f"{_ENV_PREFILL_RANKS}={requested} must be < world_size={world_size}."
+            )
+        return requested
+    if world_size % 2 != 0:
+        raise RuntimeError(
+            f"{_ENV_PREFILL_RANKS} must be set when world_size is odd (world_size={world_size})."
+        )
+    return world_size // 2
+
+
+def _prefill_to_decode_rank(prefill_rank: int, prefill_ranks: int, decode_ranks: int) -> int:
+    return prefill_ranks + (prefill_rank % decode_ranks)
+
+
+def _decode_assigned_prefills(decode_rank: int, prefill_ranks: int, decode_ranks: int) -> List[int]:
+    decode_idx = decode_rank - prefill_ranks
+    return [rank for rank in range(prefill_ranks) if (rank % decode_ranks) == decode_idx]
 
 
 def _init_distributed() -> Tuple[int, int, torch.device]:
@@ -173,13 +195,18 @@ def _run_torchrun_worker(
         raise RuntimeError(
             f"Expected world_size={expected_world_size} (set {_ENV_WORLD_SIZE}), got {world_size}."
         )
-    if world_size % 2 != 0:
-        raise RuntimeError("world_size must be even (prefill ranks + decode ranks)")
 
-    num_pairs = world_size // 2
-    is_prefill = rank < num_pairs
-    pair_id = rank if is_prefill else rank - num_pairs
-    peer_rank = pair_id + num_pairs if is_prefill else pair_id
+    prefill_ranks = _resolve_prefill_ranks(world_size)
+    decode_ranks = world_size - prefill_ranks
+    if decode_ranks < 1:
+        raise RuntimeError("decode_ranks must be >= 1 for disaggregated prefill/decode")
+
+    is_prefill = rank < prefill_ranks
+    peer_rank = (
+        _prefill_to_decode_rank(rank, prefill_ranks, decode_ranks)
+        if is_prefill
+        else -1
+    )
 
     torch.manual_seed(42)
     torch.cuda.manual_seed_all(42)
@@ -217,17 +244,21 @@ def _run_torchrun_worker(
 
         kv_chunks = []
         seed_chunks = []
-        for _ in range(cfg.requests_per_rank):
-            kv_buf = torch.empty(
-                (cfg.batch_size, cfg.context_window, cfg.hidden_size),
-                device=device,
-                dtype=cfg.dtype,
-            )
-            seed_buf = torch.empty((cfg.batch_size, cfg.hidden_size), device=device, dtype=cfg.dtype)
-            dist.recv(kv_buf, src=peer_rank)
-            dist.recv(seed_buf, src=peer_rank)
-            kv_chunks.append(kv_buf)
-            seed_chunks.append(seed_buf)
+        assigned_prefills = _decode_assigned_prefills(rank, prefill_ranks, decode_ranks)
+        for src_rank in assigned_prefills:
+            for _ in range(cfg.requests_per_rank):
+                kv_buf = torch.empty(
+                    (cfg.batch_size, cfg.context_window, cfg.hidden_size),
+                    device=device,
+                    dtype=cfg.dtype,
+                )
+                seed_buf = torch.empty(
+                    (cfg.batch_size, cfg.hidden_size), device=device, dtype=cfg.dtype
+                )
+                dist.recv(kv_buf, src=src_rank)
+                dist.recv(seed_buf, src=src_rank)
+                kv_chunks.append(kv_buf)
+                seed_chunks.append(seed_buf)
 
         if not overlap:
             dist.barrier()
@@ -254,7 +285,7 @@ def _run_torchrun_worker(
     elapsed = time.perf_counter() - start
 
     if rank == 0:
-        total_requests = cfg.requests_per_rank * num_pairs * cfg.batch_size
+        total_requests = cfg.requests_per_rank * prefill_ranks * cfg.batch_size
         tokens_per_iter = total_requests * cfg.tokens_per_request
         tokens_per_s = tokens_per_iter * (max(iters, 1) / max(elapsed, 1e-9))
         time_per_iter_ms = (elapsed / max(iters, 1)) * 1000.0
@@ -271,9 +302,10 @@ class _PrefillDecodeMultiGPUBenchmark(VerificationPayloadMixin, BaseBenchmark):
         super().__init__()
         self.cfg = PrefillDecodeConfig()
         self.world_size = _resolve_world_size()
-        if self.world_size % 2 != 0:
-            raise RuntimeError("world_size must be even for disaggregated prefill/decode")
-        self.num_pairs = self.world_size // 2
+        self.prefill_ranks = _resolve_prefill_ranks(self.world_size)
+        self.decode_ranks = self.world_size - self.prefill_ranks
+        if self.decode_ranks < 1:
+            raise RuntimeError("decode_ranks must be >= 1 for disaggregated prefill/decode")
         self.overlap = bool(overlap)
         self.label = label
         self._pairs: List[_LocalPair] = []
@@ -281,7 +313,7 @@ class _PrefillDecodeMultiGPUBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self._verify_prompt: Optional[torch.Tensor] = None
         self._param_count: int = 0
 
-        total_requests = self.cfg.requests_per_rank * self.num_pairs * self.cfg.batch_size
+        total_requests = self.cfg.requests_per_rank * self.prefill_ranks * self.cfg.batch_size
         tokens_per_iter = total_requests * self.cfg.tokens_per_request
         self.register_workload_metadata(
             requests_per_iteration=float(total_requests),
@@ -301,22 +333,40 @@ class _PrefillDecodeMultiGPUBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
         self._pairs = []
         total_params = 0
-        for pair_id in range(self.num_pairs):
-            prefill_device = torch.device(f"cuda:{pair_id}")
-            decode_device = torch.device(f"cuda:{pair_id + self.num_pairs}")
+        reference = TinyPrefillDecode(
+            self.cfg.hidden_size,
+            self.cfg.num_layers,
+            torch.device("cpu"),
+            torch.float32,
+        ).eval()
+        reference_state = {k: v.detach().cpu() for k, v in reference.state_dict().items()}
+
+        decode_devices = [
+            torch.device(f"cuda:{idx}")
+            for idx in range(self.prefill_ranks, self.prefill_ranks + self.decode_ranks)
+        ]
+        decode_models: dict[torch.device, TinyPrefillDecode] = {}
+        for device in decode_devices:
+            model = TinyPrefillDecode(
+                self.cfg.hidden_size,
+                self.cfg.num_layers,
+                device,
+                self.cfg.dtype,
+            ).eval()
+            model.load_state_dict(reference_state)
+            decode_models[device] = model
+            total_params += sum(p.numel() for p in model.parameters())
+
+        for prefill_rank in range(self.prefill_ranks):
+            prefill_device = torch.device(f"cuda:{prefill_rank}")
+            decode_device = decode_devices[prefill_rank % len(decode_devices)]
             prefill_model = TinyPrefillDecode(
                 self.cfg.hidden_size,
                 self.cfg.num_layers,
                 prefill_device,
                 self.cfg.dtype,
             ).eval()
-            decode_model = TinyPrefillDecode(
-                self.cfg.hidden_size,
-                self.cfg.num_layers,
-                decode_device,
-                self.cfg.dtype,
-            ).eval()
-            decode_model.load_state_dict(prefill_model.state_dict())
+            prefill_model.load_state_dict(reference_state)
             prompts = torch.randn(
                 self.cfg.requests_per_rank,
                 self.cfg.batch_size,
@@ -326,13 +376,12 @@ class _PrefillDecodeMultiGPUBenchmark(VerificationPayloadMixin, BaseBenchmark):
                 dtype=self.cfg.dtype,
             )
             total_params += sum(p.numel() for p in prefill_model.parameters())
-            total_params += sum(p.numel() for p in decode_model.parameters())
             self._pairs.append(
                 _LocalPair(
                     prefill_device=prefill_device,
                     decode_device=decode_device,
                     prefill_model=prefill_model,
-                    decode_model=decode_model,
+                    decode_model=decode_models[decode_device],
                     prompts=prompts,
                 )
             )
@@ -386,6 +435,8 @@ class _PrefillDecodeMultiGPUBenchmark(VerificationPayloadMixin, BaseBenchmark):
             output_tolerance=(0.0, 0.0),
             signature_overrides={
                 "world_size": self.world_size,
+                "prefill_ranks": self.prefill_ranks,
+                "decode_ranks": self.decode_ranks,
                 "pipeline_stages": 2,
                 "per_rank_batch_size": self.cfg.requests_per_rank,
                 "collective_type": "send_recv",
@@ -413,6 +464,7 @@ class _PrefillDecodeMultiGPUBenchmark(VerificationPayloadMixin, BaseBenchmark):
             script_args=[],
             env={
                 _ENV_WORLD_SIZE: str(self.world_size),
+                _ENV_PREFILL_RANKS: str(self.prefill_ranks),
                 "NCCL_DEBUG": "WARN",
                 "NCCL_P2P_LEVEL": "NVL",
                 "NCCL_P2P_DISABLE": "0",

@@ -22,7 +22,7 @@ _EXT_NAME = "optimized_warp_specialized_two_pipelines_ext"
 def _load_optimized_extension():
     return load_cuda_extension_v2(
         name=_EXT_NAME,
-        sources=[Path(__file__).with_name("optimized_warp_specialized_two_pipelines_extension.cu")],
+        sources=[Path(__file__).with_name("warp_specialized_two_pipelines_optimized_extension.cu")],
         extra_cflags=["-O3"],
         extra_cuda_cflags=["-O3", "--allow-unsupported-compiler"],
     )

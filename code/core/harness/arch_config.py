@@ -274,10 +274,12 @@ class ArchitectureConfig:
             return
 
         if self.arch in ("blackwell", "blackwell_ultra"):
+            arch_list = "10.3" if self.arch == "blackwell_ultra" else "10.0"
+            cmake_arch = "103" if self.arch == "blackwell_ultra" else "100"
             if "TORCH_CUDA_ARCH_LIST" not in os.environ:
-                os.environ["TORCH_CUDA_ARCH_LIST"] = "10.0;10.3"
+                os.environ["TORCH_CUDA_ARCH_LIST"] = arch_list
             if "CMAKE_CUDA_ARCHITECTURES" not in os.environ:
-                os.environ["CMAKE_CUDA_ARCHITECTURES"] = "100;103"
+                os.environ["CMAKE_CUDA_ARCHITECTURES"] = cmake_arch
         elif self.arch == "grace_blackwell":
             # CUDA 13.0's ptxas refuses tcgen05/tensormap opcodes for sm_121/121a, so clamp to sm_120.
             self._set_arch_env("TORCH_CUDA_ARCH_LIST", "12.0")
