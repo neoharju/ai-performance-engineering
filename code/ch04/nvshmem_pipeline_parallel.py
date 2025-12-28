@@ -144,7 +144,7 @@ def init_distributed() -> Tuple[int, int, int]:
         )
 
     torch.cuda.set_device(local_rank)
-    warn_optimal_gpu_count(8, script_name="nvshmem_pipeline_parallel.py")
+    warn_optimal_gpu_count(4, script_name="nvshmem_pipeline_parallel.py")
     return dist.get_rank(), dist.get_world_size(), torch.cuda.current_device()
 
 

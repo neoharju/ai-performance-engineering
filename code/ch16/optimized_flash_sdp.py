@@ -133,6 +133,8 @@ class OptimizedFlashSDPBenchmark(VerificationPayloadMixin, BaseBenchmark):
             warmup=5,
             measurement_timeout_seconds=90,
             setup_timeout_seconds=90,
+            timing_method="wall_clock",
+            full_device_sync=True,
         )
 
     def get_workload_metadata(self) -> Optional[WorkloadMetadata]:

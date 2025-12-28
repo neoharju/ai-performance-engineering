@@ -6,7 +6,6 @@ which provides memory savings and potential speedups through reduced memory band
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 from typing import Optional, List
 
@@ -99,15 +98,8 @@ class OptimizedNVFP4TrainingBenchmark(VerificationPayloadMixin, BaseBenchmark):
             if TE_AVAILABLE
             else None
         )
-        # Fallback to FP8 if NVFP4 unavailable
-        self.fp8_recipe = (
-            te_recipe.DelayedScaling(amax_history_len=16, amax_compute_algo="max")
-            if TE_AVAILABLE
-            else None
-        )
         self.active_recipe = None
         self.use_nvfp4 = False
-        self._probe_error: Optional[Exception] = None
         self._verification_payload = None
         tokens = self.batch_size * self.seq_len * self.micro_batches
         self._workload = WorkloadMetadata(
@@ -122,17 +114,14 @@ class OptimizedNVFP4TrainingBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def setup(self) -> None:
         if not TE_AVAILABLE:
             raise RuntimeError(f"Transformer Engine not available: {TE_IMPORT_ERROR}")
-        
+
         torch.manual_seed(42)
-        
-        # Determine which recipe to use
-        if is_nvfp4_available() and self.nvfp4_recipe is not None:
-            self.active_recipe = self.nvfp4_recipe
-            self.use_nvfp4 = True
-        else:
-            self.active_recipe = self.fp8_recipe
-            self.use_nvfp4 = False
-            print("[NVFP4] Falling back to FP8 recipe (NVFP4 not available)", file=sys.stderr, flush=True)
+
+        if not is_nvfp4_available() or self.nvfp4_recipe is None:
+            raise RuntimeError("NVFP4 not available: ensure Blackwell GPU + Transformer Engine NVFP4 support")
+
+        self.active_recipe = self.nvfp4_recipe
+        self.use_nvfp4 = True
         
         # Build model with TE modules
         layers = [
@@ -199,8 +188,7 @@ class OptimizedNVFP4TrainingBenchmark(VerificationPayloadMixin, BaseBenchmark):
         config = self.get_config()
         enable_nvtx = get_nvtx_enabled(config) if config else False
 
-        label = "nvfp4_training" if self.use_nvfp4 else "fp8_training"
-        with nvtx_range(label, enable=enable_nvtx):
+        with nvtx_range("nvfp4_training", enable=enable_nvtx):
             for idx in range(self.micro_batches):
                 self._train_step(idx)
         torch.cuda.synchronize()
@@ -214,7 +202,7 @@ class OptimizedNVFP4TrainingBenchmark(VerificationPayloadMixin, BaseBenchmark):
         precision_flags = {
             "fp16": False,
             "bf16": True,
-            "fp8": not self.use_nvfp4,
+            "fp8": False,
             "tf32": torch.backends.cuda.matmul.allow_tf32,
         }
         self._payload_precision_flags = precision_flags
@@ -250,8 +238,8 @@ class OptimizedNVFP4TrainingBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def get_custom_metrics(self) -> Optional[dict]:
         """Return NVFP4-specific metrics."""
         return {
-            "nvfp4.active": 1.0 if self.use_nvfp4 else 0.0,
-            "nvfp4.compression_ratio": 4.0 if self.use_nvfp4 else 2.0,
+            "nvfp4.active": 1.0,
+            "nvfp4.compression_ratio": 4.0,
             "nvfp4.micro_batches": float(self.micro_batches),
         }
 

@@ -1,0 +1,35 @@
+{
+  "examples": {
+    "prefill_decode_disagg_multigpu": {
+      "example": "prefill_decode_disagg_multigpu",
+      "metadata": {
+        "best_optimization": "optimized_prefill_decode_disagg_multigpu",
+        "best_optimization_file": "optimized_prefill_decode_disagg_multigpu.py",
+        "best_optimization_speedup": 1.4057133589913433,
+        "best_optimization_technique": "optimized_prefill_decode_disagg_multigpu",
+        "best_optimization_time_ms": 8450.237035751343,
+        "optimization_goal": "speed"
+      },
+      "metrics": {
+        "baseline_p75_ms": 11878.611087799072,
+        "baseline_time_ms": 11878.611087799072,
+        "best_optimized_p75_ms": 8450.237035751343,
+        "best_optimized_speedup": 1.4057133589913433,
+        "best_optimized_time_ms": 8450.237035751343,
+        "best_speedup": 1.4057133589913433,
+        "is_regression": false
+      },
+      "provenance": {
+        "git_commit": "fd0ee0d0ac19f4b0ab674930a6e6a6a209ba187c",
+        "hardware_key": "4x_b200",
+        "iterations": 1,
+        "profile_name": "none",
+        "timestamp": "2025-12-28T17:49:30.943882",
+        "warmup_iterations": 1
+      },
+      "type": "python"
+    }
+  },
+  "hardware_key": "4x_b200",
+  "schema_version": 2
+}

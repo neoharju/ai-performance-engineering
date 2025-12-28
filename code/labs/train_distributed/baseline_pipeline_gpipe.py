@@ -14,6 +14,7 @@ from labs.train_distributed.pipeline import (
     PipelineTelemetry,
     add_pipeline_args,
     format_telemetry,
+    resolve_n_stages,
 )
 from labs.train_distributed.training_utils.torchrun_harness import TorchrunScriptBenchmark
 
@@ -26,9 +27,10 @@ def parse_args():
 
 def main():
     args = parse_args()
+    stage_count = resolve_n_stages(args.n_stages)
     config = PipelineConfig(
         schedule="gpipe",
-        n_stages=args.n_stages,
+        n_stages=stage_count,
         batch_size=args.batch_size,
         micro_batch_size=args.micro_batch_size or args.batch_size,
         hidden_dim=args.hidden_dim,
@@ -80,6 +82,6 @@ def get_benchmark():
         config_arg_map={"iterations": "--steps"},
         target_label="labs/train_distributed:pipeline_gpipe_2stages",
         default_nproc_per_node=1,
-        multi_gpu_required=True,
+        multi_gpu_required=False,
         name="baseline_pipeline_gpipe_2stages",
     )

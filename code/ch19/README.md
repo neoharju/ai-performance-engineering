@@ -12,7 +12,7 @@ Explores NVFP4/FP8 workflows, KV-cache quantization, memory double buffering, an
 ## Directory Layout
 | Path | Description |
 | --- | --- |
-| `baseline_nvfp4_training.py`, `optimized_nvfp4_training.py`, `native_fp4_quantization.py`, `native_fp6_quantization.py`, `native_fp8_training.py` | Training and quantization recipes that switch between FP8 and NVFP4 with automatic calibration. |
+| `baseline_nvfp4_training.py`, `optimized_nvfp4_training.py`, `native_fp4_quantization.py`, `native_fp6_quantization.py`, `native_fp8_training.py` | Training and quantization recipes covering FP4/FP6/FP8/NVFP4 paths with calibration. |
 | `baseline_memory_double_buffering.py`, `optimized_memory_double_buffering.py`, `memory_allocator_with_monitoring.py`, `dynamic_memory_allocator.py`, `_allocator_worker.py` | Memory-management helpers covering double buffering, instrumentation, and adaptive worker pools. |
 | `baseline_kv_prefetch_overlap.cu`, `optimized_kv_prefetch_overlap.cu`, `kv_prefetch_overlap_sm121` binaries | CUDA kernels proving that quantized KV prefetch can overlap with compute when using cp.async pipelines. |
 | `baseline_dynamic_quantized_cache.py`, `optimized_dynamic_quantized_cache.py`, `dynamic_quantized_cache.py`, `token_precision_switching.py`, `dynamic_precision_switching.py` | Quantized cache management for dynamically switching between precisions based on accuracy budgets. |
@@ -30,7 +30,7 @@ python -m cli.aisp bench run --targets ch19 --profile minimal
 - Expectation baselines live next to each chapter in `expectations_b200.json`; refresh with `--update-expectations` after validating new hardware.
 
 ## Validation Checklist
-- `python optimized_nvfp4_training.py --calibrate` warms up with FP8, then switches to NVFP4 and matches the baseline's accuracy thresholds.
+- `python optimized_nvfp4_training.py` runs NVFP4 calibration warmups in setup; compare accuracy against `baseline_nvfp4_training.py`.
 - `python optimized_dynamic_quantized_cache.py --trace` logs precision transitions with bounded error, confirming correctness of token-level switching.
 - `nvcc -o optimized_kv_prefetch_overlap_sm121 optimized_kv_prefetch_overlap.cu` plus the baseline binary show measurable overlap improvements in Nsight Compute.
 

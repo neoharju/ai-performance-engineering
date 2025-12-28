@@ -1,0 +1,35 @@
+{
+  "examples": {
+    "disaggregated_inference_multigpu": {
+      "example": "disaggregated_inference_multigpu",
+      "metadata": {
+        "best_optimization": "optimized_disaggregated_inference_multigpu",
+        "best_optimization_file": "optimized_disaggregated_inference_multigpu.py",
+        "best_optimization_speedup": 0.8179171909772631,
+        "best_optimization_technique": "optimized_disaggregated_inference_multigpu",
+        "best_optimization_time_ms": 48303.834438323975,
+        "optimization_goal": "speed"
+      },
+      "metrics": {
+        "baseline_p75_ms": 39508.53657722473,
+        "baseline_time_ms": 39508.53657722473,
+        "best_optimized_p75_ms": 48303.834438323975,
+        "best_optimized_speedup": 0.8179171909772631,
+        "best_optimized_time_ms": 48303.834438323975,
+        "best_speedup": 0.8179171909772631,
+        "is_regression": true
+      },
+      "provenance": {
+        "git_commit": "fd0ee0d0ac19f4b0ab674930a6e6a6a209ba187c",
+        "hardware_key": "4x_b200",
+        "iterations": 1,
+        "profile_name": "none",
+        "timestamp": "2025-12-28T18:09:06.775857",
+        "warmup_iterations": 5
+      },
+      "type": "python"
+    }
+  },
+  "hardware_key": "4x_b200",
+  "schema_version": 2
+}

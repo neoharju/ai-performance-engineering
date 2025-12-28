@@ -121,6 +121,6 @@ def get_benchmark():
         base_args=["--mode", "baseline_flash"],
         config_arg_map={"iterations": "--steps"},
         target_label="labs/train_distributed:ddp_flash",
-        default_nproc_per_node=2,
+        default_nproc_per_node=None,
         name="baseline_ddp_flash",
     )

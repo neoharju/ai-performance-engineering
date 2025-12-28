@@ -14,6 +14,7 @@ from labs.train_distributed.pipeline import (
     PipelineTelemetry,
     add_pipeline_args,
     format_telemetry,
+    resolve_n_stages,
 )
 from labs.train_distributed.training_utils.torchrun_harness import TorchrunScriptBenchmark
 
@@ -23,16 +24,19 @@ def parse_args():
     parser.add_argument(
         "--dual-window-default",
         type=int,
-        default=STAGES,
-        help="Fallback window if --dual-window is not supplied.",
+        default=None,
+        help="Fallback window if --dual-window is not supplied (defaults to stage count).",
     )
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
-    stage_count = args.n_stages
-    dual_window = args.dual_window or args.dual_window_default
+    stage_count = resolve_n_stages(args.n_stages)
+    if args.dual_window is None:
+        dual_window = stage_count if args.dual_window_default is None else args.dual_window_default
+    else:
+        dual_window = args.dual_window
 
     config = PipelineConfig(
         schedule="dualpipe",
@@ -89,6 +93,6 @@ def get_benchmark():
         config_arg_map={"iterations": "--steps"},
         target_label="labs/train_distributed:dualpipe_2stages",
         default_nproc_per_node=1,
-        multi_gpu_required=True,
+        multi_gpu_required=False,
         name="baseline_pipeline_dualpipe_2stages",
     )

@@ -14,6 +14,7 @@ from labs.train_distributed.pipeline import (
     PipelineTelemetry,
     add_pipeline_args,
     format_telemetry,
+    resolve_n_stages,
 )
 from labs.train_distributed.training_utils.torchrun_harness import TorchrunScriptBenchmark
 
@@ -31,7 +32,7 @@ def parse_args():
 
 def main():
     args = parse_args()
-    stage_count = args.n_stages
+    stage_count = resolve_n_stages(args.n_stages)
     default_window = stage_count * max(1, args.dual_window_multiplier)
     dual_window = args.dual_window or default_window
     micro = args.micro_batch_size or (stage_count * 2)
@@ -91,6 +92,6 @@ def get_benchmark():
         config_arg_map={"iterations": "--steps"},
         target_label="labs/train_distributed:dualpipe_2stages",
         default_nproc_per_node=1,
-        multi_gpu_required=True,
+        multi_gpu_required=False,
         name="optimized_pipeline_dualpipe_2stages",
     )

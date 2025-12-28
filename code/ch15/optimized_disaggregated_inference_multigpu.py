@@ -10,15 +10,13 @@ Optimizations:
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
-from typing import Optional
 
 from ch15.baseline_disaggregated_inference_multigpu import (  # noqa: E402
     DisaggConfig,
     _DisaggregatedInferenceMultiGPUBenchmark,
     _run_torchrun_worker,
 )
-from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, TorchrunLaunchSpec  # noqa: E402
+from core.harness.benchmark_harness import BaseBenchmark  # noqa: E402
 
 
 class OptimizedDisaggregatedInferenceMultiGPUBenchmark(_DisaggregatedInferenceMultiGPUBenchmark):
@@ -26,24 +24,6 @@ class OptimizedDisaggregatedInferenceMultiGPUBenchmark(_DisaggregatedInferenceMu
 
     def __init__(self) -> None:
         super().__init__(overlap=True, label="optimized_disaggregated_inference_multigpu")
-
-    def get_torchrun_spec(self, config: Optional[BenchmarkConfig] = None) -> TorchrunLaunchSpec:
-        return TorchrunLaunchSpec(
-            script_path=Path(__file__).resolve(),
-            script_args=[],
-            env={
-                "NCCL_DEBUG": "WARN",
-                "NCCL_P2P_LEVEL": "NVL",
-                "NCCL_P2P_DISABLE": "0",
-            },
-            parse_rank0_only=True,
-            multi_gpu_required=True,
-            name="optimized_disaggregated_inference_multigpu",
-            config_arg_map={
-                "iterations": "--iters",
-                "warmup": "--warmup",
-            },
-        )
 
 
 def get_benchmark() -> BaseBenchmark:

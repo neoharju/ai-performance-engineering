@@ -35,6 +35,8 @@ from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig  # noq
 try:  # Optional but strongly recommended for fast variants
     import transformer_engine.pytorch as te
     from transformer_engine.pytorch import Linear as TELinear
+    from transformer_engine.pytorch import LayerNormMLP as TELayerNormMLP
+    from transformer_engine.pytorch import quantized_model_init
     from transformer_engine.common.recipe import DelayedScaling
     import transformer_engine.pytorch.constants as te_constants
 
@@ -42,6 +44,8 @@ try:  # Optional but strongly recommended for fast variants
 except Exception:  # pragma: no cover - safe fallback
     te = None  # type: ignore
     TELinear = None  # type: ignore
+    TELayerNormMLP = None  # type: ignore
+    quantized_model_init = None  # type: ignore
     DelayedScaling = None  # type: ignore
     te_constants = None  # type: ignore
     TE_AVAILABLE = False
@@ -86,6 +90,7 @@ class DecodeConfig:
     vocab_size: int = 8192
     use_fp8: bool = False
     use_fp4: bool = False
+    use_te_mlp: bool = False
     use_pinned_host: bool = False
     use_copy_stream: bool = False
     use_compute_stream: bool = False
@@ -137,6 +142,8 @@ class DecodeBenchmark(VerificationPayloadMixin, BaseBenchmark):
             raise ValueError("host_payload_mb must be >= 0")
         if self.cfg.use_fp4 and self.cfg.use_fp8:
             raise ValueError("use_fp4 and use_fp8 are mutually exclusive")
+        if self.cfg.use_te_mlp and not TE_AVAILABLE:
+            raise RuntimeError("use_te_mlp requested but Transformer Engine is unavailable")
 
         if self.cfg.use_fp4:
             if not TE_AVAILABLE:
@@ -249,7 +256,14 @@ class DecodeBenchmark(VerificationPayloadMixin, BaseBenchmark):
         # then move to device. This ensures parameter init uses CPU RNG.
         self.embedding = nn.Embedding(vs, hs, dtype=self.dtype).to(self.device)
 
-        use_te_linear = bool(TE_AVAILABLE and (self.cfg.use_fp8 or self.cfg.use_fp4))
+        use_te_modules = bool(
+            TE_AVAILABLE and (self.cfg.use_fp8 or self.cfg.use_fp4 or self.cfg.use_te_mlp)
+        )
+        te_init_context = nullcontext()
+        if use_te_modules and (self._fp8_enabled or self._fp4_enabled):
+            if quantized_model_init is None or self.fp8_recipe is None:
+                raise RuntimeError("FP8/FP4 requires Transformer Engine quantized_model_init")
+            te_init_context = quantized_model_init(enabled=True, recipe=self.fp8_recipe)
 
         def _linear(in_features: int, out_features: int, *, bias: bool = True) -> nn.Module:
             """Create a Linear layer with deterministic CPU initialization.
@@ -261,7 +275,7 @@ class DecodeBenchmark(VerificationPayloadMixin, BaseBenchmark):
             """
             # Always create a CPU reference for deterministic initialization
             ref = nn.Linear(in_features, out_features, bias=bias, dtype=self.dtype)
-            if not use_te_linear:
+            if not use_te_modules:
                 return ref.to(self.device)
 
             # TE Linear must be created on device; copy weights/bias from ref.
@@ -278,20 +292,45 @@ class DecodeBenchmark(VerificationPayloadMixin, BaseBenchmark):
                     te_linear.bias.copy_(ref.bias.to(self.device))
             return te_linear
 
-        # Create modules on CPU first, then move to device
-        self.prefill_mlp = nn.Sequential(
-            nn.LayerNorm(hs, dtype=self.dtype).to(self.device),
-            _linear(hs, hs * 2),
-            nn.GELU(),
-            _linear(hs * 2, hs),
-        )
-        self.decode_mlp = nn.Sequential(
-            nn.LayerNorm(hs, dtype=self.dtype).to(self.device),
-            _linear(hs, hs),
-            nn.GELU(),
-            _linear(hs, hs),
-        )
-        self.lm_head = _linear(hs, vs, bias=False)
+        def _te_mlp(hidden_dim: int, ffn_dim: int) -> nn.Module:
+            if TELayerNormMLP is None:
+                raise RuntimeError("Transformer Engine LayerNormMLP unavailable")
+            ref_ln = nn.LayerNorm(hidden_dim, dtype=self.dtype)
+            ref_fc1 = nn.Linear(hidden_dim, ffn_dim, bias=True, dtype=self.dtype)
+            ref_fc2 = nn.Linear(ffn_dim, hidden_dim, bias=True, dtype=self.dtype)
+            te_mlp = TELayerNormMLP(
+                hidden_dim,
+                ffn_dim,
+                params_dtype=self.dtype,
+                device=self.device,
+            )
+            with torch.no_grad():
+                te_mlp.layer_norm_weight.copy_(ref_ln.weight.to(self.device))
+                te_mlp.layer_norm_bias.copy_(ref_ln.bias.to(self.device))
+                te_mlp.fc1_weight.copy_(ref_fc1.weight.to(self.device))
+                te_mlp.fc1_bias.copy_(ref_fc1.bias.to(self.device))
+                te_mlp.fc2_weight.copy_(ref_fc2.weight.to(self.device))
+                te_mlp.fc2_bias.copy_(ref_fc2.bias.to(self.device))
+            return te_mlp
+
+        with te_init_context:
+            if use_te_modules and self.cfg.use_te_mlp:
+                self.prefill_mlp = _te_mlp(hs, hs * 2)
+                self.decode_mlp = _te_mlp(hs, hs)
+            else:
+                self.prefill_mlp = nn.Sequential(
+                    nn.LayerNorm(hs, dtype=self.dtype).to(self.device),
+                    _linear(hs, hs * 2),
+                    nn.GELU(),
+                    _linear(hs * 2, hs),
+                )
+                self.decode_mlp = nn.Sequential(
+                    nn.LayerNorm(hs, dtype=self.dtype).to(self.device),
+                    _linear(hs, hs),
+                    nn.GELU(),
+                    _linear(hs, hs),
+                )
+            self.lm_head = _linear(hs, vs, bias=False)
         if self.cfg.use_fp8 and TE_AVAILABLE and not self._fp4_enabled:
             self._fp8_enabled = True
         # Parameter count used for verification metadata
@@ -318,13 +357,15 @@ class DecodeBenchmark(VerificationPayloadMixin, BaseBenchmark):
         dummy_hidden = torch.randn(bsz, hs, dtype=self.dtype).to(self.device)
         dummy_seq = torch.randn(bsz, self.cfg.prompt_tokens, hs, dtype=self.dtype).to(self.device)
         
+        passes = 4 if self._fp4_enabled else 2
         with torch.no_grad(), te.fp8_autocast(enabled=True, fp8_recipe=self.fp8_recipe):
-            # Warmup prefill MLP
-            _ = self.prefill_mlp(dummy_seq)
-            # Warmup decode MLP  
-            _ = self.decode_mlp(dummy_hidden)
-            # Warmup lm_head
-            _ = self.lm_head(dummy_hidden)
+            for _ in range(passes):
+                # Warmup prefill MLP
+                _ = self.prefill_mlp(dummy_seq)
+                # Warmup decode MLP
+                _ = self.decode_mlp(dummy_hidden)
+                # Warmup lm_head
+                _ = self.lm_head(dummy_hidden)
         
         torch.cuda.synchronize()
 
@@ -575,6 +616,7 @@ class DecodeBenchmark(VerificationPayloadMixin, BaseBenchmark):
             "use_fp8": float(self._fp8_enabled),
             "fp8_fallback": float(1.0 if (self.cfg.use_fp8 and not self._fp8_enabled) else 0.0),
             "use_fp4": float(self._fp4_enabled),
+            "use_te_mlp": float(self.cfg.use_te_mlp),
             "ttft_ms": float(ttft_ms),
             "decode_time_ms": float(max(total_ms - ttft_ms, eps_ms)),
             "tpot_mean_ms": float((max(total_ms - ttft_ms, eps_ms)) / max(self.cfg.decode_tokens, 1)),
@@ -687,6 +729,7 @@ class DecodeBenchmark(VerificationPayloadMixin, BaseBenchmark):
             "use_fp8": float(self._fp8_enabled),
             "fp8_fallback": float(1.0 if (self.cfg.use_fp8 and not self._fp8_enabled) else 0.0),
             "use_fp4": float(self._fp4_enabled),
+            "use_te_mlp": float(self.cfg.use_te_mlp),
             "ttft_ms": float(ttft_ms),
             "decode_time_ms": float(decode_ms),
             "tpot_mean_ms": float(tpot_ms),

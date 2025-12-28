@@ -156,12 +156,14 @@ def _init_distributed() -> Tuple[int, int, torch.device]:
         raise RuntimeError("torch.distributed is required for disaggregated prefill/decode")
     if "RANK" not in os.environ or "WORLD_SIZE" not in os.environ:
         raise RuntimeError("Run with torchrun (missing RANK/WORLD_SIZE env vars).")
+    if "LOCAL_RANK" not in os.environ:
+        raise RuntimeError("Run with torchrun (missing LOCAL_RANK env var).")
+    local_rank = int(os.environ["LOCAL_RANK"])
+    torch.cuda.set_device(local_rank)
     if not dist.is_initialized():
-        dist.init_process_group(backend="nccl")
+        dist.init_process_group(backend="nccl", device_id=local_rank)
     rank = dist.get_rank()
     world_size = dist.get_world_size()
-    local_rank = int(os.environ.get("LOCAL_RANK", rank))
-    torch.cuda.set_device(local_rank)
     return rank, world_size, torch.device(f"cuda:{local_rank}")
 
 
@@ -218,12 +220,39 @@ def _run_torchrun_worker(
     if rank == 0:
         _emit_split_advice(prefill_ranks, decode_ranks)
 
+    pair_groups: dict[int, dist.ProcessGroup] = {}
+    for prefill_rank in range(prefill_ranks):
+        decode_rank = _prefill_to_decode_rank(prefill_rank, prefill_ranks, decode_ranks)
+        pair_groups[prefill_rank] = dist.new_group(ranks=[prefill_rank, decode_rank])
+
     is_prefill = rank < prefill_ranks
     peer_rank = (
         _prefill_to_decode_rank(rank, prefill_ranks, decode_ranks)
         if is_prefill
         else -1
     )
+    device_index = 0 if device.index is None else int(device.index)
+
+    def _barrier() -> None:
+        dist.barrier(device_ids=[device_index])
+
+    def _batch_send(kv_cache: torch.Tensor, seed: torch.Tensor, dst: int, group: dist.ProcessGroup) -> None:
+        ops = [
+            dist.P2POp(dist.isend, kv_cache, dst, group=group),
+            dist.P2POp(dist.isend, seed, dst, group=group),
+        ]
+        reqs = dist.batch_isend_irecv(ops)
+        for req in reqs:
+            req.wait()
+
+    def _batch_recv(kv_buf: torch.Tensor, seed_buf: torch.Tensor, src: int, group: dist.ProcessGroup) -> None:
+        ops = [
+            dist.P2POp(dist.irecv, kv_buf, src, group=group),
+            dist.P2POp(dist.irecv, seed_buf, src, group=group),
+        ]
+        reqs = dist.batch_isend_irecv(ops)
+        for req in reqs:
+            req.wait()
 
     torch.manual_seed(42)
     torch.cuda.manual_seed_all(42)
@@ -245,18 +274,13 @@ def _run_torchrun_worker(
         if is_prefill:
             kv_chunks, seed_chunks = _run_prefill(cfg, model, prompts)
             if overlap:
-                handles = []
                 for kv_cache, seed in zip(kv_chunks, seed_chunks):
-                    handles.append(dist.isend(kv_cache, dst=peer_rank))
-                    handles.append(dist.isend(seed, dst=peer_rank))
-                for handle in handles:
-                    handle.wait()
+                    _batch_send(kv_cache, seed, peer_rank, pair_groups[rank])
             else:
                 for kv_cache, seed in zip(kv_chunks, seed_chunks):
-                    dist.send(kv_cache, dst=peer_rank)
-                    dist.send(seed, dst=peer_rank)
+                    _batch_send(kv_cache, seed, peer_rank, pair_groups[rank])
             if not overlap:
-                dist.barrier()
+                _barrier()
             return []
 
         kv_chunks = []
@@ -273,8 +297,7 @@ def _run_torchrun_worker(
                 seed_buf = torch.empty(
                     (cfg.batch_size, cfg.hidden_size), device=device, dtype=cfg.dtype
                 )
-                dist.recv(kv_buf, src=src_rank)
-                dist.recv(seed_buf, src=src_rank)
+                _batch_recv(kv_buf, seed_buf, src_rank, pair_groups[src_rank])
                 if overlap:
                     outputs.append(model.decode(seed_buf, kv_buf, cfg.decode_tokens))
                 else:
@@ -283,22 +306,22 @@ def _run_torchrun_worker(
 
         if overlap:
             return outputs
-        dist.barrier()
+        _barrier()
         return _run_decode(cfg, model, kv_chunks, seed_chunks)
 
-    dist.barrier()
+    _barrier()
     torch.cuda.synchronize(device)
 
     for _ in range(max(warmup, 0)):
         run_iteration()
     torch.cuda.synchronize(device)
-    dist.barrier()
+    _barrier()
 
     start = time.perf_counter()
     for _ in range(max(iters, 1)):
         run_iteration()
     torch.cuda.synchronize(device)
-    dist.barrier()
+    _barrier()
     elapsed = time.perf_counter() - start
 
     if rank == 0:
@@ -435,6 +458,8 @@ class _PrefillDecodeMultiGPUBenchmark(VerificationPayloadMixin, BaseBenchmark):
                         )
                 else:
                     kv_chunks, seed_chunks = _run_prefill(self.cfg, pair.prefill_model, pair.prompts)
+                    kv_chunks = [kv.to(pair.decode_device) for kv in kv_chunks]
+                    seed_chunks = [seed.to(pair.decode_device) for seed in seed_chunks]
                     decoded = _run_decode(self.cfg, pair.decode_model, kv_chunks, seed_chunks)
                     outputs.extend(decoded)
 
@@ -459,13 +484,34 @@ class _PrefillDecodeMultiGPUBenchmark(VerificationPayloadMixin, BaseBenchmark):
             output_tolerance=(0.0, 0.0),
             signature_overrides={
                 "world_size": self.world_size,
-                "prefill_ranks": self.prefill_ranks,
-                "decode_ranks": self.decode_ranks,
                 "pipeline_stages": 2,
+                "pipeline_stage_boundaries": [
+                    (0, self.prefill_ranks - 1),
+                    (self.prefill_ranks, self.prefill_ranks + self.decode_ranks - 1),
+                ],
                 "per_rank_batch_size": self.cfg.requests_per_rank,
                 "collective_type": "send_recv",
             },
         )
+
+    def _prepare_verification_payload(self) -> None:
+        if hasattr(self, "_subprocess_verify_output"):
+            return
+        self.setup()
+        try:
+            self.benchmark_fn()
+            self.capture_verification_payload()
+            self._subprocess_verify_output = self.get_verify_output()
+            self._subprocess_output_tolerance = self.get_output_tolerance()
+            self._subprocess_input_signature = self.get_input_signature()
+        finally:
+            self.teardown()
+
+    def teardown(self) -> None:
+        self._pairs = []
+        self._output = None
+        self._verify_prompt = None
+        torch.cuda.empty_cache()
 
     def validate_result(self) -> Optional[str]:
         if self._output is None:
@@ -483,14 +529,15 @@ class _PrefillDecodeMultiGPUBenchmark(VerificationPayloadMixin, BaseBenchmark):
         )
 
     def get_torchrun_spec(self, config: Optional[BenchmarkConfig] = None) -> TorchrunLaunchSpec:
+        self._prepare_verification_payload()
         script_args = ["--prefill-ranks", str(self.prefill_ranks)]
         return TorchrunLaunchSpec(
             script_path=Path(__file__).resolve(),
             script_args=script_args,
             env={
                 "NCCL_DEBUG": "WARN",
-                "NCCL_P2P_LEVEL": "NVL",
-                "NCCL_P2P_DISABLE": "0",
+                "OMP_NUM_THREADS": "1",
+                "MASTER_PORT": "29517",
             },
             parse_rank0_only=True,
             multi_gpu_required=True,

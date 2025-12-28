@@ -139,8 +139,8 @@ def add_pipeline_args(parser) -> None:
     parser.add_argument(
         "--n-stages",
         type=int,
-        default=2,
-        help="Number of pipeline stages (and thus GPUs) to split the model across.",
+        default=None,
+        help="Number of pipeline stages (defaults to all visible GPUs).",
     )
     parser.add_argument(
         "--micro-batch-size",
@@ -164,6 +164,21 @@ def add_pipeline_args(parser) -> None:
         default=None,
         help="Max microbatches to keep inflight on stage0 for DualPipe demos.",
     )
+
+
+def resolve_n_stages(n_stages: Optional[int]) -> int:
+    """Resolve pipeline stage count, defaulting to all visible GPUs."""
+    if n_stages is None:
+        if not torch.cuda.is_available():
+            raise RuntimeError("Pipeline demos require CUDA GPUs.")
+        available = torch.cuda.device_count()
+        if available < 2:
+            raise RuntimeError("Pipeline demos require >=2 GPUs.")
+        return available
+    resolved = int(n_stages)
+    if resolved < 2:
+        raise ValueError("n_stages must be >= 2 for pipeline demos.")
+    return resolved
 
 
 def _build_toy_model(input_dim: int, hidden_dim: int, depth: int) -> nn.Sequential:

@@ -780,8 +780,9 @@ def _select_flamegraph_pair(
     profiles_dir: Path,
     pair_key: Optional[str] = None,
 ) -> Optional[tuple[Path, Path]]:
-    baseline_nsys = sorted(profiles_dir.glob("*baseline*.nsys-rep"))
-    optimized_nsys = sorted(profiles_dir.glob("*optimized*.nsys-rep"))
+    nsys_files = sorted(profiles_dir.glob("*.nsys-rep"))
+    baseline_nsys = [path for path in nsys_files if "baseline" in path.name.lower()]
+    optimized_nsys = [path for path in nsys_files if "optimized" in path.name.lower()]
 
     if not baseline_nsys or not optimized_nsys:
         return None

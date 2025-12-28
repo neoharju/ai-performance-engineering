@@ -2083,6 +2083,12 @@ class PerformanceCoreBase:
     def _find_profile_directory(self, chapter: str) -> Optional[Path]:
         """Find the directory containing profiles for a chapter."""
         from core.discovery import discover_all_chapters
+
+        if chapter:
+            explicit = Path(chapter)
+            if explicit.is_absolute() or ("/" in chapter or "\\" in chapter):
+                if explicit.exists() and explicit.is_dir():
+                    return explicit
         
         # Try artifacts directory first
         artifacts_dir = self.bench_root / "artifacts" / chapter
