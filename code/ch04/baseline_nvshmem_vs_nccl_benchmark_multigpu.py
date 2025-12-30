@@ -37,7 +37,7 @@ class NVSHMEMVsNCCLBenchmarkMultiGPU(VerificationPayloadMixin, BaseBenchmark):
         self._verify_input = torch.randn(64, 64, device=self.device, dtype=torch.float32)
 
     def benchmark_fn(self) -> None:
-        nvshmem_vs_nccl_main()
+        nvshmem_vs_nccl_main(destroy_process_group=False)
 
     def capture_verification_payload(self) -> None:
         if self._verify_input is None:
@@ -73,6 +73,10 @@ class NVSHMEMVsNCCLBenchmarkMultiGPU(VerificationPayloadMixin, BaseBenchmark):
             multi_gpu_required=True,
             measurement_timeout_seconds=300,
         )
+
+    def teardown(self) -> None:
+        if torch.distributed.is_initialized():
+            torch.distributed.destroy_process_group()
 
     def _prepare_verification_payload(self) -> None:
         if hasattr(self, "_subprocess_verify_output"):

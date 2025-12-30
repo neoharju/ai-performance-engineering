@@ -108,6 +108,15 @@ else
 	@false
 endif
 
+nvshmem_ibgda_microbench_verify$(SUFFIX): nvshmem_ibgda_microbench.cu
+ifeq ($(HAS_NVSHMEM),yes)
+	$(NVCC) $(NVCC_FLAGS) -DUSE_NVSHMEM -DVERIFY=1 $(NVSHMEM_INCLUDE) $< $(NVSHMEM_LIB) -o $@
+	@echo "✓ IBGDA microbenchmark verify binary compiled"
+else
+	@echo "Skipping nvshmem_ibgda_microbench verify: NVSHMEM not found (set NVSHMEM_HOME then re-run make)"
+	@false
+endif
+
 compare: clean
 	@echo "========================================"
 	@echo "Building Chapter 4 NVSHMEM samples for both architectures..."
@@ -132,6 +141,7 @@ gb300: clean nvshmem
 
 clean:
 	rm -f $(addsuffix _sm100,$(NVSHMEM_TARGETS)) $(addsuffix _sm121,$(NVSHMEM_TARGETS))
+	rm -f $(addsuffix _verify_sm100,$(NVSHMEM_TARGETS)) $(addsuffix _verify_sm121,$(NVSHMEM_TARGETS))
 	rm -f *.o
 	@echo "Cleaned Chapter 4 NVSHMEM binaries"
 

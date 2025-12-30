@@ -79,6 +79,10 @@ from core.optimization.symmetric_memory_patch import (
     symmetric_memory_available,
 )
 
+
+def symmem_pipeline_disabled() -> bool:
+    return os.environ.get("AISP_DISABLE_SYMMEM_PIPELINE", "").lower() in {"1", "true", "yes"}
+
 try:
     from distributed_helper import setup_single_gpu_env
 except ImportError:
@@ -168,10 +172,16 @@ class ActivationBuffer:
     
     def __post_init__(self) -> None:
         """Initialize double-buffered symmetric memory."""
+        if isinstance(self.device, int):
+            self.device = torch.device("cuda", self.device)
+        elif not isinstance(self.device, torch.device):
+            self.device = torch.device(self.device)
         for _ in range(self.num_buffers):
             local_buffer = torch.zeros(self.shape, dtype=self.dtype, device=self.device)
             
-            handle = maybe_create_symmetric_memory_handle(local_buffer)
+            handle = None
+            if not symmem_pipeline_disabled():
+                handle = maybe_create_symmetric_memory_handle(local_buffer)
             if handle is not None:
                 self.handles.append(handle)
                 self.buffers.append(handle.buffer)
@@ -194,13 +204,13 @@ class ActivationBuffer:
         Uses symmetric memory for zero-copy DMA transfer over NVLink.
         """
         current_buffer = self.get_current_buffer()
-        current_buffer.copy_(data, non_blocking=True)
+        current_buffer.copy_(data)
         
         handle = self.handles[self.current_idx]
-        if symmetric_memory_available() and handle is not None:
+        if not symmem_pipeline_disabled() and symmetric_memory_available() and handle is not None:
             try:
                 remote_buffer = handle.get_buffer(target_rank)
-                remote_buffer.copy_(current_buffer, non_blocking=True)
+                remote_buffer.copy_(current_buffer)
             except Exception:
                 # Fallback to NCCL P2P
                 dist.send(current_buffer, dst=target_rank)
@@ -217,10 +227,10 @@ class ActivationBuffer:
         current_buffer = self.get_current_buffer()
         handle = self.handles[self.current_idx]
         
-        if symmetric_memory_available() and handle is not None:
+        if not symmem_pipeline_disabled() and symmetric_memory_available() and handle is not None:
             try:
                 remote_buffer = handle.get_buffer(source_rank)
-                current_buffer.copy_(remote_buffer, non_blocking=True)
+                current_buffer.copy_(remote_buffer)
             except Exception:
                 # Fallback to NCCL P2P
                 dist.recv(current_buffer, src=source_rank)
@@ -229,6 +239,13 @@ class ActivationBuffer:
             dist.recv(current_buffer, src=source_rank)
         
         return current_buffer
+
+    def close(self) -> None:
+        """Release symmetric memory handles and buffers."""
+        if self.device.type == "cuda":
+            torch.cuda.synchronize(self.device)
+        self.buffers.clear()
+        self.handles.clear()
 
 
 # ============================================================================
@@ -324,6 +341,20 @@ class NVSHMEMPipelineEngine:
             device=device,
             world_size=world_size,
         )
+
+        self.grad_recv_buffer = ActivationBuffer(
+            shape=activation_shape,
+            dtype=torch.float16,
+            device=device,
+            world_size=world_size,
+        )
+
+        self.grad_send_buffer = ActivationBuffer(
+            shape=activation_shape,
+            dtype=torch.float16,
+            device=device,
+            world_size=world_size,
+        )
         
         # Track activations for backward pass
         self.saved_activations: List[torch.Tensor] = []
@@ -353,6 +384,7 @@ class NVSHMEMPipelineEngine:
             # Receive from previous stage via symmetric memory
             prev_rank = self.stage_id - 1
             activation = self.input_buffer.read_from_remote(prev_rank)
+            self.input_buffer.swap_buffers()
         
         # Forward through local stage
         with torch.set_grad_enabled(True):
@@ -394,7 +426,8 @@ class NVSHMEMPipelineEngine:
         else:
             # Receive gradient from next stage
             next_rank = self.stage_id + 1
-            grad_output = self.output_buffer.read_from_remote(next_rank)
+            grad_output = self.grad_recv_buffer.read_from_remote(next_rank)
+            self.grad_recv_buffer.swap_buffers()
             
             # Backward through local stage
             output = self.stage(activation)
@@ -403,8 +436,8 @@ class NVSHMEMPipelineEngine:
         # Send gradient to previous stage
         if self.stage_id > 0 and activation.grad is not None:
             prev_rank = self.stage_id - 1
-            self.input_buffer.write_to_remote(activation.grad, prev_rank)
-            self.input_buffer.swap_buffers()
+            self.grad_send_buffer.write_to_remote(activation.grad, prev_rank)
+            self.grad_send_buffer.swap_buffers()
     
     def run_1f1b_schedule(
         self,
@@ -452,6 +485,14 @@ class NVSHMEMPipelineEngine:
             self.backward_microbatch(mb_id, None)
         
         return losses
+
+    def close(self) -> None:
+        """Release pipeline buffers to avoid teardown hangs."""
+        self.input_buffer.close()
+        self.output_buffer.close()
+        self.grad_recv_buffer.close()
+        self.grad_send_buffer.close()
+        self.saved_activations.clear()
 
 
 # ============================================================================
@@ -532,6 +573,10 @@ class InterleavedPipeline:
         
         return all_losses
 
+    def close(self) -> None:
+        for engine in self.engines:
+            engine.close()
+
 
 # ============================================================================
 # Demonstration Functions
@@ -555,9 +600,10 @@ def demo_1f1b_pipeline() -> None:
     seq_len = 512
     num_microbatches = 16
     microbatch_size = batch_size // num_microbatches
+    pipeline_dtype = torch.float16
     
     # Create pipeline stage for this rank
-    stage = PipelineStageModule(hidden_dim).to(device)
+    stage = PipelineStageModule(hidden_dim).to(device=device, dtype=pipeline_dtype)
     
     # Create pipeline engine
     activation_shape = (microbatch_size, seq_len, hidden_dim)
@@ -576,7 +622,7 @@ def demo_1f1b_pipeline() -> None:
     input_batches = None
     if rank == 0:
         input_batches = [
-            torch.randn(microbatch_size, seq_len, hidden_dim, device=device)
+            torch.randn(microbatch_size, seq_len, hidden_dim, device=device, dtype=pipeline_dtype)
             for _ in range(num_microbatches)
         ]
     
@@ -590,7 +636,7 @@ def demo_1f1b_pipeline() -> None:
         print(f"[1f1b] Completed {num_microbatches} microbatches in {elapsed:.2f}s")
         if losses:
             print(f"[1f1b] Average loss: {sum(losses)/len(losses):.4f}")
-        print(f"[1f1b] Symmetric memory: {symmetric_memory_available()}")
+        print(f"[1f1b] Symmetric memory: {symmetric_memory_available() and not symmem_pipeline_disabled()}")
 
 
 def demo_interleaved_pipeline() -> None:
@@ -611,12 +657,13 @@ def demo_interleaved_pipeline() -> None:
     num_microbatches = 16
     microbatch_size = batch_size // num_microbatches
     virtual_stages_per_rank = 2
+    pipeline_dtype = torch.float16
     
     # Create virtual pipeline stages for this rank
     num_total_stages = world_size * virtual_stages_per_rank
     stage_ids = [rank + i * world_size for i in range(virtual_stages_per_rank)]
     stages = [
-        PipelineStageModule(hidden_dim).to(device)
+        PipelineStageModule(hidden_dim).to(device=device, dtype=pipeline_dtype)
         for _ in range(virtual_stages_per_rank)
     ]
     
@@ -637,7 +684,7 @@ def demo_interleaved_pipeline() -> None:
     input_batches = None
     if rank == 0:
         input_batches = [
-            torch.randn(microbatch_size, seq_len, hidden_dim, device=device)
+            torch.randn(microbatch_size, seq_len, hidden_dim, device=device, dtype=pipeline_dtype)
             for _ in range(num_microbatches)
         ]
     
@@ -650,7 +697,7 @@ def demo_interleaved_pipeline() -> None:
     if rank == 0:
         print(f"[interleaved] Completed {num_microbatches} microbatches in {elapsed:.2f}s")
         print(f"[interleaved] Virtual stages per rank: {virtual_stages_per_rank}")
-        print(f"[interleaved] Symmetric memory: {symmetric_memory_available()}")
+        print(f"[interleaved] Symmetric memory: {symmetric_memory_available() and not symmem_pipeline_disabled()}")
 
 
 # ============================================================================
@@ -681,8 +728,8 @@ def main() -> None:
             print("\n" + "="*60 + "\n")
         demo_interleaved_pipeline()
     
-    dist.barrier()
-    if dist.get_rank() == 0:
+    rank = dist.get_rank() if dist.is_initialized() else 0
+    if rank == 0:
         print("\nPipeline parallelism demonstration complete")
 
 

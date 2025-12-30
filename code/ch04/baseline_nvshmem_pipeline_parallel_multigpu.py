@@ -37,6 +37,7 @@ class NVSHMEMPipelineParallelMultiGPU(VerificationPayloadMixin, BaseBenchmark):
         self._verify_input = torch.randn(64, 64, device=self.device, dtype=torch.float32)
 
     def benchmark_fn(self) -> None:
+        os.environ.setdefault("AISP_DISABLE_SYMMEM_PIPELINE", "1")
         nvshmem_main()
 
     def capture_verification_payload(self) -> None:

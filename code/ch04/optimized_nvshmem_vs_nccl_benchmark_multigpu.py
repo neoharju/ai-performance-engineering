@@ -87,7 +87,10 @@ class OptimizedNVSHMEMVsNCCLBenchmarkMultiGPU(VerificationPayloadMixin, BaseBenc
         finally:
             if dist.is_initialized():
                 dist.barrier()
-                dist.destroy_process_group()
+
+    def teardown(self) -> None:
+        if dist.is_initialized():
+            dist.destroy_process_group()
 
     def capture_verification_payload(self) -> None:
         if self._verify_input is None:

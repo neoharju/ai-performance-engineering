@@ -315,6 +315,16 @@ def discover_benchmarks(
             # Always exclude Python files missing get_benchmark(); warnings are optional.
             if not validate_benchmark_file(opt_path, warn=warn_missing):
                 continue
+
+            optimized_name = opt_path.stem.replace("optimized_", "", 1)
+            if any(
+                other != example_name
+                and len(other) > len(example_name)
+                and (optimized_name == other or optimized_name.startswith(f"{other}_"))
+                for other in example_names
+            ):
+                # Prefer the most specific baseline match (e.g., baseline_ddp_compression_* over baseline_ddp)
+                continue
             
             suffix = opt_path.stem.replace(f"optimized_{example_name}_", "", 1)
             candidate_name = f"{example_name}_{suffix}"

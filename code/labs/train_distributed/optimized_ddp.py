@@ -72,6 +72,8 @@ def main():
             raise RuntimeError("DDP optimized run requires torch.distributed process group to be initialized.")
 
     rank = dist.get_rank()
+    world_size = dist.get_world_size()
+    is_main = rank == 0
     tokenizer = build_tokenizer()
     dataset = get_dataset()["train"]
 
@@ -132,7 +134,7 @@ def main():
 
         total_tokens += batch["input_ids"].numel()
 
-        if step % 10 == 0 and state.is_main_process:
+        if step % 10 == 0 and is_main:
             print(
                 f"[optimized-ddp] step {step}/{num_steps} "
                 f"loss={loss.item():.4f} "
@@ -141,9 +143,9 @@ def main():
 
     torch.cuda.synchronize(device)
     total_time = perf_counter() - start_time
-    if state.is_main_process:
+    if is_main:
         toks_sec = total_tokens / total_time if total_time > 0 else 0.0
-        effective_bs = args.batch_size * args.grad_accum * state.num_processes
+        effective_bs = args.batch_size * args.grad_accum * world_size
         print(
             f"[optimized-ddp] {num_steps} steps | total tokens {total_tokens:,} | "
             f"global batch {effective_bs} | {toks_sec:,.0f} toks/s per rank"

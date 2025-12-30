@@ -204,7 +204,7 @@ def benchmark(args: argparse.Namespace) -> Dict[str, List[BenchmarkResult]]:
     return results
 
 
-def main() -> None:
+def main(destroy_process_group: bool = True) -> None:
     parser = argparse.ArgumentParser(description="Compare NVSHMEM vs NCCL latency/bandwidth")
     parser.add_argument("--min-bytes", type=int, default=1024, help="Smallest message size per rank")
     parser.add_argument("--max-bytes", type=int, default=64 * 1024 * 1024, help="Largest message size per rank")
@@ -233,7 +233,8 @@ def main() -> None:
             )
 
     dist.barrier()
-    dist.destroy_process_group()
+    if destroy_process_group:
+        dist.destroy_process_group()
 
 
 if __name__ == "__main__":

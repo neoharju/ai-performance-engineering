@@ -85,12 +85,14 @@ class SymmetricMemoryHandle:
                 raise RuntimeError("NVSHMEM backend is not available for symmetric memory") from exc
 
         try:
-            if (
-                hasattr(_symm_mem, "is_symm_mem_enabled_for_group")
-                and hasattr(_symm_mem, "enable_symm_mem_for_group")
-                and not _symm_mem.is_symm_mem_enabled_for_group(group)
+            if hasattr(_symm_mem, "is_symm_mem_enabled_for_group") and hasattr(
+                _symm_mem, "enable_symm_mem_for_group"
             ):
-                _symm_mem.enable_symm_mem_for_group(group)
+                from torch.distributed import distributed_c10d as c10d
+
+                group_name = c10d._get_process_group_name(group)
+                if not _symm_mem.is_symm_mem_enabled_for_group(group_name):
+                    _symm_mem.enable_symm_mem_for_group(group_name)
         except Exception as exc:
             raise RuntimeError("Failed to enable symmetric memory for process group") from exc
 

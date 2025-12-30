@@ -25,6 +25,8 @@
 #include <cstring>
 #include <string>
 
+#include "../core/common/headers/cuda_verify.cuh"
+
 #define CHECK_CUDA(cmd)                                                         \
     do {                                                                        \
         cudaError_t _e = (cmd);                                                 \
@@ -179,6 +181,22 @@ int main(int argc, char** argv) {
 
     CHECK_CUDA(cudaEventDestroy(start));
     CHECK_CUDA(cudaEventDestroy(stop));
+
+#ifdef VERIFY
+    CHECK_CUDA(cudaDeviceSynchronize());
+    CHECK_NVSHMEM(nvshmem_barrier_all());
+    float* h_verify = static_cast<float*>(std::malloc(elems * sizeof(float)));
+    if (!h_verify) {
+        std::fprintf(stderr, "Host allocation failed\n");
+        return 1;
+    }
+    CHECK_CUDA(cudaMemcpy(h_verify, buf, elems * sizeof(float), cudaMemcpyDeviceToHost));
+    float checksum = 0.0f;
+    VERIFY_CHECKSUM(h_verify, static_cast<int>(elems), &checksum);
+    VERIFY_PRINT_CHECKSUM(checksum);
+    std::free(h_verify);
+#endif
+
     nvshmem_free(buf);
     CHECK_NVSHMEM(nvshmem_finalize());
     return 0;

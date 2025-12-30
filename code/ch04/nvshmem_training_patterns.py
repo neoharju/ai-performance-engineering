@@ -551,14 +551,18 @@ class PipelineParallelSymmetricMemory:
         self.activation_buffers: Dict[int, GradientBucket] = {}
 
     def _get_or_create_buffer(
-        self, stage_idx: int, activation_shape: Tuple[int, ...], device: torch.device
+        self,
+        stage_idx: int,
+        activation_shape: Tuple[int, ...],
+        device: torch.device,
+        dtype: torch.dtype,
     ) -> GradientBucket:
         """Get or create symmetric memory buffer for stage handoff."""
         if stage_idx not in self.activation_buffers:
             numel = torch.Size(activation_shape).numel()
             self.activation_buffers[stage_idx] = GradientBucket(
                 numel=numel,
-                dtype=torch.float16,
+                dtype=dtype,
                 device=device,
                 world_size=self.world_size,
             )
@@ -591,7 +595,7 @@ class PipelineParallelSymmetricMemory:
                 if next_rank != rank:
                     # Write to symmetric buffer for next stage
                     buffer = self._get_or_create_buffer(
-                        current_stage, activation.shape, device
+                        current_stage, activation.shape, device, activation.dtype
                     )
                     buffer.tensor.copy_(activation.flatten())
                     
@@ -625,8 +629,9 @@ def demo_pipeline_parallel(benchmark: bool = False) -> None:
     hidden = dim * 4
     
     # Create pipeline stages
+    pipeline_dtype = torch.float16
     my_stages = [
-        PipelineStage(dim, hidden, num_layers=1).to(device)
+        PipelineStage(dim, hidden, num_layers=1).to(device=device, dtype=pipeline_dtype)
         for _ in range(stages_per_rank)
     ]
     
@@ -651,12 +656,12 @@ def demo_pipeline_parallel(benchmark: bool = False) -> None:
     for mb_idx in range(num_microbatches):
         if rank == 0:
             # First rank generates input
-            microbatch = torch.randn(batch_size, seq_len, dim, device=device)
+            microbatch = torch.randn(batch_size, seq_len, dim, device=device, dtype=pipeline_dtype)
         else:
             # Other ranks receive from previous stage via symmetric memory
             prev_stage = my_stage_idx - 1
             buffer = pipeline._get_or_create_buffer(
-                my_stage_idx, (batch_size, seq_len, dim), device
+                my_stage_idx, (batch_size, seq_len, dim), device, pipeline_dtype
             )
             dist.barrier()
             microbatch = buffer.tensor.view(batch_size, seq_len, dim)
