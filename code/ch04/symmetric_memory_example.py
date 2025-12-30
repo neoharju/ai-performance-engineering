@@ -288,31 +288,33 @@ def benchmark_symmetric_ring(tensor: torch.Tensor, iterations: int = 100) -> flo
     rank = dist.get_rank()
     world_size = dist.get_world_size()
     device = torch.device(f"cuda:{rank}")
-    handle = create_symmetric_memory_handle(tensor, group=dist.group.WORLD)
+    flat = tensor.flatten()
+    local = torch.stack([flat, flat.clone()])
+    handle = create_symmetric_memory_handle(local, group=dist.group.WORLD)
     next_rank = (rank + 1) % world_size
     prev_rank = (rank - 1) % world_size
     next_buf = handle.get_buffer(next_rank)
     prev_buf = handle.get_buffer(prev_rank)
-    recv_tensor = torch.empty_like(tensor)
+    recv_tensor = torch.empty_like(flat)
 
-    for _ in range(5):
-        next_buf.copy_(tensor, non_blocking=True)
+    for idx in range(5):
+        buf_idx = idx % 2
+        next_buf[buf_idx].copy_(local[buf_idx], non_blocking=True)
         torch.cuda.current_stream().synchronize()
         dist.barrier()
-        recv_tensor.copy_(prev_buf, non_blocking=True)
+        recv_tensor.copy_(prev_buf[buf_idx], non_blocking=True)
         torch.cuda.current_stream().synchronize()
-        dist.barrier()
 
     start = torch.cuda.Event(enable_timing=True)
     end = torch.cuda.Event(enable_timing=True)
     start.record()
-    for _ in range(iterations):
-        next_buf.copy_(tensor, non_blocking=True)
+    for idx in range(iterations):
+        buf_idx = idx % 2
+        next_buf[buf_idx].copy_(local[buf_idx], non_blocking=True)
         torch.cuda.current_stream().synchronize()
         dist.barrier()
-        recv_tensor.copy_(prev_buf, non_blocking=True)
+        recv_tensor.copy_(prev_buf[buf_idx], non_blocking=True)
         torch.cuda.current_stream().synchronize()
-        dist.barrier()
     end.record()
     torch.cuda.synchronize(device)
     return start.elapsed_time(end) / iterations

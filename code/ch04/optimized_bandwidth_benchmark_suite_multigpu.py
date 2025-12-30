@@ -127,7 +127,12 @@ class OptimizedBandwidthSuiteMultiGPU(VerificationPayloadMixin, BaseBenchmark):
         )
 
     def get_config(self) -> BenchmarkConfig:
-        return BenchmarkConfig(iterations=5, warmup=5, measurement_timeout_seconds=30)
+        return BenchmarkConfig(
+            iterations=5,
+            warmup=5,
+            measurement_timeout_seconds=30,
+            multi_gpu_required=True,
+        )
 
     def get_custom_metrics(self) -> Optional[dict]:
         """Return measured P2P bandwidth."""

@@ -38,8 +38,9 @@ def _build_parser() -> argparse.ArgumentParser:
     add_base_args(parser)
     parser.set_defaults(
         output_dir="artifacts/moe_readiness_baseline",
-        message_sizes="16k,64k,256k,512k",
-        skews="1.0,1.15,1.35",
+        message_sizes="64k,256k,1m,4m",
+        skews="1.0,1.35,1.6",
+        iters=30,
         max_p99_ms=7.0,
         min_bw_gbps=12.0,
         impl="list",

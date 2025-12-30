@@ -30,7 +30,13 @@ def main():
     stage_count = resolve_n_stages(args.n_stages)
     default_micro = args.micro_batch_size
     if default_micro is None:
-        default_micro = args.batch_size
+        default_micro = max(1, args.batch_size // max(1, stage_count * 8))
+        if args.batch_size % default_micro != 0:
+            default_micro = max(1, args.batch_size // max(1, stage_count * 4))
+        if args.batch_size % default_micro != 0:
+            default_micro = max(1, args.batch_size // max(1, stage_count * 2))
+        if args.batch_size % default_micro != 0:
+            default_micro = args.batch_size
 
     config = PipelineConfig(
         schedule="1f1b",

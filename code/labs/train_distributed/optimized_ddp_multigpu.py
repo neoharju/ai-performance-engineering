@@ -32,7 +32,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--steps", type=int, default=200, help="Number of optimization steps.")
     parser.add_argument("--batch-size", type=int, default=16, help="Per-rank microbatch size.")
-    parser.add_argument("--grad-accum", type=int, default=2, help="Gradient accumulation steps.")
+    parser.add_argument("--grad-accum", type=int, default=1, help="Gradient accumulation steps.")
     parser.add_argument("--learning-rate", type=float, default=2e-4, help="AdamW learning rate.")
     parser.add_argument("--compile", action="store_true", help="Enable torch.compile on the model.")
     return parser.parse_args()
@@ -172,7 +172,7 @@ def get_benchmark():
     """Expose torchrun-wrapped benchmark for the harness."""
     return TorchrunScriptBenchmark(
         script_path=Path(__file__).parent / "ddp.py",
-        base_args=["--mode", "optimized", "--batch-size", "16", "--grad-accum", "2"],
+        base_args=["--mode", "optimized", "--batch-size", "16", "--grad-accum", "1"],
         config_arg_map={"iterations": "--steps"},
         multi_gpu_required=True,
         target_label="labs/train_distributed:ddp_multigpu",

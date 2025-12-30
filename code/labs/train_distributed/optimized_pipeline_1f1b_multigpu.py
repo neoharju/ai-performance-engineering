@@ -25,7 +25,7 @@ def parse_args():
     parser.add_argument(
         "--micro-batch-target",
         type=int,
-        default=8,
+        default=4,
         help="Number of microbatches to target when not explicitly configured.",
     )
     return parser.parse_args()

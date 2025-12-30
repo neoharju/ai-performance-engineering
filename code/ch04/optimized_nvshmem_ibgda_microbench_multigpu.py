@@ -1,4 +1,4 @@
-"""Baseline NVSHMEM IBGDA microbenchmark (proxy path)."""
+"""Optimized NVSHMEM IBGDA microbenchmark (GPU-initiated path)."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ repo_root = Path(__file__).parent.parent
 if str(repo_root) not in sys.path:
     sys.path.insert(0, str(repo_root))
 
-from ch04.nvshmem_ibgda_microbench import NvshmemIbgdaMicrobench
+from ch04.nvshmem_ibgda_microbench_multigpu import NvshmemIbgdaMicrobench
 
 _DEFAULT_KWARGS = dict(
     mode="p",
@@ -20,10 +20,10 @@ _DEFAULT_KWARGS = dict(
 )
 
 
-class BaselineNvshmemIbgdaMicrobench(NvshmemIbgdaMicrobench):
+class OptimizedNvshmemIbgdaMicrobench(NvshmemIbgdaMicrobench):
     def __init__(self) -> None:
-        super().__init__(enable_ibgda=False, **_DEFAULT_KWARGS)
+        super().__init__(enable_ibgda=True, **_DEFAULT_KWARGS)
 
 
 def get_benchmark() -> NvshmemIbgdaMicrobench:
-    return BaselineNvshmemIbgdaMicrobench()
+    return OptimizedNvshmemIbgdaMicrobench()

@@ -54,7 +54,7 @@ def init_distributed() -> tuple[int, int, torch.device]:
 
 def main() -> None:
     # Check GPU requirements early - barrier testing needs multiple GPUs
-    require_min_gpus(2, "barrier_straggler.py")
+    require_min_gpus(2, "barrier_straggler_multigpu.py")
     
     rank, world_size, device = init_distributed()
 

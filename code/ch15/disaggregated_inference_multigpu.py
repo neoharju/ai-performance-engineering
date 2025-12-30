@@ -42,6 +42,7 @@ import torch.multiprocessing as mp
 import torch.nn.functional as F
 from torch.nn.attention import sdpa_kernel, SDPBackend
 from core.utils.compile_utils import compile_callable, maybe_nested_compile_region
+from core.benchmark.gpu_requirements import require_min_gpus
 
 _ARCH_CFG = ArchitectureConfig()
 
@@ -882,6 +883,7 @@ class ParallelismManager:
 def benchmark_inference_system():
     """Benchmark the disaggregated inference system."""
     print("=== Multi-Node Inference Benchmark ===\n")
+    require_min_gpus(2)
     
     # Configuration - will automatically detect available GPUs
     config = InferenceConfig(

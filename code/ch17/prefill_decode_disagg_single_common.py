@@ -1,0 +1,142 @@
+"""Shared single-GPU disaggregated prefill/decode benchmark logic."""
+
+from __future__ import annotations
+
+from typing import List, Optional
+
+import torch
+
+from core.benchmark.verification import PrecisionFlags
+from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata
+from core.benchmark.verification_mixin import VerificationPayloadMixin
+from ch17.baseline_prefill_decode_disagg_multigpu import PrefillDecodeConfig, TinyPrefillDecode
+
+
+class PrefillDecodeSingleGPUBenchmark(VerificationPayloadMixin, BaseBenchmark):
+    """Single-GPU analogue for disaggregated prefill/decode pipelines."""
+
+    def __init__(
+        self,
+        *,
+        use_host_staging: bool,
+        label: str,
+        cfg: Optional[PrefillDecodeConfig] = None,
+    ) -> None:
+        super().__init__()
+        self.use_host_staging = bool(use_host_staging)
+        self.label = label
+        self.cfg = cfg or PrefillDecodeConfig()
+        tokens = self.cfg.requests_per_rank * self.cfg.tokens_per_request
+        self._workload = WorkloadMetadata(
+            requests_per_iteration=float(self.cfg.requests_per_rank),
+            tokens_per_iteration=float(tokens),
+        )
+        self.register_workload_metadata(
+            requests_per_iteration=float(self.cfg.requests_per_rank),
+            tokens_per_iteration=float(tokens),
+        )
+        self.prefill_model: Optional[TinyPrefillDecode] = None
+        self.decode_model: Optional[TinyPrefillDecode] = None
+        self.prompts: Optional[torch.Tensor] = None
+        self.kv_caches: List[torch.Tensor] = []
+        self._output: Optional[torch.Tensor] = None
+        self._param_count = 0
+
+    def setup(self) -> None:
+        if not torch.cuda.is_available():
+            raise RuntimeError("SKIPPED: CUDA required for prefill/decode disaggregation")
+        torch.manual_seed(42)
+        torch.cuda.manual_seed_all(42)
+        self.prefill_model = TinyPrefillDecode(
+            self.cfg.hidden_size, self.cfg.num_layers, self.device, self.cfg.dtype
+        ).eval()
+        self.decode_model = TinyPrefillDecode(
+            self.cfg.hidden_size, self.cfg.num_layers, self.device, self.cfg.dtype
+        ).eval()
+        self.prompts = torch.randn(
+            self.cfg.requests_per_rank,
+            self.cfg.batch_size,
+            self.cfg.context_window,
+            self.cfg.hidden_size,
+            device=self.device,
+            dtype=self.cfg.dtype,
+        )
+        if not self.use_host_staging:
+            self.kv_caches = [
+                torch.empty(
+                    (self.cfg.batch_size, self.cfg.context_window, self.cfg.hidden_size),
+                    device=self.device,
+                    dtype=self.cfg.dtype,
+                )
+                for _ in range(self.cfg.requests_per_rank)
+            ]
+        self._param_count = sum(p.numel() for p in self.prefill_model.parameters()) + sum(
+            p.numel() for p in self.decode_model.parameters()
+        )
+        torch.cuda.synchronize(self.device)
+
+    def benchmark_fn(self) -> None:
+        if self.prefill_model is None or self.decode_model is None or self.prompts is None:
+            raise RuntimeError("setup() must run before benchmark_fn()")
+
+        outputs: List[torch.Tensor] = []
+        with torch.no_grad():
+            for idx in range(self.cfg.requests_per_rank):
+                kv_cache, seed = self.prefill_model.prefill(self.prompts[idx])
+                if self.use_host_staging:
+                    kv_cpu = kv_cache.cpu()
+                    kv_cache = kv_cpu.to(self.device)
+                else:
+                    self.kv_caches[idx].copy_(kv_cache)
+                    kv_cache = self.kv_caches[idx]
+                outputs.append(self.decode_model.decode(seed, kv_cache, self.cfg.decode_tokens))
+
+        torch.cuda.synchronize(self.device)
+        self._output = torch.stack([out.detach().cpu() for out in outputs], dim=0)
+
+    def capture_verification_payload(self) -> None:
+        if self._output is None or self.prompts is None:
+            raise RuntimeError("benchmark_fn() must run before capture_verification_payload()")
+        tf32_enabled = torch.cuda.is_available() and bool(torch.backends.cuda.matmul.allow_tf32)
+        meta_dtype = torch.float32
+        self._set_verification_payload(
+            inputs={
+                "prompt": self.prompts[0].detach().cpu(),
+                "decode_tokens": torch.zeros((self.cfg.decode_tokens,), dtype=meta_dtype),
+                "hidden_size": torch.zeros((self.cfg.hidden_size,), dtype=meta_dtype),
+                "num_layers": torch.zeros((self.cfg.num_layers,), dtype=meta_dtype),
+            },
+            output=self._output,
+            batch_size=int(self._output.shape[0]),
+            parameter_count=int(self._param_count),
+            precision_flags=PrecisionFlags(bf16=True, tf32=tf32_enabled),
+            output_tolerance=(0.0, 0.0),
+            signature_overrides={
+                "world_size": 1,
+                "pipeline_stages": 2,
+                "pipeline_stage_boundaries": [(0, 0), (0, 0)],
+                "per_rank_batch_size": self.cfg.requests_per_rank,
+                "collective_type": "local_copy",
+            },
+        )
+
+    def teardown(self) -> None:
+        self.prefill_model = None
+        self.decode_model = None
+        self.prompts = None
+        self.kv_caches = []
+        self._output = None
+        torch.cuda.empty_cache()
+
+    def get_config(self) -> BenchmarkConfig:
+        return BenchmarkConfig(iterations=3, warmup=2, measurement_timeout_seconds=900)
+
+    def get_workload_metadata(self) -> Optional[WorkloadMetadata]:
+        return self._workload
+
+
+def attach_benchmark_metadata(bench: BaseBenchmark, module_file: str) -> BaseBenchmark:
+    """Ensure subprocess runner calls get_benchmark() for parameterized benchmarks."""
+    bench._module_file_override = module_file
+    bench._factory_name_override = "get_benchmark"
+    return bench

@@ -25,9 +25,9 @@ class OptimizedKVCacheNvlinkPoolBenchmark(VerificationPayloadMixin, BaseBenchmar
         self.output = None
         self.model: Optional[nn.MultiheadAttention] = None
         self.local_cache_limit = 32
-        self.peer_cache_limit = 128
-        self.hidden = 512
-        self.heads = 8
+        self.peer_cache_limit = 192
+        self.hidden = 1024
+        self.heads = 16
         self.batch = 8
         self.seq_len = 256
         self.device_ids: List[int] = []

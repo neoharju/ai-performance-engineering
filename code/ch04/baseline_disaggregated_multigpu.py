@@ -165,6 +165,7 @@ class BaselineDisaggregatedBenchmark(VerificationPayloadMixin, BaseBenchmark):
         return BenchmarkConfig(
             iterations=10,
             warmup=5,
+            multi_gpu_required=True,
         )
     
     def get_workload_metadata(self) -> Optional[WorkloadMetadata]:

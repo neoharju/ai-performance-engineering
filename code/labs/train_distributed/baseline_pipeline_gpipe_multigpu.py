@@ -29,11 +29,20 @@ def parse_args():
 def main():
     args = parse_args()
     stage_count = resolve_n_stages(args.n_stages)
+    micro = args.micro_batch_size
+    if micro is None:
+        micro = max(1, args.batch_size // max(1, stage_count * 2))
+        if args.batch_size % micro != 0:
+            micro = max(1, args.batch_size // max(1, stage_count * 4))
+        if args.batch_size % micro != 0:
+            micro = max(1, args.batch_size // max(1, stage_count * 8))
+        if args.batch_size % micro != 0:
+            micro = args.batch_size
     config = PipelineConfig(
         schedule="gpipe",
         n_stages=stage_count,
         batch_size=args.batch_size,
-        micro_batch_size=args.micro_batch_size or args.batch_size,
+        micro_batch_size=micro,
         hidden_dim=args.hidden_dim,
         depth=args.depth,
         learning_rate=args.learning_rate,

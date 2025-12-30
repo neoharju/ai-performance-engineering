@@ -1,0 +1,28 @@
+"""Baseline DDP training with uncompressed gradient traffic (single GPU)."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from labs.train_distributed.training_utils.torchrun_harness import TorchrunScriptBenchmark
+
+
+def get_benchmark():
+    return TorchrunScriptBenchmark(
+        script_path=Path(__file__).parent / "ddp_compression.py",
+        base_args=[
+            "--compression",
+            "none",
+            "--extra-grad-mb",
+            "1024",
+            "--batch-size",
+            "4",
+            "--allow-single-gpu",
+            "--simulate-single-gpu-comm",
+        ],
+        config_arg_map={"iterations": "--steps"},
+        target_label="labs/train_distributed:ddp_compression",
+        default_nproc_per_node=1,
+        multi_gpu_required=False,
+        name="baseline_ddp_compression",
+    )

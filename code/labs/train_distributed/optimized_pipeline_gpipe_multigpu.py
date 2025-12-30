@@ -35,10 +35,14 @@ def parse_args():
 def main():
     args = parse_args()
     stage_count = resolve_n_stages(args.n_stages)
-    overlap = stage_count if args.micro_batch_overlap is None else args.micro_batch_overlap
     target_micro = args.micro_batch_size
     if target_micro is None:
+        overlap = stage_count * 8 if args.micro_batch_overlap is None else args.micro_batch_overlap
         target_micro = max(4, args.batch_size // max(1, overlap))
+        if args.batch_size % target_micro != 0:
+            target_micro = max(4, args.batch_size // max(1, stage_count * 4))
+        if args.batch_size % target_micro != 0:
+            target_micro = args.batch_size
 
     config = PipelineConfig(
         schedule="gpipe",

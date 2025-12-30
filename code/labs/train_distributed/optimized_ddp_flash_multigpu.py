@@ -27,7 +27,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--steps", type=int, default=200, help="Number of optimization steps.")
     parser.add_argument("--batch-size", type=int, default=16, help="Per-rank microbatch size.")
-    parser.add_argument("--grad-accum", type=int, default=2, help="Gradient accumulation steps.")
+    parser.add_argument("--grad-accum", type=int, default=1, help="Gradient accumulation steps.")
     parser.add_argument("--learning-rate", type=float, default=2e-4, help="AdamW learning rate.")
     parser.add_argument("--compile", action="store_true", help="Enable torch.compile on the model.")
     return parser.parse_args()

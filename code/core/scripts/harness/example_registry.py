@@ -265,8 +265,8 @@ EXAMPLES: List[Example] = [
         timeout_seconds=600,
     ),
     _example(
-        name="ch04_barrier_straggler",
-        path="ch04/barrier_straggler.py",
+        name="ch04_barrier_straggler_multigpu",
+        path="ch04/barrier_straggler_multigpu.py",
         description="Barrier synchronization and straggler analysis.",
         tags=["ch04", "distributed", "synchronization"],
         requires_modules=["torch"],

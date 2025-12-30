@@ -19,6 +19,8 @@ from core.harness.benchmark_harness import BaseBenchmark  # noqa: E402
 TTFT_CONFIG = PrefillDecodeConfig(
     context_window=4096,
     decode_tokens=256,
+    batch_size=4,
+    requests_per_rank=32,
 )
 
 

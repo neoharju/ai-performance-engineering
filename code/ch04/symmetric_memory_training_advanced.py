@@ -648,7 +648,14 @@ class SymmetricMemoryOptimizer:
                 param.grad.zero_()
 
 
-def demo_custom_optimizer(*, steps: int, batch_size: int, hidden_dim: int, output_dim: int) -> None:
+def demo_custom_optimizer(
+    *,
+    steps: int,
+    batch_size: int,
+    hidden_dim: int,
+    output_dim: int,
+    sync_interval: int,
+) -> None:
     """
     Demonstrate custom optimizer with symmetric memory.
     
@@ -670,6 +677,7 @@ def demo_custom_optimizer(*, steps: int, batch_size: int, hidden_dim: int, outpu
     optimizer = SymmetricMemoryOptimizer(list(model.parameters()), lr=0.01, world_size=world_size)
     
     # Training loop
+    sync_every = max(1, int(sync_interval))
     for step in range(steps):
         # Forward + backward
         inputs = torch.randn(batch_size, hidden_dim, device=device)
@@ -682,7 +690,8 @@ def demo_custom_optimizer(*, steps: int, batch_size: int, hidden_dim: int, outpu
         optimizer.zero_grad()
         
         # Synchronize (no-op with symmetric memory)
-        optimizer.synchronize_parameters(rank)
+        if step % sync_every == 0 or step == steps - 1:
+            optimizer.synchronize_parameters(rank)
     
     if rank == 0:
         print(f"[optimizer] Completed {steps} steps with symmetric memory optimizer")
@@ -829,6 +838,12 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=64, help="Batch size for optimizer demo.")
     parser.add_argument("--hidden-dim", type=int, default=4096, help="Hidden dimension for optimizer demo.")
     parser.add_argument("--output-dim", type=int, default=2048, help="Output dimension for optimizer demo.")
+    parser.add_argument(
+        "--sync-interval",
+        type=int,
+        default=1,
+        help="Synchronization interval (optimizer demo only).",
+    )
     args = parser.parse_args()
     
     if args.disable_symmetric:
@@ -846,6 +861,7 @@ def main() -> None:
             batch_size=args.batch_size,
             hidden_dim=args.hidden_dim,
             output_dim=args.output_dim,
+            sync_interval=args.sync_interval,
         )
     elif args.demo == "zero":
         demo_zero_style_sharding()

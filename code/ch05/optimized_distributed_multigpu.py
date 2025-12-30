@@ -52,12 +52,8 @@ class OptimizedDistributedBenchmark(VerificationPayloadMixin, BaseBenchmark):
         with self._nvtx_range("optimized_distributed_multigpu"):
             if not self.data:
                 raise RuntimeError("setup() must be called before benchmark_fn()")
-            reduced = self.data[0].detach().clone()
-            master_device = reduced.device
-            for tensor in self.data[1:]:
-                reduced.add_(tensor.to(master_device, non_blocking=True))
-            torch.cuda.synchronize(master_device)
-            self.output = reduced.sum()
+            torch.cuda.nccl.all_reduce(self.data)
+            self.output = self.data[0].sum()
             self._synchronize()
 
     def capture_verification_payload(self) -> None:

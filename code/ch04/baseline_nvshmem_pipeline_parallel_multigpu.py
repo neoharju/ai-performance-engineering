@@ -13,7 +13,7 @@ if str(repo_root) not in sys.path:
 
 import torch
 
-from ch04.nvshmem_pipeline_parallel import main as nvshmem_main
+from ch04.nvshmem_pipeline_parallel_multigpu import main as nvshmem_main
 from core.harness.benchmark_harness import (
     BaseBenchmark,
     BenchmarkConfig,
@@ -32,7 +32,7 @@ class NVSHMEMPipelineParallelMultiGPU(VerificationPayloadMixin, BaseBenchmark):
 
     def setup(self) -> None:
         if torch.cuda.device_count() < 2:
-            raise RuntimeError("SKIPPED: nvshmem_pipeline_parallel requires >=2 GPUs")
+            raise RuntimeError("SKIPPED: nvshmem_pipeline_parallel_multigpu requires >=2 GPUs")
         torch.manual_seed(42)
         torch.cuda.manual_seed_all(42)
         self._verify_input = torch.randn(64, 64, device=self.device, dtype=torch.float32)
@@ -49,11 +49,11 @@ class NVSHMEMPipelineParallelMultiGPU(VerificationPayloadMixin, BaseBenchmark):
                 "--batch-size",
                 "64",
                 "--num-microbatches",
-                "32",
+                "16",
                 "--seq-len",
-                "256",
+                "512",
                 "--hidden-dim",
-                "2048",
+                "4096",
             ]
             nvshmem_main()
         finally:

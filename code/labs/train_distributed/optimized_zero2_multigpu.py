@@ -143,8 +143,6 @@ def main():
         **_optimizer_cfg(ddp_model.parameters(), args.learning_rate),
     )
 
-    total_tokens = 0
-    start = perf_counter()
     grad_clip = 1.0
 
     # Warmup
@@ -159,6 +157,10 @@ def main():
     if rank == 0:
         print_memory_stats("optimized-zero2 warmup", ddp_model, optimizer, rank, device)
     dist.barrier()
+    torch.cuda.synchronize(device)
+
+    total_tokens = 0
+    start = perf_counter()
 
     for step in range(args.steps):
         optimizer.zero_grad(set_to_none=True)
@@ -199,7 +201,16 @@ def get_benchmark():
     """Expose torchrun-wrapped benchmark for the harness."""
     return TorchrunScriptBenchmark(
         script_path=Path(__file__).parent / "zero2.py",
-        base_args=["--mode", "optimized"],
+        base_args=[
+            "--mode",
+            "optimized",
+            "--batch-size",
+            "16",
+            "--hidden-size",
+            "10000",
+            "--grad-accum",
+            "1",
+        ],
         config_arg_map={"iterations": "--steps"},
         multi_gpu_required=True,
         target_label="labs/train_distributed:zero2_multigpu",

@@ -14,6 +14,7 @@ import torch
 
 from core.harness.benchmark_harness import BenchmarkConfig
 from core.benchmark.cuda_binary_benchmark import BinaryRunResult, CudaBinaryBenchmark
+from core.benchmark.verification import simple_signature
 
 
 def _default_symmetric_size() -> str:
@@ -23,6 +24,7 @@ def _default_symmetric_size() -> str:
 
 class NvshmemIbgdaMicrobench(CudaBinaryBenchmark):
     """Wrap the nvshmem_ibgda_microbench CUDA binary for the harness."""
+    multi_gpu_required = True
 
     def __init__(
         self,
@@ -272,6 +274,14 @@ class NvshmemIbgdaMicrobench(CudaBinaryBenchmark):
             enable_memory_tracking=False,
             multi_gpu_required=True,
         )
+
+    def get_input_signature(self) -> dict:
+        params = dict(self._workload_params)
+        params.pop("ibgda", None)
+        dtype = params.pop("dtype", "float32")
+        batch_size = int(params.pop("batch_size", 1))
+        normalized_dims = {k: int(v) for k, v in params.items()}
+        return simple_signature(batch_size=batch_size, dtype=dtype, **normalized_dims)
 
     def validate_result(self) -> Optional[str]:
         if self._last_result is None:

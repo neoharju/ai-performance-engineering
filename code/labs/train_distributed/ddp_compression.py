@@ -32,6 +32,27 @@ def parse_args():
         default=64,
         help="Extra gradient payload size (MB) to make communication dominant.",
     )
+    parser.add_argument(
+        "--bucket-cap-mb",
+        type=int,
+        default=25,
+        help="DDP bucket size (MB) for gradient bucketing.",
+    )
+    parser.add_argument(
+        "--disable-bucket-view",
+        action="store_true",
+        help="Disable gradient-as-bucket-view optimization.",
+    )
+    parser.add_argument(
+        "--allow-single-gpu",
+        action="store_true",
+        help="Allow single-GPU runs for the compression benchmark.",
+    )
+    parser.add_argument(
+        "--simulate-single-gpu-comm",
+        action="store_true",
+        help="Simulate gradient communication on a single GPU.",
+    )
     return parser.parse_args()
 
 
@@ -39,7 +60,7 @@ def main():
     import torch
     import torch.distributed as dist
     from torch.nn.parallel import DistributedDataParallel as DDP
-    from torch.distributed.algorithms.ddp_comm_hooks import quantization_hooks, powerSGD
+    from torch.distributed.algorithms.ddp_comm_hooks import powerSGD
 
     from labs.train_distributed.training_utils.utils import (
         build_dataloader,
@@ -47,6 +68,36 @@ def main():
         build_tokenizer,
         get_dataset,
     )
+
+    class _Int8AllReduceState:
+        def __init__(self, process_group: dist.ProcessGroup | None):
+            self.process_group = process_group
+            self.world_size = dist.get_world_size(process_group) if dist.is_initialized() else 1
+            self.limit = max(1, 127 // max(1, self.world_size))
+
+    def _int8_allreduce_hook(
+        state: _Int8AllReduceState, bucket: dist.GradBucket
+    ) -> torch.futures.Future[torch.Tensor]:
+        tensor = bucket.buffer()
+        if state.world_size < 2:
+            fut: torch.futures.Future[torch.Tensor] = torch.futures.Future()
+            fut.set_result(tensor)
+            return fut
+
+        local_max = tensor.abs().max()
+        dist.all_reduce(local_max, op=dist.ReduceOp.MAX, group=state.process_group)
+        # Scale to keep the int8 sum in-range across all ranks.
+        scale = local_max / float(state.limit)
+        scale = torch.where(scale == 0, torch.ones_like(scale), scale)
+        quant = torch.clamp((tensor / scale).round(), -state.limit, state.limit).to(torch.int8)
+        dist.all_reduce(quant, op=dist.ReduceOp.SUM, group=state.process_group)
+        dequant = quant.float().mul(scale / state.world_size)
+        if dequant.dtype != tensor.dtype:
+            dequant = dequant.to(dtype=tensor.dtype)
+
+        fut = torch.futures.Future()
+        fut.set_result(dequant)
+        return fut
 
     args = parse_args()
     local_rank = int(os.environ.get("LOCAL_RANK", 0))
@@ -59,7 +110,8 @@ def main():
     if not dist.is_initialized() and "RANK" in os.environ and "WORLD_SIZE" in os.environ:
         dist.init_process_group(backend="nccl", device_id=local_rank)
 
-    if not dist.is_initialized() or dist.get_world_size() < 2:
+    world_size = dist.get_world_size() if dist.is_initialized() else 1
+    if world_size < 2 and not args.allow_single_gpu:
         raise RuntimeError("SKIPPED: requires >=2 GPUs for gradient compression")
 
     rank = dist.get_rank() if dist.is_initialized() else 0
@@ -89,19 +141,48 @@ def main():
         extra_param = torch.nn.Parameter(torch.zeros(numel, device=device, dtype=torch.bfloat16))
         model.register_parameter("extra_grad_payload", extra_param)
 
+    comm_buffer = None
+    if args.simulate_single_gpu_comm and world_size < 2 and args.extra_grad_mb > 0:
+        elem_bytes = torch.tensor([], dtype=torch.float32).element_size()
+        numel = (args.extra_grad_mb * 1024 * 1024) // elem_bytes
+        comm_buffer = torch.randn(numel, device=device, dtype=torch.float32)
+
+    def _simulate_single_gpu_comm(buffer: torch.Tensor) -> None:
+        if args.compression == "none":
+            cpu_buf = buffer.cpu()
+            buffer.copy_(cpu_buf.to(device))
+        elif args.compression == "int8":
+            max_val = buffer.abs().max()
+            scale = max_val / 127.0 if max_val > 0 else 1.0
+            quant = torch.clamp((buffer / scale).round(), -127, 127).to(torch.int8)
+            cpu_buf = quant.cpu()
+            dequant = cpu_buf.to(device).float() * scale
+            buffer.copy_(dequant)
+        elif args.compression == "powersgd":
+            flat = buffer.view(-1)
+            stride = max(1, 8 // max(1, args.powersgd_rank))
+            sampled = flat[::stride].contiguous()
+            cpu_buf = sampled.cpu()
+            flat[::stride].copy_(cpu_buf.to(device))
+        torch.cuda.synchronize(device)
+
     ddp_model = DDP(
         model,
         device_ids=[local_rank] if device.type == "cuda" else None,
-        gradient_as_bucket_view=True,
+        gradient_as_bucket_view=not args.disable_bucket_view,
         find_unused_parameters=False,
+        bucket_cap_mb=args.bucket_cap_mb,
     )
 
     if args.compression == "int8":
-        ddp_model.register_comm_hook(None, quantization_hooks.quantization_pertensor_hook)
+        state = _Int8AllReduceState(dist.group.WORLD if dist.is_initialized() else None)
+        ddp_model.register_comm_hook(state, _int8_allreduce_hook)
     elif args.compression == "powersgd":
         state = powerSGD.PowerSGDState(
             process_group=dist.group.WORLD,
             matrix_approximation_rank=args.powersgd_rank,
+            start_powerSGD_iter=0,
+            min_compression_rate=1,
         )
         ddp_model.register_comm_hook(state, powerSGD.powerSGD_hook)
 
@@ -123,6 +204,8 @@ def main():
         if extra_param is not None:
             loss = loss + extra_param.sum() * 0.0
         loss.backward()
+        if comm_buffer is not None:
+            _simulate_single_gpu_comm(comm_buffer)
         optimizer.step()
 
         total_tokens += batch["input_ids"].numel()

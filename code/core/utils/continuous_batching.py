@@ -203,8 +203,7 @@ class ContinuousBatchingBase(BaseBenchmark):
             },
             output_tolerance=(1e-2, 1e-2),
             signature_overrides={
-                "device_count": len(self.device_ids),
-                "dynamic": self.dynamic,
+                "world_size": len(self.device_ids),
             },
         )
 

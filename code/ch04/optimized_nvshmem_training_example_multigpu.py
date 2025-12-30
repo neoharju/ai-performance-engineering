@@ -68,13 +68,13 @@ class OptimizedNVSHMEMTrainingExampleMultiGPU(VerificationPayloadMixin, BaseBenc
             sys.argv = [
                 original_argv[0],
                 "--demo",
-                "pipeline",
+                "gradient",
                 "--batch-size",
-                "16",
+                "8",
                 "--seq-len",
                 "512",
                 "--dim",
-                "2048",
+                "4096",
                 "--steps",
                 "20",
             ]

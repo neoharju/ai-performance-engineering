@@ -62,6 +62,7 @@ from core.optimization.symmetric_memory_patch import (
     maybe_create_symmetric_memory_handle,
 )
 from core.utils.compile_utils import compile_callable, compile_model
+from core.benchmark.gpu_requirements import require_min_gpus
 
 
 try:
@@ -1723,10 +1724,8 @@ def main():
         print("⚠ CUDA is required for this demo")
         return
 
+    require_min_gpus(2)
     num_gpus = torch.cuda.device_count()
-    if num_gpus < 2:
-        print(f"⚠ This demo requires >=2 GPUs (found {num_gpus})")
-        return
 
     world_size_env = os.environ.get("WORLD_SIZE")
     if world_size_env is None:

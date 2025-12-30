@@ -10,7 +10,17 @@ from labs.train_distributed.training_utils.torchrun_harness import TorchrunScrip
 def get_benchmark():
     return TorchrunScriptBenchmark(
         script_path=Path(__file__).parent / "ddp_compression.py",
-        base_args=["--compression", "none", "--extra-grad-mb", "1024", "--batch-size", "4"],
+        base_args=[
+            "--compression",
+            "none",
+            "--extra-grad-mb",
+            "4096",
+            "--batch-size",
+            "4",
+            "--bucket-cap-mb",
+            "1",
+            "--disable-bucket-view",
+        ],
         config_arg_map={"iterations": "--steps"},
         target_label="labs/train_distributed:ddp_compression_multigpu",
         multi_gpu_required=True,

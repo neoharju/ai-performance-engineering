@@ -131,6 +131,7 @@ class BandwidthSuiteMultiGPU(VerificationPayloadMixin, BaseBenchmark):
             iterations=5,
             warmup=5,
             measurement_timeout_seconds=30,
+            multi_gpu_required=True,
         )
 
 

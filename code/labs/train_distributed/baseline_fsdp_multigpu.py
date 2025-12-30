@@ -245,12 +245,21 @@ def get_benchmark():
     """Expose torchrun-wrapped benchmark for the harness."""
     return TorchrunScriptBenchmark(
         script_path=Path(__file__).parent / "train_fsdp.py",
-        base_args=["--mode", "baseline", "--sequence-length", "1024"],
+        base_args=[
+            "--mode",
+            "baseline",
+            "--sequence-length",
+            "512",
+            "--micro-batch-size",
+            "1",
+            "--grad-accum",
+            "1",
+        ],
         config_arg_map={"iterations": "--steps"},
         multi_gpu_required=True,
         target_label="labs/train_distributed:fsdp_multigpu",
         default_nproc_per_node=None,
-        default_iterations=20,
+        default_iterations=10,
         env={
             "AISP_TINYSTORIES_SPLIT": "train[:2000]",
             "TOKENIZERS_PARALLELISM": "false",

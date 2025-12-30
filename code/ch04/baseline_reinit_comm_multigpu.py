@@ -136,6 +136,7 @@ class BaselineReinitCommBenchmark(VerificationPayloadMixin, BaseBenchmark):
             warmup=5,
             enable_memory_tracking=False,
             enable_profiling=False,
+            multi_gpu_required=True,
         )
     
     def get_custom_metrics(self) -> Optional[dict]:

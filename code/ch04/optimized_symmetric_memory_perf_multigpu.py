@@ -64,6 +64,10 @@ class OptimizedSymmetricMemoryPerfBenchmark(VerificationPayloadMixin, BaseBenchm
         self.peer_buffer: Optional[torch.Tensor] = None
         self.prev_buffer: Optional[torch.Tensor] = None
         self.handle: Optional[SymmetricMemoryHandle] = None
+        self._buffer_count = 2
+        self._local_buffers: Optional[torch.Tensor] = None
+        self._peer_buffers: Optional[torch.Tensor] = None
+        self._prev_buffers: Optional[torch.Tensor] = None
         self.rank = 0
         self.world_size = 1
         self.peer_rank = 0
@@ -93,32 +97,38 @@ class OptimizedSymmetricMemoryPerfBenchmark(VerificationPayloadMixin, BaseBenchm
         device = torch.device("cuda", device_id)
         torch.manual_seed(42)
         torch.cuda.manual_seed_all(42)
-        self.local_tensor = torch.randn(self.numel, device=device, dtype=torch.float32)
-        
-        # Create symmetric memory handle for direct peer access
+        self.local_tensor = torch.randn(self.numel * self._buffer_count, device=device, dtype=torch.float32)
+
+        # Create symmetric memory handle for direct peer access (double-buffered).
         self.handle = create_symmetric_memory_handle(self.local_tensor)
         self.peer_rank = (self.rank + 1) % self.world_size
-        self.peer_buffer = self.handle.get_buffer(self.peer_rank)
-        self.prev_buffer = self.handle.get_buffer((self.rank - 1) % self.world_size)
+        self._local_buffers = self.handle.buffer.view(self._buffer_count, self.numel)
+        self._peer_buffers = self.handle.get_buffer(self.peer_rank).view(self._buffer_count, self.numel)
+        self._prev_buffers = self.handle.get_buffer((self.rank - 1) % self.world_size).view(
+            self._buffer_count, self.numel
+        )
         
         torch.cuda.synchronize()
 
     def benchmark_fn(self) -> Optional[Dict[str, float]]:
         """Run direct peer copy via SymmetricMemory and measure performance."""
-        if self.local_tensor is None or self.peer_buffer is None:
+        if self._local_buffers is None or self._peer_buffers is None or self._prev_buffers is None:
             raise RuntimeError("Tensors not initialized")
 
         start = torch.cuda.Event(enable_timing=True)
         end = torch.cuda.Event(enable_timing=True)
 
         start.record()
-        for _ in range(self._inner_iterations):
-            self.peer_buffer.copy_(self.local_tensor, non_blocking=True)
+        for idx in range(self._inner_iterations):
+            buf_idx = idx % self._buffer_count
+            local_buf = self._local_buffers[buf_idx]
+            peer_buf = self._peer_buffers[buf_idx]
+            prev_buf = self._prev_buffers[buf_idx]
+            peer_buf.copy_(local_buf, non_blocking=True)
             torch.cuda.current_stream().synchronize()
             dist.barrier()
-            self.local_tensor.copy_(self.prev_buffer, non_blocking=True)
+            local_buf.copy_(prev_buf, non_blocking=True)
             torch.cuda.current_stream().synchronize()
-            dist.barrier()
         end.record()
         torch.cuda.synchronize()
 
@@ -140,9 +150,9 @@ class OptimizedSymmetricMemoryPerfBenchmark(VerificationPayloadMixin, BaseBenchm
         }
 
     def capture_verification_payload(self) -> None:
-        if self.local_tensor is not None and self.peer_buffer is not None:
-            probe = self.local_tensor[: 256 * 256].view(256, 256)
-            output = self.peer_buffer[: 256 * 256].view(256, 256).detach().clone()
+        if self._local_buffers is not None and self._peer_buffers is not None:
+            probe = self._local_buffers[0][: 256 * 256].view(256, 256)
+            output = self._peer_buffers[0][: 256 * 256].view(256, 256).detach().clone()
         else:
             if self._verify_input is None:
                 torch.manual_seed(42)
@@ -179,6 +189,9 @@ class OptimizedSymmetricMemoryPerfBenchmark(VerificationPayloadMixin, BaseBenchm
         self.peer_buffer = None
         self.prev_buffer = None
         self.handle = None
+        self._local_buffers = None
+        self._peer_buffers = None
+        self._prev_buffers = None
         if dist.is_initialized():
             dist.barrier()
         if torch.cuda.is_available():
@@ -215,7 +228,7 @@ class OptimizedSymmetricMemoryPerfBenchmark(VerificationPayloadMixin, BaseBenchm
 
     def validate_result(self) -> Optional[str]:
         """Validate benchmark ran successfully."""
-        if self.local_tensor is None:
+        if self.local_tensor is None or self._local_buffers is None:
             return "Local tensor not initialized"
         if self.peer_buffer is None:
             return "Peer buffer not initialized"

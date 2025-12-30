@@ -41,16 +41,16 @@ from core.optimization.moe_inference import (  # noqa: E402
 @dataclass(frozen=True)
 class DisaggConfig:
     vocab_size: int = 16384
-    hidden_size: int = 1024
-    ffn_size: int = 4096
-    num_layers: int = 8
-    num_moe_layers: int = 4
+    hidden_size: int = 1536
+    ffn_size: int = 6144
+    num_layers: int = 12
+    num_moe_layers: int = 6
     num_experts: int = 16
     top_k: int = 2
-    batch_size: int = 1
-    requests_per_rank: int = 4
-    context_window: int = 512
-    decode_tokens: int = 128
+    batch_size: int = 2
+    requests_per_rank: int = 8
+    context_window: int = 1024
+    decode_tokens: int = 256
     dtype: torch.dtype = torch.bfloat16
 
     @property

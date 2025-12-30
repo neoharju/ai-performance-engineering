@@ -105,7 +105,7 @@ def _require_torchao() -> None:
 
 def _make_fp8_config() -> "Float8LinearConfig":
     _require_torchao()
-    kwargs = {"enable_fsdp_float8_all_gather": True}
+    kwargs = {"enable_fsdp_float8_all_gather": False}
     try:
         params = inspect.signature(Float8LinearConfig).parameters
     except (TypeError, ValueError):
@@ -166,7 +166,7 @@ def _run_worker(
     optimizer = torch.optim.AdamW(
         fsdp_model.parameters(),
         lr=1e-4,
-        fused=True,
+        fused=False,
     )
     grad_accum_steps = batch_size // micro_batch_size
 

@@ -25,7 +25,7 @@ def parse_args():
     parser.add_argument(
         "--dual-window-multiplier",
         type=int,
-        default=3,
+        default=4,
         help="Multiplier applied to n_stages when sizing the DualPipeV window.",
     )
     return parser.parse_args()
@@ -34,8 +34,11 @@ def parse_args():
 def main():
     args = parse_args()
     stage_count = resolve_n_stages(args.n_stages)
-    window = args.dual_window or (stage_count * max(2, args.dual_window_multiplier))
-    micro = args.micro_batch_size or max(stage_count * 2, stage_count + 2)
+    window = args.dual_window or (stage_count * args.dual_window_multiplier)
+    micro = args.micro_batch_size or max(
+        stage_count * 4,
+        args.batch_size // max(1, stage_count * 2),
+    )
 
     config = PipelineConfig(
         schedule="dualpipev",

@@ -35,13 +35,13 @@ Performance Targets:
 
 Usage:
     # 1F1B schedule
-    torchrun --nproc_per_node=<num_gpus> nvshmem_pipeline_parallel.py --schedule 1f1b
+    torchrun --nproc_per_node=<num_gpus> nvshmem_pipeline_parallel_multigpu.py --schedule 1f1b
 
     # Interleaved pipeline
-    torchrun --nproc_per_node=<num_gpus> nvshmem_pipeline_parallel.py --schedule interleaved
+    torchrun --nproc_per_node=<num_gpus> nvshmem_pipeline_parallel_multigpu.py --schedule interleaved
 
     # Virtual pipeline stages
-    torchrun --nproc_per_node=<num_gpus> nvshmem_pipeline_parallel.py --schedule virtual
+    torchrun --nproc_per_node=<num_gpus> nvshmem_pipeline_parallel_multigpu.py --schedule virtual
 
 Educational Notes:
 ------------------
@@ -120,7 +120,7 @@ def init_distributed() -> Tuple[int, int, int]:
     gpu_count = torch.cuda.device_count()
     # Require at least 2 GPUs for pipeline parallel schedule
     if gpu_count < 2:
-        require_min_gpus(2, script_name="nvshmem_pipeline_parallel.py")
+        require_min_gpus(2, script_name="nvshmem_pipeline_parallel_multigpu.py")
 
     setup_single_gpu_env()
 
@@ -143,7 +143,7 @@ def init_distributed() -> Tuple[int, int, int]:
             timeout=datetime.timedelta(seconds=60),
             device_id=local_rank,
         )
-    warn_optimal_gpu_count(4, script_name="nvshmem_pipeline_parallel.py")
+    warn_optimal_gpu_count(4, script_name="nvshmem_pipeline_parallel_multigpu.py")
     return dist.get_rank(), dist.get_world_size(), torch.cuda.current_device()
 
 

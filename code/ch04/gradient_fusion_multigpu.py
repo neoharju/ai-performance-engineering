@@ -13,6 +13,8 @@ from typing import Tuple
 import torch
 import torch.distributed as dist
 
+from core.benchmark.gpu_requirements import require_min_gpus
+
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
@@ -54,6 +56,7 @@ def run_benchmark(
     tensor_kb: int,
     iterations: int,
 ) -> None:
+    require_min_gpus(2)
     rank, world_size, device = init_distributed()
     if world_size < 2:
         raise RuntimeError("gradient_fusion_multigpu requires >=2 GPUs")

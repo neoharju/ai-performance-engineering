@@ -1,8 +1,6 @@
 """Optimized NVSHMEM pipeline parallel wrapper with NVLink5/NVLS tuning; skips on <2 GPUs.
 
-This keeps the harness happy with a baseline/optimized pair. When you add a
-true optimization (e.g., tuned block sizes or IBGDA), swap the call inside
-benchmark_fn accordingly.
+Enables symmetric-memory activation handoff for the same 1F1B schedule used by the baseline.
 """
 
 from __future__ import annotations
@@ -23,8 +21,8 @@ from ch04.nccl_blackwell_config import (
     configure_nccl_for_multigpu,
     detect_b200_multigpu_topology,
 )
-from ch04.nvshmem_pipeline_parallel import main as nvshmem_main
 from core.optimization.symmetric_memory_patch import symmetric_memory_available
+from ch04.nvshmem_pipeline_parallel_multigpu import main as nvshmem_main
 from core.harness.benchmark_harness import (
     BaseBenchmark,
     BenchmarkConfig,
@@ -58,7 +56,7 @@ class OptimizedNVSHMEMPipelineParallelMultiGPU(VerificationPayloadMixin, BaseBen
 
     def setup(self) -> None:
         if torch.cuda.device_count() < 2:
-            raise RuntimeError("SKIPPED: nvshmem_pipeline_parallel requires >=2 GPUs")
+            raise RuntimeError("SKIPPED: nvshmem_pipeline_parallel_multigpu requires >=2 GPUs")
         _configure_blackwell_nccl()
         torch.manual_seed(42)
         torch.cuda.manual_seed_all(42)
@@ -68,8 +66,7 @@ class OptimizedNVSHMEMPipelineParallelMultiGPU(VerificationPayloadMixin, BaseBen
         original_argv = sys.argv[:]
         original_disable = os.environ.get("AISP_DISABLE_SYMMEM_PIPELINE")
         try:
-            enable_symmem = symmetric_memory_available()
-            os.environ["AISP_DISABLE_SYMMEM_PIPELINE"] = "0" if enable_symmem else "1"
+            os.environ["AISP_DISABLE_SYMMEM_PIPELINE"] = "0" if symmetric_memory_available() else "1"
             sys.argv = [
                 original_argv[0],
                 "--schedule",
@@ -77,11 +74,11 @@ class OptimizedNVSHMEMPipelineParallelMultiGPU(VerificationPayloadMixin, BaseBen
                 "--batch-size",
                 "64",
                 "--num-microbatches",
-                "32",
+                "16",
                 "--seq-len",
-                "256",
+                "512",
                 "--hidden-dim",
-                "2048",
+                "4096",
             ]
             nvshmem_main()
         finally:

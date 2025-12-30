@@ -26,7 +26,7 @@ Use Cases:
 Requirements:
 - PyTorch 2.10+
 - CUDA 13.0+
-- >=2 GPUs (graceful degradation on fewer)
+- >=2 GPUs
 
 Usage:
     # Multi-GPU
@@ -46,6 +46,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.optimization.symmetric_memory_patch import symmetric_memory_available
+from core.benchmark.gpu_requirements import require_min_gpus
 
 try:
     from distributed_helper import setup_single_gpu_env
@@ -69,7 +70,8 @@ import math
 
 def setup_distributed():
     """Initialize distributed environment."""
-    setup_single_gpu_env()  # Auto-setup for single-GPU mode
+    require_min_gpus(2)
+    setup_single_gpu_env()
     if dist.is_initialized():
         return dist.get_rank(), dist.get_world_size(), torch.cuda.current_device()
 

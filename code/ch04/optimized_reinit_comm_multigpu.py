@@ -133,6 +133,7 @@ class OptimizedReinitCommBenchmark(VerificationPayloadMixin, BaseBenchmark):
             warmup=5,
             enable_memory_tracking=False,
             enable_profiling=False,
+            multi_gpu_required=True,
         )
     
     def get_workload_metadata(self) -> Optional[WorkloadMetadata]:

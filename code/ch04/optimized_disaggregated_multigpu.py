@@ -175,8 +175,9 @@ class OptimizedDisaggregatedBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def get_config(self) -> BenchmarkConfig:
         """Return benchmark configuration."""
         return BenchmarkConfig(
-        iterations=10,
+            iterations=10,
             warmup=5,
+            multi_gpu_required=True,
         )
     
     def get_custom_metrics(self) -> Optional[dict]:
