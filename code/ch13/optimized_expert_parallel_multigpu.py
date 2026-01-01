@@ -1,0 +1,137 @@
+#!/usr/bin/env python3
+"""Optimized: expert-parallel all-to-all using pre-allocated all_to_all_single."""
+
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+from typing import Optional
+
+import torch
+import torch.nn as nn
+
+from core.benchmark.gpu_requirements import require_min_gpus
+from core.benchmark.verification import PrecisionFlags
+from core.benchmark.verification_mixin import VerificationPayloadMixin
+from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, LaunchVia, TorchrunLaunchSpec
+
+from ch13.expert_parallel_common import ExpertParallelConfig, dtype_from_name, run_expert_parallel
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Optimized expert-parallel all-to-all (single).")
+    parser.add_argument("--iters", type=int, default=5)
+    parser.add_argument("--warmup", type=int, default=5)
+    parser.add_argument("--batch-size", type=int, default=8)
+    parser.add_argument("--seq-len", type=int, default=2048)
+    parser.add_argument("--hidden-size", type=int, default=1024)
+    parser.add_argument("--dtype", type=str, default="bf16", choices=("fp16", "bf16", "fp32"))
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = _parse_args()
+    require_min_gpus(2, script_name="optimized_expert_parallel_multigpu.py")
+    config = ExpertParallelConfig(
+        batch_size=args.batch_size,
+        seq_len=args.seq_len,
+        hidden_size=args.hidden_size,
+        dtype=dtype_from_name(args.dtype),
+    )
+    run_expert_parallel(config=config, iters=args.iters, warmup=args.warmup, impl="single")
+
+
+class OptimizedExpertParallelMultigpuBenchmark(VerificationPayloadMixin, BaseBenchmark):
+    """Harness entry that launches this module via torchrun."""
+
+    multi_gpu_required = True
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._config = ExpertParallelConfig()
+        self._world_size = torch.cuda.device_count()
+        if self._world_size < 2:
+            raise RuntimeError("optimized_expert_parallel_multigpu requires >=2 GPUs.")
+        tokens = self._config.batch_size * self._config.seq_len * self._world_size
+        self.register_workload_metadata(
+            requests_per_iteration=float(self._config.batch_size),
+            tokens_per_iteration=float(tokens),
+        )
+        self._input: Optional[torch.Tensor] = None
+        self._output: Optional[torch.Tensor] = None
+        self._expert_proj: Optional[nn.Linear] = None
+
+    def setup(self) -> None:
+        torch.manual_seed(42)
+        torch.cuda.manual_seed_all(42)
+        tokens_per_rank = self._config.batch_size * self._config.seq_len
+        self._input = torch.randn(
+            tokens_per_rank,
+            self._config.hidden_size,
+            device=self.device,
+            dtype=self._config.dtype,
+        )
+        self._expert_proj = nn.Linear(
+            self._config.hidden_size,
+            self._config.hidden_size,
+            bias=False,
+            dtype=self._config.dtype,
+        ).to(self.device)
+
+    def benchmark_fn(self) -> None:
+        if self._input is None or self._expert_proj is None:
+            raise RuntimeError("setup() must run before benchmark_fn()")
+        self._output = self._expert_proj(self._input)
+
+    def capture_verification_payload(self) -> None:
+        if self._output is None or self._input is None or self._expert_proj is None:
+            raise RuntimeError("benchmark_fn() must run before capture_verification_payload()")
+        param_count = sum(p.numel() for p in self._expert_proj.parameters())
+        self._set_verification_payload(
+            inputs={"tokens": self._input},
+            output=self._output,
+            batch_size=self._config.batch_size,
+            parameter_count=int(param_count),
+            precision_flags=PrecisionFlags(
+                fp16=self._config.dtype == torch.float16,
+                bf16=self._config.dtype == torch.bfloat16,
+                tf32=False,
+            ),
+            output_tolerance=(0.2, 2.0),
+            signature_overrides={"world_size": self._world_size},
+        )
+
+    def validate_result(self) -> Optional[str]:
+        if self._output is None:
+            return "No output captured"
+        return None
+
+    def get_config(self) -> BenchmarkConfig:
+        return BenchmarkConfig(
+            launch_via=LaunchVia.TORCHRUN,
+            nproc_per_node=self._world_size,
+            iterations=5,
+            warmup=5,
+            multi_gpu_required=True,
+            measurement_timeout_seconds=900,
+        )
+
+    def get_torchrun_spec(self, config: Optional[BenchmarkConfig] = None) -> TorchrunLaunchSpec:
+        return TorchrunLaunchSpec(
+            script_path=Path(__file__).resolve(),
+            script_args=[],
+            multi_gpu_required=True,
+            name="optimized_expert_parallel_multigpu",
+            config_arg_map={
+                "iterations": "--iters",
+                "warmup": "--warmup",
+            },
+        )
+
+
+def get_benchmark() -> BaseBenchmark:
+    return OptimizedExpertParallelMultigpuBenchmark()
+
+
+if __name__ == "__main__":
+    main()

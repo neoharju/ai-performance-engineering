@@ -1,0 +1,167 @@
+#!/usr/bin/env python3
+"""Baseline: context-parallel attention via full all-gather of K/V per layer."""
+
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+from typing import Optional
+
+import torch
+
+from core.benchmark.gpu_requirements import require_min_gpus
+from core.benchmark.verification import PrecisionFlags
+from core.benchmark.verification_mixin import VerificationPayloadMixin
+from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, LaunchVia, TorchrunLaunchSpec
+
+from ch13.context_parallel_benchmark_common import (
+    ContextParallelConfig,
+    align_seq_len,
+    all_gather_attention,
+    build_layers,
+    dtype_from_name,
+    run_context_parallel,
+)
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Baseline context-parallel attention (all-gather).")
+    parser.add_argument("--iters", type=int, default=5)
+    parser.add_argument("--warmup", type=int, default=5)
+    parser.add_argument("--batch-size", type=int, default=1)
+    parser.add_argument("--seq-len", type=int, default=16384)
+    parser.add_argument("--hidden-size", type=int, default=1024)
+    parser.add_argument("--num-heads", type=int, default=8)
+    parser.add_argument("--num-layers", type=int, default=2)
+    parser.add_argument("--dtype", type=str, default="bf16", choices=("fp16", "bf16", "fp32"))
+    parser.add_argument(
+        "--non-causal",
+        action="store_false",
+        dest="causal",
+        help="Disable causal masking (default is causal).",
+    )
+    parser.set_defaults(causal=True)
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = _parse_args()
+    require_min_gpus(2, script_name="baseline_context_parallel_multigpu.py")
+    config = ContextParallelConfig(
+        batch_size=args.batch_size,
+        seq_len=args.seq_len,
+        hidden_size=args.hidden_size,
+        num_heads=args.num_heads,
+        num_layers=args.num_layers,
+        dtype=dtype_from_name(args.dtype),
+        causal=args.causal,
+    )
+    run_context_parallel(config=config, iters=args.iters, warmup=args.warmup, attention_fn=all_gather_attention)
+
+
+class BaselineContextParallelMultigpuBenchmark(VerificationPayloadMixin, BaseBenchmark):
+    """Harness entry that launches this module via torchrun."""
+
+    multi_gpu_required = True
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._config = ContextParallelConfig()
+        self._world_size = torch.cuda.device_count()
+        if self._world_size < 2:
+            raise RuntimeError("baseline_context_parallel_multigpu requires >=2 GPUs.")
+        self._seq_len = align_seq_len(self._config.seq_len, self._world_size)
+        tokens = self._config.batch_size * self._seq_len
+        self.register_workload_metadata(
+            requests_per_iteration=float(self._config.batch_size),
+            tokens_per_iteration=float(tokens),
+        )
+        self._layers: Optional[torch.nn.ModuleList] = None
+        self._input: Optional[torch.Tensor] = None
+        self._output: Optional[torch.Tensor] = None
+
+    def setup(self) -> None:
+        torch.manual_seed(42)
+        torch.cuda.manual_seed_all(42)
+        self._layers = build_layers(self._config, self.device)
+        self._input = torch.randn(
+            self._config.batch_size,
+            self._seq_len,
+            self._config.hidden_size,
+            device=self.device,
+            dtype=self._config.dtype,
+        )
+
+    def benchmark_fn(self) -> None:
+        if self._layers is None or self._input is None:
+            raise RuntimeError("setup() must run before benchmark_fn()")
+        x = self._input
+        seq_shard = x.shape[1]
+        for layer in self._layers:
+            q, k, v = layer.split_qkv(x)
+            attn_out = all_gather_attention(
+                q,
+                k,
+                v,
+                rank=0,
+                world_size=1,
+                process_group=None,
+                causal=self._config.causal,
+                seq_shard=seq_shard,
+                scale=layer.scale,
+            )
+            x = layer.proj(layer.merge_heads(attn_out))
+        self._output = x
+
+    def capture_verification_payload(self) -> None:
+        if self._output is None or self._input is None or self._layers is None:
+            raise RuntimeError("benchmark_fn() must run before capture_verification_payload()")
+        param_count = sum(p.numel() for layer in self._layers for p in layer.parameters())
+        self._set_verification_payload(
+            inputs={"input": self._input},
+            output=self._output,
+            batch_size=self._config.batch_size,
+            parameter_count=int(param_count),
+            precision_flags=PrecisionFlags(
+                fp16=self._config.dtype == torch.float16,
+                bf16=self._config.dtype == torch.bfloat16,
+                tf32=False,
+            ),
+            output_tolerance=(0.5, 5.0),
+            signature_overrides={"world_size": self._world_size},
+        )
+
+    def validate_result(self) -> Optional[str]:
+        if self._output is None:
+            return "No output captured"
+        return None
+
+    def get_config(self) -> BenchmarkConfig:
+        return BenchmarkConfig(
+            launch_via=LaunchVia.TORCHRUN,
+            nproc_per_node=self._world_size,
+            iterations=5,
+            warmup=5,
+            multi_gpu_required=True,
+            measurement_timeout_seconds=900,
+        )
+
+    def get_torchrun_spec(self, config: Optional[BenchmarkConfig] = None) -> TorchrunLaunchSpec:
+        return TorchrunLaunchSpec(
+            script_path=Path(__file__).resolve(),
+            script_args=[],
+            multi_gpu_required=True,
+            name="baseline_context_parallel_multigpu",
+            config_arg_map={
+                "iterations": "--iters",
+                "warmup": "--warmup",
+            },
+        )
+
+
+def get_benchmark() -> BaseBenchmark:
+    return BaselineContextParallelMultigpuBenchmark()
+
+
+if __name__ == "__main__":
+    main()

@@ -33,9 +33,9 @@ from core.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-_DEFAULT_BATCH = 256
+_DEFAULT_BATCH = 512
 _DEFAULT_HIDDEN = 4096
-_AUX_PASSES = 2
+_AUX_PASSES = 4
 
 
 def _resolve_world_size() -> int:

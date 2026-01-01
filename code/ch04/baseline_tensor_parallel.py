@@ -35,7 +35,7 @@ from core.utils.logger import get_logger
 logger = get_logger(__name__)
 
 _DEFAULT_BATCH = 8
-_DEFAULT_SEQ = 2048
+_DEFAULT_SEQ = 4096
 _DEFAULT_HIDDEN = 4096
 _DEFAULT_LAYERS = 4
 

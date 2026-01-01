@@ -94,15 +94,15 @@ class OptimizedNVSHMEMPipelineParallelMultiGPU(VerificationPayloadMixin, BaseBen
                 "--schedule",
                 "interleaved",
                 "--batch-size",
-                "32",
+                "64",
                 "--num-microbatches",
                 "16",
                 "--virtual-stages",
                 "2",
                 "--seq-len",
-                "512",
-                "--hidden-dim",
                 "1024",
+                "--hidden-dim",
+                "2048",
             ]
             nvshmem_main()
         finally:

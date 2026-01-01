@@ -28,6 +28,7 @@ class GradientCompressionBenchmark(VerificationPayloadMixin, BaseBenchmark):
         output_tolerance: tuple[float, float],
         tensor_size_mb: int = 128,
         multi_gpu: bool = True,
+        simulate_single_gpu_transfer: bool = False,
     ) -> None:
         super().__init__()
         self.multi_gpu_required = bool(multi_gpu)
@@ -37,11 +38,14 @@ class GradientCompressionBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.output_tolerance = output_tolerance
         self.tensor_size_mb = tensor_size_mb
         self.multi_gpu = bool(multi_gpu)
+        self.simulate_single_gpu_transfer = bool(simulate_single_gpu_transfer)
         self.world_size = 0
         self.devices: List[torch.device] = []
         self.inputs: List[torch.Tensor] = []
         self.output: Optional[torch.Tensor] = None
         self._verify_input: Optional[torch.Tensor] = None
+        self._fp32_buffers: List[torch.Tensor] = []
+        self._fp32_outputs: List[torch.Tensor] = []
         self._fp16_buffers: List[torch.Tensor] = []
         self._fp16_outputs: List[torch.Tensor] = []
         self._fp16_output_fp32: Optional[torch.Tensor] = None
@@ -79,6 +83,9 @@ class GradientCompressionBenchmark(VerificationPayloadMixin, BaseBenchmark):
             torch.randn(numel, device=device, dtype=torch.float32) for device in self.devices
         ]
         self._verify_input = self.inputs[0]
+        if not self.multi_gpu and self.simulate_single_gpu_transfer:
+            self._fp32_buffers = [torch.empty_like(t) for t in self.inputs]
+            self._fp32_outputs = [torch.empty_like(t) for t in self.inputs]
         if self.compression == "fp16":
             self._fp16_buffers = [
                 torch.empty_like(t, dtype=torch.float16) for t in self.inputs
@@ -110,7 +117,14 @@ class GradientCompressionBenchmark(VerificationPayloadMixin, BaseBenchmark):
                     torch.cuda.nccl.all_reduce(self.inputs, outputs=outputs)
                     self.output = outputs[0]
                 else:
-                    self.output = self.inputs[0].clone()
+                    if self.simulate_single_gpu_transfer:
+                        if not self._fp32_buffers or not self._fp32_outputs:
+                            raise RuntimeError("FP32 transfer buffers not initialized")
+                        self._fp32_buffers[0].copy_(self.inputs[0])
+                        self._fp32_outputs[0].copy_(self._fp32_buffers[0])
+                        self.output = self._fp32_outputs[0]
+                    else:
+                        self.output = self.inputs[0].clone()
             elif self.compression == "fp16":
                 if not self._fp16_buffers:
                     raise RuntimeError("FP16 buffers not initialized")
@@ -120,7 +134,13 @@ class GradientCompressionBenchmark(VerificationPayloadMixin, BaseBenchmark):
                     torch.cuda.nccl.all_reduce(self._fp16_buffers, outputs=self._fp16_outputs)
                     reduced = self._fp16_outputs[0]
                 else:
-                    reduced = self._fp16_buffers[0]
+                    if self.simulate_single_gpu_transfer:
+                        if not self._fp16_outputs:
+                            raise RuntimeError("FP16 output buffers not initialized")
+                        self._fp16_outputs[0].copy_(self._fp16_buffers[0])
+                        reduced = self._fp16_outputs[0]
+                    else:
+                        reduced = self._fp16_buffers[0]
                 if self._fp16_output_fp32 is None:
                     raise RuntimeError("FP16 output buffer not initialized")
                 self._fp16_output_fp32.copy_(reduced)
@@ -160,7 +180,13 @@ class GradientCompressionBenchmark(VerificationPayloadMixin, BaseBenchmark):
             torch.cuda.nccl.all_reduce(self._int8_buffers, outputs=self._int8_outputs)
             reduced = self._int8_outputs[0]
         else:
-            reduced = self._int8_buffers[0]
+            if self.simulate_single_gpu_transfer:
+                if not self._int8_outputs:
+                    raise RuntimeError("INT8 output buffers not initialized")
+                self._int8_outputs[0].copy_(self._int8_buffers[0])
+                reduced = self._int8_outputs[0]
+            else:
+                reduced = self._int8_buffers[0]
         if self._int8_output_fp32 is None:
             raise RuntimeError("INT8 output buffer not initialized")
         self._int8_output_fp32.copy_(reduced.float())
@@ -194,6 +220,8 @@ class GradientCompressionBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.inputs = []
         self.output = None
         self._verify_input = None
+        self._fp32_buffers = []
+        self._fp32_outputs = []
         self._fp16_buffers = []
         self._fp16_outputs = []
         self._fp16_output_fp32 = None

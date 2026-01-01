@@ -15,7 +15,9 @@ def get_benchmark() -> BaseBenchmark:
         compression="fp16",
         equivalence_group="ch04_gradient_compression_fp16",
         output_tolerance=(1e-3, 1e-2),
+        tensor_size_mb=4096,
         multi_gpu=False,
+        simulate_single_gpu_transfer=True,
     )
     return attach_benchmark_metadata(bench, __file__)
 

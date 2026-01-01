@@ -224,7 +224,7 @@ def get_benchmark():
             "--grad-accum",
             "1",
             "--extra-grad-mb",
-            "8192",
+            "12288",
         ],
         config_arg_map={"iterations": "--steps"},
         multi_gpu_required=True,

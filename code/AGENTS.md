@@ -56,6 +56,7 @@
 - Both the baseline and the optimized variants need to equivalent workloads.  Perhaps we need to increase the workloads to demonstrate the speedup?  
 - Let's consider all options and find the best speedup 
 - Make sure we're staying with the intent of the example and within the context of the chapter (book/chXX.md).
+- It is OK to increase batch size, sequence length, or message sizes to surface clear speedups, as long as baseline and optimized workloads stay equivalent.
 
 ## Multi-GPU Defaults (CRITICAL)
 - Multi-GPU scripts should use all visible GPUs by default unless explicitly overridden.

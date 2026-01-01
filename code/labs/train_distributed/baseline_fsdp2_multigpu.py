@@ -255,7 +255,7 @@ def get_benchmark():
     """Expose torchrun-wrapped benchmark for the harness."""
     # Scale up by switching to a larger config (ex: tinyllama_config.json)
     # and matching it with a packed dataset at the desired sequence length.
-    packed_data_path = Path(__file__).parent / "data" / "tinystories_packed_seq512.jsonl"
+    packed_data_path = Path(__file__).parent / "data" / "tinystories_packed_seq128.jsonl"
     config_path = Path(__file__).parent / "data" / "tinyllama_config.json"
     return TorchrunScriptBenchmark(
         script_path=Path(__file__).parent / "train_fsdp2.py",
@@ -265,11 +265,11 @@ def get_benchmark():
             "--variant",
             "multigpu",
             "--sequence-length",
-            "512",
+            "128",
             "--micro-batch-size",
-            "2",
+            "4",
             "--grad-accum",
-            "1",
+            "2",
         ],
         config_arg_map={"iterations": "--steps"},
         multi_gpu_required=True,

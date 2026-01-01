@@ -70,13 +70,13 @@ class OptimizedNVSHMEMTrainingExampleMultiGPU(VerificationPayloadMixin, BaseBenc
                 "--demo",
                 "pipeline",
                 "--batch-size",
-                "4",
+                "8",
                 "--seq-len",
-                "512",
+                "1024",
                 "--dim",
-                "512",
+                "1024",
                 "--steps",
-                "60",
+                "80",
             ]
             nvshmem_train_main()
         finally:

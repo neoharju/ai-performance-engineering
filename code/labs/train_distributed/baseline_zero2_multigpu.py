@@ -128,7 +128,7 @@ def get_benchmark():
             "--hidden-size",
             "10000",
             "--extra-grad-mb",
-            "8192",
+            "12288",
         ],
         config_arg_map={"iterations": "--steps"},
         multi_gpu_required=True,

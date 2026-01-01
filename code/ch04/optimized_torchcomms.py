@@ -29,7 +29,7 @@ from core.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-_DEFAULT_BATCH = 256
+_DEFAULT_BATCH = 512
 _DEFAULT_HIDDEN = 4096
 
 try:
