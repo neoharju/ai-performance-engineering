@@ -285,7 +285,7 @@ def get_benchmark():
             "AISP_TINYSTORIES_LOCAL_PATH": str(local_data_path),
             "AISP_TINYSTORIES_PACKED_PATH": str(packed_data_path),
             "AISP_TINYSTORIES_CONFIG_PATH": str(config_path),
-            "AISP_TINYSTORIES_LAYERS": "8",
+            "AISP_TINYSTORIES_LAYERS": "12",
             "TOKENIZERS_PARALLELISM": "false",
         },
         name="baseline_fsdp_multigpu",

@@ -83,6 +83,9 @@ from core.optimization.symmetric_memory_patch import (
 def symmem_pipeline_disabled() -> bool:
     return os.environ.get("AISP_DISABLE_SYMMEM_PIPELINE", "").lower() in {"1", "true", "yes"}
 
+def symmem_pipeline_async_enabled() -> bool:
+    return os.environ.get("AISP_SYMMEM_PIPELINE_ASYNC", "").lower() in {"1", "true", "yes"}
+
 try:
     from distributed_helper import setup_single_gpu_env
 except ImportError:
@@ -179,6 +182,7 @@ class ActivationBuffer:
     handles: List[Optional[SymmetricMemoryHandle]] = field(default_factory=list, init=False)
     buffers: List[torch.Tensor] = field(default_factory=list, init=False)
     current_idx: int = field(default=0, init=False)
+    _pending_sends: List[Optional[dist.Work]] = field(default_factory=list, init=False)
     
     def __post_init__(self) -> None:
         """Initialize double-buffered symmetric memory."""
@@ -186,6 +190,7 @@ class ActivationBuffer:
             self.device = torch.device("cuda", self.device)
         elif not isinstance(self.device, torch.device):
             self.device = torch.device(self.device)
+        self._pending_sends = [None for _ in range(self.num_buffers)]
         for _ in range(self.num_buffers):
             local_buffer = torch.zeros(self.shape, dtype=self.dtype, device=self.device)
             
@@ -202,6 +207,12 @@ class ActivationBuffer:
     def get_current_buffer(self) -> torch.Tensor:
         """Get current buffer for writing."""
         return self.buffers[self.current_idx]
+
+    def _wait_pending_send(self) -> None:
+        work = self._pending_sends[self.current_idx]
+        if work is not None:
+            work.wait()
+            self._pending_sends[self.current_idx] = None
     
     def swap_buffers(self) -> None:
         """Swap to next buffer (for double buffering)."""
@@ -210,9 +221,10 @@ class ActivationBuffer:
     def write_to_remote(self, data: torch.Tensor, target_rank: int) -> None:
         """
         Write activation data to remote rank's buffer.
-        
+
         Uses symmetric memory for zero-copy DMA transfer over NVLink.
         """
+        self._wait_pending_send()
         current_buffer = self.get_current_buffer()
         current_buffer.copy_(data, non_blocking=True)
         
@@ -223,10 +235,16 @@ class ActivationBuffer:
                 remote_buffer.copy_(current_buffer, non_blocking=True)
             except Exception:
                 # Fallback to NCCL P2P
-                dist.send(current_buffer, dst=target_rank)
+                if symmem_pipeline_async_enabled():
+                    self._pending_sends[self.current_idx] = dist.isend(current_buffer, dst=target_rank)
+                else:
+                    dist.send(current_buffer, dst=target_rank)
         else:
             # Fallback to NCCL P2P
-            dist.send(current_buffer, dst=target_rank)
+            if symmem_pipeline_async_enabled():
+                self._pending_sends[self.current_idx] = dist.isend(current_buffer, dst=target_rank)
+            else:
+                dist.send(current_buffer, dst=target_rank)
     
     def read_from_remote(self, source_rank: int) -> torch.Tensor:
         """
@@ -252,6 +270,9 @@ class ActivationBuffer:
 
     def close(self) -> None:
         """Release symmetric memory handles and buffers."""
+        for work in self._pending_sends:
+            if work is not None:
+                work.wait()
         if self.device.type == "cuda":
             torch.cuda.synchronize(self.device)
         self.buffers.clear()

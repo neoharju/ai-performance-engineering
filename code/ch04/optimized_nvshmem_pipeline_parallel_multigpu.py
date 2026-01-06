@@ -1,6 +1,6 @@
 """Optimized NVSHMEM pipeline parallel wrapper with NVLink5/NVLS tuning; skips on <2 GPUs.
 
-Uses an interleaved schedule with virtual stages to reduce pipeline bubbles.
+Uses symmetric-memory handoff on the 1F1B schedule to reduce pipeline stalls.
 """
 
 from __future__ import annotations
@@ -80,7 +80,8 @@ class OptimizedNVSHMEMPipelineParallelMultiGPU(VerificationPayloadMixin, BaseBen
     def setup(self) -> None:
         if torch.cuda.device_count() < 2:
             raise RuntimeError("SKIPPED: nvshmem_pipeline_parallel_multigpu requires >=2 GPUs")
-        _configure_blackwell_nccl()
+        if _enable_symmem_pipeline():
+            _configure_blackwell_nccl()
         torch.manual_seed(42)
         torch.cuda.manual_seed_all(42)
         self._verify_input = torch.randn(64, 64, device=self.device, dtype=torch.float32)
@@ -88,22 +89,23 @@ class OptimizedNVSHMEMPipelineParallelMultiGPU(VerificationPayloadMixin, BaseBen
     def benchmark_fn(self) -> None:
         original_argv = sys.argv[:]
         original_disable = os.environ.get("AISP_DISABLE_SYMMEM_PIPELINE")
+        original_async = os.environ.get("AISP_SYMMEM_PIPELINE_ASYNC")
         try:
-            os.environ["AISP_DISABLE_SYMMEM_PIPELINE"] = "0" if _enable_symmem_pipeline() else "1"
+            use_symmem = _enable_symmem_pipeline()
+            os.environ["AISP_DISABLE_SYMMEM_PIPELINE"] = "0" if use_symmem else "1"
+            os.environ["AISP_SYMMEM_PIPELINE_ASYNC"] = "0" if use_symmem else "1"
             sys.argv = [
                 original_argv[0],
                 "--schedule",
-                "interleaved",
+                "1f1b",
                 "--batch-size",
                 "64",
                 "--num-microbatches",
-                "64",
-                "--virtual-stages",
-                "1",
+                "16",
                 "--seq-len",
-                "256",
+                "16",
                 "--hidden-dim",
-                "512",
+                "32",
             ]
             nvshmem_main()
         finally:
@@ -112,6 +114,10 @@ class OptimizedNVSHMEMPipelineParallelMultiGPU(VerificationPayloadMixin, BaseBen
                 os.environ.pop("AISP_DISABLE_SYMMEM_PIPELINE", None)
             else:
                 os.environ["AISP_DISABLE_SYMMEM_PIPELINE"] = original_disable
+            if original_async is None:
+                os.environ.pop("AISP_SYMMEM_PIPELINE_ASYNC", None)
+            else:
+                os.environ["AISP_SYMMEM_PIPELINE_ASYNC"] = original_async
 
     def capture_verification_payload(self) -> None:
         if self._verify_input is None:

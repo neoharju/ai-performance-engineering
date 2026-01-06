@@ -13,6 +13,7 @@ from core.optimization.moe_inference import (
     MoeInferenceConfig,
     SimpleMoEGPT,
     allocate_kv_cache,
+    env_override_int,
 )
 from ch15.verification_payload_mixin import VerificationPayloadMixin
 
@@ -20,16 +21,16 @@ from ch15.verification_payload_mixin import VerificationPayloadMixin
 @dataclass(frozen=True)
 class DisaggConfig:
     vocab_size: int = 16384
-    hidden_size: int = 768
-    ffn_size: int = 3072
-    num_layers: int = 4
-    num_moe_layers: int = 2
+    hidden_size: int = 1024
+    ffn_size: int = 1024
+    num_layers: int = 1
+    num_moe_layers: int = 1
     num_experts: int = 16
     top_k: int = 2
     batch_size: int = 1
-    requests_per_rank: int = 24
-    context_window: int = 1024
-    decode_tokens: int = 32
+    requests_per_rank: int = 128
+    context_window: int = 4096
+    decode_tokens: int = 8
     dtype: torch.dtype = torch.bfloat16
 
     @property
@@ -55,14 +56,39 @@ def _build_moe_config(cfg: DisaggConfig) -> MoeInferenceConfig:
     )
 
 
+def _apply_profile_overrides(cfg: DisaggConfig) -> DisaggConfig:
+    return DisaggConfig(
+        vocab_size=cfg.vocab_size,
+        hidden_size=cfg.hidden_size,
+        ffn_size=cfg.ffn_size,
+        num_layers=cfg.num_layers,
+        num_moe_layers=cfg.num_moe_layers,
+        num_experts=cfg.num_experts,
+        top_k=cfg.top_k,
+        batch_size=env_override_int("AISP_NCU_PROFILE_BATCH", cfg.batch_size),
+        requests_per_rank=env_override_int("AISP_NCU_PROFILE_REQUESTS", cfg.requests_per_rank),
+        context_window=env_override_int("AISP_NCU_PROFILE_CONTEXT", cfg.context_window),
+        decode_tokens=env_override_int("AISP_NCU_PROFILE_DECODE", cfg.decode_tokens),
+        dtype=cfg.dtype,
+    )
+
+
 class DisaggregatedInferenceSingleGPUBenchmark(VerificationPayloadMixin, BaseBenchmark):
     """Single-GPU analogue of disaggregated prefill/decode inference."""
+
+    ncu_env_overrides = {
+        "AISP_NCU_PROFILE_REQUESTS": "4",
+        "AISP_NCU_PROFILE_CONTEXT": "256",
+        "AISP_NCU_PROFILE_DECODE": "8",
+        "AISP_NCU_PROFILE_BATCH": "1",
+    }
 
     def __init__(self, *, use_host_staging: bool, label: str, cfg: Optional[DisaggConfig] = None) -> None:
         super().__init__()
         self.use_host_staging = bool(use_host_staging)
         self.label = label
-        self.cfg = cfg or DisaggConfig()
+        base_cfg = cfg or DisaggConfig()
+        self.cfg = _apply_profile_overrides(base_cfg)
         tokens = self.cfg.requests_per_rank * self.cfg.tokens_per_request
         self._workload = WorkloadMetadata(
             requests_per_iteration=float(self.cfg.requests_per_rank),

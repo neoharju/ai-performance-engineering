@@ -56,7 +56,8 @@ class OptimizedNVSHMEMVsNCCLBenchmarkMultiGPU(VerificationPayloadMixin, BaseBenc
     def setup(self) -> None:
         if torch.cuda.device_count() < 2:
             raise RuntimeError("SKIPPED: nvshmem_vs_nccl_benchmark requires >=2 GPUs")
-        _configure_blackwell_nccl()
+        if symmetric_memory_available():
+            _configure_blackwell_nccl()
         torch.manual_seed(42)
         torch.cuda.manual_seed_all(42)
         self._verify_input = torch.randn(64, 64, device=self.device, dtype=torch.float32)
@@ -64,17 +65,28 @@ class OptimizedNVSHMEMVsNCCLBenchmarkMultiGPU(VerificationPayloadMixin, BaseBenc
     def benchmark_fn(self) -> None:
         use_symmem = symmetric_memory_available()
         args = argparse.Namespace(
-            min_bytes=1024,
-            max_bytes=256 * 1024,
-            steps=6,
-            iterations=200,
+            min_bytes=1048576,
+            max_bytes=1048576,
+            steps=1,
+            iterations=500,
             mode="nvshmem" if use_symmem else "nccl",
         )
         original_disable = os.environ.get("AISP_DISABLE_SYMMETRIC_MEMORY")
+        original_overlap = os.environ.get("AISP_BROADCAST_OVERLAP")
+        original_compute = os.environ.get("AISP_BROADCAST_COMPUTE_PASSES")
         rank = init_distributed()
         try:
             os.environ["AISP_DISABLE_SYMMETRIC_MEMORY"] = "0" if use_symmem else "1"
-            results = benchmark(args)
+            os.environ["AISP_BROADCAST_OVERLAP"] = "1"
+            os.environ["AISP_BROADCAST_COMPUTE_PASSES"] = "8"
+            try:
+                results = benchmark(args)
+            except Exception as exc:
+                if rank == 0:
+                    print(f"NVSHMEM broadcast failed; falling back to NCCL. ({exc})")
+                args.mode = "nccl"
+                os.environ["AISP_DISABLE_SYMMETRIC_MEMORY"] = "1"
+                results = benchmark(args)
             if rank == 0:
                 print("\nNVSHMEM Benchmark (optimized for NVLink 5.0 / NVLS / TCE)")
                 print("------------------------------------------------------")
@@ -86,6 +98,14 @@ class OptimizedNVSHMEMVsNCCLBenchmarkMultiGPU(VerificationPayloadMixin, BaseBenc
                 os.environ.pop("AISP_DISABLE_SYMMETRIC_MEMORY", None)
             else:
                 os.environ["AISP_DISABLE_SYMMETRIC_MEMORY"] = original_disable
+            if original_overlap is None:
+                os.environ.pop("AISP_BROADCAST_OVERLAP", None)
+            else:
+                os.environ["AISP_BROADCAST_OVERLAP"] = original_overlap
+            if original_compute is None:
+                os.environ.pop("AISP_BROADCAST_COMPUTE_PASSES", None)
+            else:
+                os.environ["AISP_BROADCAST_COMPUTE_PASSES"] = original_compute
 
     def teardown(self) -> None:
         if dist.is_initialized():

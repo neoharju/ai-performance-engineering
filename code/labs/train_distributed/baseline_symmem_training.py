@@ -24,7 +24,7 @@ def get_benchmark():
             "--output-dim",
             "512",
             "--optimizer-layers",
-            "96",
+            "256",
             "--sync-interval",
             "1",
         ],

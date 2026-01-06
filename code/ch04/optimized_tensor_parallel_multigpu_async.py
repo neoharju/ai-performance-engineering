@@ -34,11 +34,11 @@ from core.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-_DEFAULT_BATCH = 4
-_DEFAULT_SEQ = 2048
-_DEFAULT_HIDDEN = 3072
+_DEFAULT_BATCH = 8
+_DEFAULT_SEQ = 4096
+_DEFAULT_HIDDEN = 8  # Keep hidden small so all-gather cost is visible.
 _DEFAULT_LAYERS = 4
-_AUX_PASSES = 4
+_AUX_PASSES = 2
 
 
 def _resolve_world_size() -> int:
@@ -114,9 +114,12 @@ def _run_worker(
 
     shard_layers, proj_layers, aux_layers = _build_layers(hidden, hidden_per_rank, num_layers, device)
     inputs = torch.randn(batch, seq_length, hidden, device=device, dtype=torch.bfloat16)
-    gather_list = [torch.empty(batch, seq_length, hidden_per_rank, device=device, dtype=torch.bfloat16)
-                   for _ in range(world_size)]
-    comm_stream = torch.cuda.Stream()
+    gather_list = [
+        torch.empty(batch, seq_length, hidden_per_rank, device=device, dtype=torch.bfloat16)
+        for _ in range(world_size)
+    ]
+    full_out = torch.empty(batch, seq_length, hidden, device=device, dtype=torch.bfloat16)
+    comm_stream = torch.cuda.Stream(device=device)
 
     def _step() -> None:
         x = inputs
@@ -129,7 +132,8 @@ def _run_worker(
             for _ in range(_AUX_PASSES):
                 aux_out = aux_layers[layer_idx](aux_out)
             work.wait()
-            full_out = torch.cat(gather_list, dim=-1)
+            torch.cuda.current_stream().wait_stream(comm_stream)
+            torch.cat(gather_list, dim=-1, out=full_out)
             proj_out = proj_layers[layer_idx](full_out)
             x = proj_out + aux_out
 
@@ -155,8 +159,8 @@ def _run_worker(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Optimized tensor parallel benchmark")
-    parser.add_argument("--iters", type=int, default=3)
-    parser.add_argument("--warmup", type=int, default=5)
+    parser.add_argument("--iters", type=int, default=50)
+    parser.add_argument("--warmup", type=int, default=10)
     parser.add_argument("--batch-size", type=int, default=_DEFAULT_BATCH)
     parser.add_argument("--seq-length", type=int, default=_DEFAULT_SEQ)
     parser.add_argument(
@@ -276,8 +280,8 @@ class OptimizedTensorParallelBenchmark(VerificationPayloadMixin, BaseBenchmark):
         return BenchmarkConfig(
             launch_via=LaunchVia.TORCHRUN,
             nproc_per_node=_resolve_world_size(),
-            iterations=3,
-            warmup=5,
+            iterations=50,
+            warmup=10,
             multi_gpu_required=True,
             measurement_timeout_seconds=900,
         )

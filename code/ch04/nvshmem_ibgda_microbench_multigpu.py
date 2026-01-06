@@ -25,11 +25,11 @@ def _default_symmetric_size() -> str:
 class NvshmemIbgdaMicrobench(CudaBinaryBenchmark):
     """Wrap the nvshmem_ibgda_microbench CUDA binary for the harness."""
     multi_gpu_required = True
-    preferred_ncu_replay_mode = "kernel"
-    # Keep NCU kernel replay bounded for multi-process microbenchmarks.
+    preferred_ncu_replay_mode = "range"
+    # Keep NCU replay bounded for multi-process microbenchmarks.
     ncu_env_overrides = {
         "AISP_NCU_PROFILE_ITERS": "200",
-        "AISP_NCU_PROFILE_CTAS": "128",
+        "AISP_NCU_PROFILE_CTAS": "4",
     }
 
     def __init__(
@@ -144,7 +144,7 @@ class NvshmemIbgdaMicrobench(CudaBinaryBenchmark):
             env.update(
                 {
                     "NVSHMEM_IB_ENABLE_IBGDA": "0",
-                    "NVSHMEM_IBGDA_NUM_REQUESTS_IN_BATCH": "32",
+                    "NVSHMEM_IBGDA_NUM_REQUESTS_IN_BATCH": "1",
                 }
             )
         return env

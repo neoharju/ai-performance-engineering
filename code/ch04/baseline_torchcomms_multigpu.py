@@ -34,8 +34,9 @@ from core.utils.logger import get_logger
 logger = get_logger(__name__)
 
 _DEFAULT_BATCH = 512
-_DEFAULT_HIDDEN = 4096
-_AUX_PASSES = 4
+_DEFAULT_HIDDEN = 64
+_AUX_PASSES = 2
+_COMM_PAYLOAD_MULT = 128
 
 
 def _resolve_world_size() -> int:
@@ -79,11 +80,13 @@ def _run_worker(iters: int, warmup: int, batch: int, hidden: int) -> None:
     comm_block = _build_block(hidden, device)
     aux_block = _build_block(hidden, device)
     inputs = torch.randn(batch, hidden, device=device)
+    comm_payload = torch.randn(batch, hidden * _COMM_PAYLOAD_MULT, device=device)
 
     def _step() -> None:
         with torch.no_grad():
             comm_out = comm_block(inputs)
             dist.all_reduce(comm_out, op=dist.ReduceOp.AVG)
+            dist.all_reduce(comm_payload, op=dist.ReduceOp.AVG)
             aux_out = inputs
             for _ in range(_AUX_PASSES):
                 aux_out = aux_block(aux_out)

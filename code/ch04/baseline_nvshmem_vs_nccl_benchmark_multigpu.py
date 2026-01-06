@@ -41,16 +41,20 @@ class NVSHMEMVsNCCLBenchmarkMultiGPU(VerificationPayloadMixin, BaseBenchmark):
 
     def benchmark_fn(self) -> None:
         args = argparse.Namespace(
-            min_bytes=1024,
-            max_bytes=256 * 1024,
-            steps=6,
-            iterations=200,
+            min_bytes=1048576,
+            max_bytes=1048576,
+            steps=1,
+            iterations=500,
             mode="nccl",
         )
         original_disable = os.environ.get("AISP_DISABLE_SYMMETRIC_MEMORY")
+        original_overlap = os.environ.get("AISP_BROADCAST_OVERLAP")
+        original_compute = os.environ.get("AISP_BROADCAST_COMPUTE_PASSES")
         init_distributed()
         try:
             os.environ["AISP_DISABLE_SYMMETRIC_MEMORY"] = "1"
+            os.environ["AISP_BROADCAST_OVERLAP"] = "0"
+            os.environ["AISP_BROADCAST_COMPUTE_PASSES"] = "8"
             benchmark(args)
         finally:
             if dist.is_initialized():
@@ -59,6 +63,14 @@ class NVSHMEMVsNCCLBenchmarkMultiGPU(VerificationPayloadMixin, BaseBenchmark):
                 os.environ.pop("AISP_DISABLE_SYMMETRIC_MEMORY", None)
             else:
                 os.environ["AISP_DISABLE_SYMMETRIC_MEMORY"] = original_disable
+            if original_overlap is None:
+                os.environ.pop("AISP_BROADCAST_OVERLAP", None)
+            else:
+                os.environ["AISP_BROADCAST_OVERLAP"] = original_overlap
+            if original_compute is None:
+                os.environ.pop("AISP_BROADCAST_COMPUTE_PASSES", None)
+            else:
+                os.environ["AISP_BROADCAST_COMPUTE_PASSES"] = original_compute
 
     def capture_verification_payload(self) -> None:
         if self._verify_input is None:

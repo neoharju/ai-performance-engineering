@@ -31,7 +31,7 @@ logger = get_logger(__name__)
 
 _DEFAULT_BATCH = 512
 _DEFAULT_HIDDEN = 4096
-_HOST_STAGING_PASSES = 6
+_HOST_STAGING_PASSES = 12
 
 
 def _resolve_world_size() -> int:

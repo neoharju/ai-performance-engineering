@@ -112,10 +112,18 @@ def _measure_nccl_broadcast(bytes_per_rank: int, iterations: int) -> BenchmarkRe
     numel = max(1, numel)
 
     tensor = torch.randn(numel, device=device, dtype=dtype)
+    compute = torch.randn_like(tensor)
+    overlap_compute = os.environ.get("AISP_BROADCAST_OVERLAP", "").lower() in {"1", "true", "yes"}
+    compute_passes = max(1, int(os.environ.get("AISP_BROADCAST_COMPUTE_PASSES", "1")))
+    comm_stream = torch.cuda.Stream(device=device) if overlap_compute else None
+    done = torch.cuda.Event() if overlap_compute and comm_stream is not None else None
+    done = torch.cuda.Event() if overlap_compute and comm_stream is not None else None
 
     # Warmup
     for _ in range(5):
         dist.broadcast(tensor, src=0)
+        for _ in range(compute_passes):
+            compute.mul_(1.0001)
 
     torch.cuda.synchronize(device)
     start = torch.cuda.Event(enable_timing=True)
@@ -123,7 +131,17 @@ def _measure_nccl_broadcast(bytes_per_rank: int, iterations: int) -> BenchmarkRe
 
     start.record()
     for _ in range(iterations):
-        dist.broadcast(tensor, src=0)
+        if overlap_compute and comm_stream is not None:
+            with torch.cuda.stream(comm_stream):
+                work = dist.broadcast(tensor, src=0, async_op=True)
+            for _ in range(compute_passes):
+                compute.mul_(1.0001)
+            work.wait()
+            torch.cuda.current_stream().wait_stream(comm_stream)
+        else:
+            dist.broadcast(tensor, src=0)
+            for _ in range(compute_passes):
+                compute.mul_(1.0001)
     end.record()
     torch.cuda.synchronize(device)
 
@@ -144,6 +162,7 @@ def _measure_symmetric_broadcast(bytes_per_rank: int, iterations: int) -> Option
     numel = max(1, numel)
 
     local = torch.randn(numel, device=device, dtype=dtype)
+    compute = torch.randn_like(local)
     sym_handle = maybe_create_symmetric_memory_handle(local)
     if sym_handle is None:
         return None
@@ -153,12 +172,17 @@ def _measure_symmetric_broadcast(bytes_per_rank: int, iterations: int) -> Option
     remote_buffers = []
     if rank == 0:
         remote_buffers = [sym_handle.get_buffer(peer) for peer in range(1, dist.get_world_size())]
+    overlap_compute = os.environ.get("AISP_BROADCAST_OVERLAP", "").lower() in {"1", "true", "yes"}
+    compute_passes = max(1, int(os.environ.get("AISP_BROADCAST_COMPUTE_PASSES", "1")))
+    comm_stream = torch.cuda.Stream(device=device) if overlap_compute else None
 
     for _ in range(5):
         if rank == 0:
             for remote in remote_buffers:
                 remote.copy_(buffer, non_blocking=True)
         torch.cuda.synchronize(device)
+        for _ in range(compute_passes):
+            compute.mul_(1.0001)
     dist.barrier()
 
     start = torch.cuda.Event(enable_timing=True)
@@ -167,10 +191,24 @@ def _measure_symmetric_broadcast(bytes_per_rank: int, iterations: int) -> Option
 
     start.record()
     for _ in range(iterations):
-        if rank == 0:
-            for remote in remote_buffers:
-                remote.copy_(buffer, non_blocking=True)
-        torch.cuda.synchronize(device)
+        if overlap_compute and comm_stream is not None and done is not None:
+            if rank == 0:
+                with torch.cuda.stream(comm_stream):
+                    for remote in remote_buffers:
+                        remote.copy_(buffer, non_blocking=True)
+                    done.record()
+            else:
+                done.record()
+            for _ in range(compute_passes):
+                compute.mul_(1.0001)
+            torch.cuda.current_stream().wait_event(done)
+        else:
+            if rank == 0:
+                for remote in remote_buffers:
+                    remote.copy_(buffer, non_blocking=True)
+            torch.cuda.synchronize(device)
+            for _ in range(compute_passes):
+                compute.mul_(1.0001)
     end.record()
     torch.cuda.synchronize(device)
     dist.barrier()

@@ -28,6 +28,33 @@ def parse_args():
         help="PowerSGD low-rank approximation rank.",
     )
     parser.add_argument(
+        "--powersgd-start-iter",
+        type=int,
+        default=2,
+        help="Iteration to start PowerSGD compression (>=2 required).",
+    )
+    parser.add_argument(
+        "--powersgd-min-compression-rate",
+        type=int,
+        default=1,
+        help="Minimum compression rate required to apply PowerSGD.",
+    )
+    parser.add_argument(
+        "--powersgd-batch-same-shape",
+        action="store_true",
+        help="Batch tensors with same shape during PowerSGD compression.",
+    )
+    parser.add_argument(
+        "--powersgd-disable-error-feedback",
+        action="store_true",
+        help="Disable error feedback in PowerSGD to reduce overhead.",
+    )
+    parser.add_argument(
+        "--powersgd-disable-warm-start",
+        action="store_true",
+        help="Disable PowerSGD warm start to reduce overhead.",
+    )
+    parser.add_argument(
         "--extra-grad-mb",
         type=int,
         default=64,
@@ -159,7 +186,12 @@ def main():
     if args.extra_grad_mb > 0:
         elem_bytes = torch.tensor([], dtype=torch.bfloat16).element_size()
         numel = (args.extra_grad_mb * 1024 * 1024) // elem_bytes
-        extra_param = torch.nn.Parameter(torch.zeros(numel, device=device, dtype=torch.bfloat16))
+        rows = min(4096, max(1, numel))
+        cols = max(1, numel // rows)
+        numel = rows * cols
+        extra_param = torch.nn.Parameter(
+            torch.zeros((rows, cols), device=device, dtype=torch.bfloat16)
+        )
         model.register_parameter("extra_grad_payload", extra_param)
 
     comm_buffer = None
@@ -211,8 +243,11 @@ def main():
             state = powerSGD.PowerSGDState(
                 process_group=dist.group.WORLD,
                 matrix_approximation_rank=args.powersgd_rank,
-                start_powerSGD_iter=2,
-                min_compression_rate=1,
+                start_powerSGD_iter=args.powersgd_start_iter,
+                min_compression_rate=args.powersgd_min_compression_rate,
+                use_error_feedback=not args.powersgd_disable_error_feedback,
+                warm_start=not args.powersgd_disable_warm_start,
+                batch_tensors_with_same_shape=args.powersgd_batch_same_shape,
             )
             ddp_model.register_comm_hook(state, powerSGD.powerSGD_hook)
 

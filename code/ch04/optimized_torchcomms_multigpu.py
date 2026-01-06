@@ -1,6 +1,6 @@
-"""optimized_torchcomms_multigpu.py - Modern torchcomms API patterns (PyTorch 2.10+).
+"""optimized_torchcomms_multigpu.py - Async collectives with compute/communication overlap.
 
-Demonstrates async-first functional collectives with compute/communication overlap.
+Demonstrates async NCCL all-reduce overlapped with compute.
 This benchmark is launched via torchrun and requires >=2 GPUs.
 """
 
@@ -34,16 +34,9 @@ from core.utils.logger import get_logger
 logger = get_logger(__name__)
 
 _DEFAULT_BATCH = 512
-_DEFAULT_HIDDEN = 4096
-_AUX_PASSES = 4
-
-try:
-    from torch.distributed._functional_collectives import all_reduce as functional_all_reduce
-except ImportError as exc:  # pragma: no cover - torchcomms required for this benchmark
-    functional_all_reduce = None
-    _TORCHCOMMS_IMPORT_ERROR = exc
-else:
-    _TORCHCOMMS_IMPORT_ERROR = None
+_DEFAULT_HIDDEN = 64
+_AUX_PASSES = 2
+_COMM_PAYLOAD_MULT = 128
 
 
 def _init_distributed() -> tuple[int, int, int]:
@@ -56,11 +49,6 @@ def _init_distributed() -> tuple[int, int, int]:
     rank = dist.get_rank()
     world_size = dist.get_world_size()
     return rank, world_size, local_rank
-
-
-def _require_torchcomms() -> None:
-    if functional_all_reduce is None:
-        raise RuntimeError("torchcomms functional collectives are required for optimized_torchcomms_multigpu")
 
 
 def _resolve_world_size() -> int:
@@ -81,7 +69,6 @@ def _build_block(hidden: int, device: torch.device) -> nn.Sequential:
 
 
 def _run_worker(iters: int, warmup: int, batch: int, hidden: int) -> None:
-    _require_torchcomms()
     rank, world_size, local_rank = _init_distributed()
     if world_size < 2:
         raise RuntimeError("optimized_torchcomms_multigpu requires >=2 GPUs.")
@@ -93,23 +80,22 @@ def _run_worker(iters: int, warmup: int, batch: int, hidden: int) -> None:
     comm_block = _build_block(hidden, device)
     aux_block = _build_block(hidden, device)
     inputs = torch.randn(batch, hidden, device=device)
-    comm_stream = torch.cuda.Stream()
-
+    comm_payload = torch.randn(batch, hidden * _COMM_PAYLOAD_MULT, device=device)
+    comm_stream = torch.cuda.Stream(device=device)
     def _step() -> None:
         with torch.no_grad():
             comm_out = comm_block(inputs)
             comm_stream.wait_stream(torch.cuda.current_stream())
             with torch.cuda.stream(comm_stream):
-                reduced = functional_all_reduce(
-                    comm_out,
-                    reduceOp="avg",
-                    group=dist.group.WORLD,
-                )
+                work = dist.all_reduce(comm_out, op=dist.ReduceOp.AVG, async_op=True)
+                payload_work = dist.all_reduce(comm_payload, op=dist.ReduceOp.AVG, async_op=True)
             aux_out = inputs
             for _ in range(_AUX_PASSES):
                 aux_out = aux_block(aux_out)
+            work.wait()
+            payload_work.wait()
             torch.cuda.current_stream().wait_stream(comm_stream)
-            _ = reduced + aux_out
+            _ = comm_out + aux_out
 
     for _ in range(max(warmup, 0)):
         _step()

@@ -54,7 +54,8 @@ class OptimizedNVSHMEMTrainingPatternsMultiGPU(VerificationPayloadMixin, BaseBen
     def setup(self) -> None:
         if torch.cuda.device_count() < 2:
             raise RuntimeError("SKIPPED: nvshmem_training_patterns requires >=2 GPUs")
-        _configure_blackwell_nccl()
+        if symmetric_memory_available():
+            _configure_blackwell_nccl()
         torch.manual_seed(42)
         torch.cuda.manual_seed_all(42)
         self._verify_input = torch.randn(64, 64, device=self.device, dtype=torch.float32)
@@ -62,9 +63,11 @@ class OptimizedNVSHMEMTrainingPatternsMultiGPU(VerificationPayloadMixin, BaseBen
     def benchmark_fn(self) -> None:
         original_argv = sys.argv[:]
         original_disable = os.environ.get("AISP_DISABLE_SYMMETRIC_MEMORY")
+        original_grad = os.environ.get("AISP_GRAD_SYNC_NAIVE")
         try:
             os.environ["AISP_DISABLE_SYMMETRIC_MEMORY"] = "0" if symmetric_memory_available() else "1"
-            sys.argv = [original_argv[0], "--pattern", "pipeline", "--benchmark"]
+            os.environ["AISP_GRAD_SYNC_NAIVE"] = "0"
+            sys.argv = [original_argv[0], "--pattern", "gradient", "--benchmark"]
             nvshmem_train_patterns_main()
         finally:
             sys.argv = original_argv
@@ -72,6 +75,10 @@ class OptimizedNVSHMEMTrainingPatternsMultiGPU(VerificationPayloadMixin, BaseBen
                 os.environ.pop("AISP_DISABLE_SYMMETRIC_MEMORY", None)
             else:
                 os.environ["AISP_DISABLE_SYMMETRIC_MEMORY"] = original_disable
+            if original_grad is None:
+                os.environ.pop("AISP_GRAD_SYNC_NAIVE", None)
+            else:
+                os.environ["AISP_GRAD_SYNC_NAIVE"] = original_grad
 
     def capture_verification_payload(self) -> None:
         if self._verify_input is None:

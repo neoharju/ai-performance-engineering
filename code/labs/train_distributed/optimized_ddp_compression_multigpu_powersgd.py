@@ -1,4 +1,4 @@
-"""Optimized DDP training without compression on fast interconnect (multi-GPU)."""
+"""Optimized DDP training with PowerSGD compression (multi-GPU)."""
 
 from __future__ import annotations
 
@@ -14,13 +14,20 @@ def get_benchmark():
             "--compression",
             "powersgd",
             "--extra-grad-mb",
-            "4096",
+            "2048",
             "--batch-size",
-            "2",
+            "1",
             "--bucket-cap-mb",
-            "256",
+            "512",
             "--powersgd-rank",
             "1",
+            "--powersgd-start-iter",
+            "2",
+            "--powersgd-min-compression-rate",
+            "2",
+            "--powersgd-batch-same-shape",
+            "--powersgd-disable-error-feedback",
+            "--powersgd-disable-warm-start",
         ],
         config_arg_map={"iterations": "--steps"},
         target_label="labs/train_distributed:ddp_compression_multigpu_powersgd",

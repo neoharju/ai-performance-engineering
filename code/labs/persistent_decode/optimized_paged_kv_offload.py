@@ -27,20 +27,22 @@ from labs.persistent_decode.paged_kv_offload_common import PagedKVConfig, PagedK
 
 
 def get_benchmark() -> PagedKVOffloadBenchmark:
+    enable_prefetch = torch.cuda.is_available()
     cfg = PagedKVConfig(
         batch_size=4,
         num_heads=16,
         head_dim=128,
-        max_seq_len=8192,
+        max_seq_len=32768,
         page_tokens=4096,
-        decode_tokens=2,
+        decode_tokens=4,
         use_pinned_stage=True,
         use_async_stream=True,
-        use_memmap=False,
+        use_memmap=True,
         prefer_fp8=True,
         require_fused_fp8=False,
         fallback_dtype=torch.float16,
-        prefetch_next_page=True,
+        prefetch_next_page=enable_prefetch,
+        use_direct_h2d=True,
     )
     return PagedKVOffloadBenchmark(cfg, label="paged_kv_offload_optimized")
 

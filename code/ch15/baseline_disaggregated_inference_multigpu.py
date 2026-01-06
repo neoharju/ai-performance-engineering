@@ -37,19 +37,20 @@ from core.optimization.moe_inference import (  # noqa: E402
     MoeInferenceConfig,
     SimpleMoEGPT,
     allocate_kv_cache,
+    env_override_int,
 )
 
 @dataclass(frozen=True)
 class DisaggConfig:
     vocab_size: int = 16384
     hidden_size: int = 768
-    ffn_size: int = 3072
-    num_layers: int = 4
-    num_moe_layers: int = 2
-    num_experts: int = 16
+    ffn_size: int = 512
+    num_layers: int = 1
+    num_moe_layers: int = 1
+    num_experts: int = 4
     top_k: int = 2
     batch_size: int = 2
-    requests_per_rank: int = 24
+    requests_per_rank: int = 96
     context_window: int = 1024
     decode_tokens: int = 32
     dtype: torch.dtype = torch.bfloat16
@@ -82,6 +83,23 @@ def _build_moe_config(cfg: DisaggConfig) -> MoeInferenceConfig:
         context_window=cfg.context_window,
         decode_tokens=cfg.decode_tokens,
         router_noise=0.0,
+        dtype=cfg.dtype,
+    )
+
+
+def _apply_profile_overrides(cfg: DisaggConfig) -> DisaggConfig:
+    return DisaggConfig(
+        vocab_size=cfg.vocab_size,
+        hidden_size=cfg.hidden_size,
+        ffn_size=cfg.ffn_size,
+        num_layers=cfg.num_layers,
+        num_moe_layers=cfg.num_moe_layers,
+        num_experts=cfg.num_experts,
+        top_k=cfg.top_k,
+        batch_size=env_override_int("AISP_NCU_PROFILE_BATCH", cfg.batch_size),
+        requests_per_rank=env_override_int("AISP_NCU_PROFILE_REQUESTS", cfg.requests_per_rank),
+        context_window=env_override_int("AISP_NCU_PROFILE_CONTEXT", cfg.context_window),
+        decode_tokens=env_override_int("AISP_NCU_PROFILE_DECODE", cfg.decode_tokens),
         dtype=cfg.dtype,
     )
 
@@ -164,6 +182,7 @@ def _run_torchrun_worker(
     iters: int,
     warmup: int,
 ) -> None:
+    cfg = _apply_profile_overrides(cfg)
     rank, world_size, device = _init_distributed()
     if world_size < 2:
         raise RuntimeError("disaggregated_inference_multigpu requires >=2 GPUs.")
@@ -238,11 +257,11 @@ def _run_torchrun_worker(
             dtype=torch.long,
         )
 
-    recv_kv_buffers: List[torch.Tensor] = []
-    recv_seed_buffers: List[torch.Tensor] = []
+    recv_kv_bufs: List[torch.Tensor] = []
+    recv_seed_bufs: List[torch.Tensor] = []
     kv_caches: List[torch.Tensor] = []
     if overlap and not is_prefill:
-        recv_kv_buffers = [
+        recv_kv_bufs = [
             torch.empty(
                 (cfg.batch_size, cfg.context_window, cfg.hidden_size),
                 device=device,
@@ -250,8 +269,12 @@ def _run_torchrun_worker(
             )
             for _ in range(cfg.requests_per_rank)
         ]
-        recv_seed_buffers = [
-            torch.empty((cfg.batch_size, 1), device=device, dtype=torch.long)
+        recv_seed_bufs = [
+            torch.empty(
+                (cfg.batch_size, 1),
+                device=device,
+                dtype=torch.long,
+            )
             for _ in range(cfg.requests_per_rank)
         ]
         kv_caches = [
@@ -268,21 +291,25 @@ def _run_torchrun_worker(
     def run_iteration() -> List[torch.Tensor]:
         if is_prefill:
             if overlap:
-                handles = []
-                inflight_tensors: List[torch.Tensor] = []
+                pending: List[List[dist.Work]] = []
+                max_inflight = min(8, cfg.requests_per_rank)
                 with torch.no_grad():
                     for req_idx in range(cfg.requests_per_rank):
                         request_prompt = prompts[req_idx]
                         hidden, logits = model.prefill(request_prompt)
                         seed_tokens = torch.argmax(logits[:, -1, :], dim=-1, keepdim=True)
-                        inflight_tensors.append(hidden.contiguous())
-                        inflight_tensors.append(seed_tokens.contiguous())
                         ready = torch.cuda.Event()
                         ready.record()
-                        handles.extend(
-                            _batch_isend(inflight_tensors[-2], inflight_tensors[-1], ready_event=ready)
+                        handles = _batch_isend(
+                            hidden.contiguous(),
+                            seed_tokens.contiguous(),
+                            ready_event=ready,
                         )
-                _wait_handles(handles)
+                        pending.append(handles)
+                        if len(pending) >= max_inflight:
+                            _wait_handles(pending.pop(0))
+                for handles in pending:
+                    _wait_handles(handles)
             else:
                 kv_chunks, seed_chunks = _run_prefill(cfg, model, prompts)
                 for kv_prompt, seed_tokens in zip(kv_chunks, seed_chunks):
@@ -293,17 +320,26 @@ def _run_torchrun_worker(
             return []
 
         if overlap:
-            recv_entries: List[Tuple[List[dist.Work], torch.Tensor, torch.Tensor]] = []
-            for kv_buf, seed_buf in zip(recv_kv_buffers, recv_seed_buffers):
-                handles = _batch_irecv(kv_buf, seed_buf)
-                recv_entries.append((handles, kv_buf, seed_buf))
+            if not recv_kv_bufs or not recv_seed_bufs:
+                raise RuntimeError("Overlap buffers not initialized")
             outputs: List[torch.Tensor] = []
+            pending: List[Optional[List[dist.Work]]] = [None] * cfg.requests_per_rank
+            pending[0] = _batch_irecv(recv_kv_bufs[0], recv_seed_bufs[0])
             with torch.no_grad():
-                for req_idx, (handles, kv_buf, seed_buf) in enumerate(recv_entries):
+                for req_idx in range(cfg.requests_per_rank):
+                    next_idx = req_idx + 1
+                    if next_idx < cfg.requests_per_rank:
+                        pending[next_idx] = _batch_irecv(
+                            recv_kv_bufs[next_idx],
+                            recv_seed_bufs[next_idx],
+                        )
+                    handles = pending[req_idx]
+                    if handles is None:
+                        raise RuntimeError("Missing receive handle in overlap pipeline")
                     _wait_handles(handles)
                     kv_cache = kv_caches[req_idx]
-                    kv_cache[:, : cfg.context_window] = kv_buf
-                    tokens = seed_buf
+                    kv_cache[:, : cfg.context_window] = recv_kv_bufs[req_idx]
+                    tokens = recv_seed_bufs[req_idx]
                     for step in range(cfg.decode_tokens):
                         _, decode_logits = model.decode(
                             tokens,
@@ -366,10 +402,16 @@ class _DisaggregatedInferenceMultiGPUBenchmark(VerificationPayloadMixin, BaseBen
     """Shared multi-GPU disaggregated inference harness."""
 
     multi_gpu_required = True
+    ncu_env_overrides = {
+        "AISP_NCU_PROFILE_REQUESTS": "4",
+        "AISP_NCU_PROFILE_CONTEXT": "256",
+        "AISP_NCU_PROFILE_DECODE": "8",
+        "AISP_NCU_PROFILE_BATCH": "1",
+    }
 
     def __init__(self, *, overlap: bool, label: str) -> None:
         super().__init__()
-        self.cfg = DisaggConfig()
+        self.cfg = _apply_profile_overrides(DisaggConfig())
         self.world_size = _resolve_world_size()
         if self.world_size % 2 != 0:
             raise RuntimeError("world_size must be even for disaggregated inference")

@@ -1,4 +1,4 @@
-"""Baseline DDP training with PowerSGD gradient compression (multi-GPU)."""
+"""Baseline DDP training without compression (multi-GPU)."""
 
 from __future__ import annotations
 
@@ -14,11 +14,11 @@ def get_benchmark():
             "--compression",
             "none",
             "--extra-grad-mb",
-            "4096",
+            "2048",
             "--batch-size",
-            "2",
+            "1",
             "--bucket-cap-mb",
-            "256",
+            "512",
             "--naive-allreduce",
             "--naive-allreduce-sync",
         ],

@@ -40,9 +40,11 @@ class NVSHMEMTrainingPatternsMultiGPU(VerificationPayloadMixin, BaseBenchmark):
     def benchmark_fn(self) -> None:
         original_argv = sys.argv[:]
         original_disable = os.environ.get("AISP_DISABLE_SYMMETRIC_MEMORY")
+        original_grad = os.environ.get("AISP_GRAD_SYNC_NAIVE")
         try:
             os.environ["AISP_DISABLE_SYMMETRIC_MEMORY"] = "1"
-            sys.argv = [original_argv[0], "--pattern", "pipeline", "--benchmark"]
+            os.environ["AISP_GRAD_SYNC_NAIVE"] = "1"
+            sys.argv = [original_argv[0], "--pattern", "gradient", "--benchmark"]
             nvshmem_train_patterns_main()
         finally:
             sys.argv = original_argv
@@ -50,6 +52,10 @@ class NVSHMEMTrainingPatternsMultiGPU(VerificationPayloadMixin, BaseBenchmark):
                 os.environ.pop("AISP_DISABLE_SYMMETRIC_MEMORY", None)
             else:
                 os.environ["AISP_DISABLE_SYMMETRIC_MEMORY"] = original_disable
+            if original_grad is None:
+                os.environ.pop("AISP_GRAD_SYNC_NAIVE", None)
+            else:
+                os.environ["AISP_GRAD_SYNC_NAIVE"] = original_grad
 
     def capture_verification_payload(self) -> None:
         if self._verify_input is None:

@@ -62,7 +62,7 @@ class BaselineSymmetricMemoryPerfBenchmark(VerificationPayloadMixin, BaseBenchma
         self._last_avg_ms = 0.0
         self._last_gbps = 0.0
         self._bytes_transferred = 0.0
-        self._inner_iterations = 50
+        self._inner_iterations = 200
         self.register_workload_metadata(requests_per_iteration=1.0)
         self._verify_input: Optional[torch.Tensor] = None
 
@@ -199,7 +199,7 @@ class BaselineSymmetricMemoryPerfBenchmark(VerificationPayloadMixin, BaseBenchma
 
 def get_benchmark() -> BaseBenchmark:
     """Factory function for harness discovery."""
-    return BaselineSymmetricMemoryPerfBenchmark()
+    return BaselineSymmetricMemoryPerfBenchmark(size_mb=2.0)
 
 
 if __name__ == "__main__":

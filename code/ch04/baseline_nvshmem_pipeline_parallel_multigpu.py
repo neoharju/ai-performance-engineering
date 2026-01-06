@@ -41,8 +41,10 @@ class NVSHMEMPipelineParallelMultiGPU(VerificationPayloadMixin, BaseBenchmark):
     def benchmark_fn(self) -> None:
         original_argv = sys.argv[:]
         original_disable = os.environ.get("AISP_DISABLE_SYMMEM_PIPELINE")
+        original_async = os.environ.get("AISP_SYMMEM_PIPELINE_ASYNC")
         try:
             os.environ["AISP_DISABLE_SYMMEM_PIPELINE"] = "1"
+            os.environ["AISP_SYMMEM_PIPELINE_ASYNC"] = "0"
             sys.argv = [
                 original_argv[0],
                 "--schedule",
@@ -50,11 +52,11 @@ class NVSHMEMPipelineParallelMultiGPU(VerificationPayloadMixin, BaseBenchmark):
                 "--batch-size",
                 "64",
                 "--num-microbatches",
-                "64",
+                "2",
                 "--seq-len",
-                "256",
+                "16",
                 "--hidden-dim",
-                "512",
+                "32",
             ]
             nvshmem_main()
         finally:
@@ -63,6 +65,10 @@ class NVSHMEMPipelineParallelMultiGPU(VerificationPayloadMixin, BaseBenchmark):
                 os.environ.pop("AISP_DISABLE_SYMMEM_PIPELINE", None)
             else:
                 os.environ["AISP_DISABLE_SYMMEM_PIPELINE"] = original_disable
+            if original_async is None:
+                os.environ.pop("AISP_SYMMEM_PIPELINE_ASYNC", None)
+            else:
+                os.environ["AISP_SYMMEM_PIPELINE_ASYNC"] = original_async
 
     def capture_verification_payload(self) -> None:
         if self._verify_input is None:

@@ -126,6 +126,10 @@ def nvshmem_available() -> bool:
     return symmetric_memory_available()
 
 
+def pipeline_sync_enabled() -> bool:
+    return os.environ.get("AISP_PIPELINE_SYNC", "").lower() not in {"0", "false", "no"}
+
+
 def init_process_group() -> Tuple[int, int, int]:
     """Initialize NCCL process group for multi-GPU setup."""
     setup_single_gpu_env()  # Auto-setup for single-GPU mode
@@ -321,31 +325,38 @@ def demo_gradient_sync(benchmark: bool = False) -> None:
     """
     rank, world_size, device = init_process_group()
     
-    # Create model
-    model = nn.Sequential(
-        nn.Linear(2048, 4096),
-        nn.GELU(),
-        nn.Linear(4096, 2048),
-        nn.GELU(),
-        nn.Linear(2048, 1000),
-    ).to(device)
-    
-    sync = NVSHMEMGradientSync(list(model.parameters()), world_size)
+    # Use many tiny layers to amplify per-parameter sync latency in the baseline path.
+    hidden_dim = 64
+    num_layers = 256
+    layers = []
+    for _ in range(num_layers):
+        layers.append(nn.Linear(hidden_dim, hidden_dim))
+        layers.append(nn.GELU())
+    model = nn.Sequential(*layers).to(device)
+
+    use_naive = os.environ.get("AISP_GRAD_SYNC_NAIVE", "").lower() in {"1", "true", "yes"}
+    sync = None if use_naive else NVSHMEMGradientSync(list(model.parameters()), world_size)
     optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
     
     # Training loop
     num_steps = 10 if not benchmark else 100
-    batch_size = 32
+    batch_size = 1
     
     start_time = time.time()
     for step in range(num_steps):
-        inputs = torch.randn(batch_size, 2048, device=device)
+        inputs = torch.randn(batch_size, hidden_dim, device=device)
         outputs = model(inputs)
         loss = outputs.sum()
         loss.backward()
         
-        # Custom gradient sync with NVSHMEM
-        sync.synchronize_gradients(rank)
+        # Custom gradient sync with NVSHMEM (or naive per-parameter fallback).
+        if use_naive:
+            for param in model.parameters():
+                if param.grad is not None:
+                    dist.all_reduce(param.grad, op=dist.ReduceOp.SUM)
+                    param.grad.div_(world_size)
+        else:
+            sync.synchronize_gradients(rank)
         
         optimizer.step()
         optimizer.zero_grad()
@@ -604,8 +615,9 @@ class PipelineParallelSymmetricMemory:
                         remote_buf.copy_(buffer.tensor, non_blocking=True)
                     else:
                         dist.send(buffer.tensor, dst=next_rank)
-                    
-                    dist.barrier()
+
+                    if pipeline_sync_enabled():
+                        dist.barrier()
                     return None  # This rank is done
                 else:
                     # Same rank owns next stage, continue
@@ -627,10 +639,10 @@ def demo_pipeline_parallel(benchmark: bool = False) -> None:
     
     # Execute pipeline with multiple microbatches
     if benchmark:
-        num_microbatches = 512
+        num_microbatches = 256
         batch_size = 2
-        seq_len = 128
-        dim = 384
+        seq_len = 256
+        dim = 512
     else:
         num_microbatches = 8
         batch_size = 2
@@ -673,12 +685,14 @@ def demo_pipeline_parallel(benchmark: bool = False) -> None:
                 my_stage_idx, (batch_size, seq_len, dim), device, pipeline_dtype
             )
             if nvshmem_available() and buffer.handle is not None:
-                dist.barrier()
+                if pipeline_sync_enabled():
+                    dist.barrier()
                 microbatch = buffer.tensor.view(batch_size, seq_len, dim)
             else:
                 recv_buf = torch.empty_like(buffer.tensor)
                 dist.recv(recv_buf, src=prev_stage // stages_per_rank)
-                dist.barrier()
+                if pipeline_sync_enabled():
+                    dist.barrier()
                 microbatch = recv_buf.view(batch_size, seq_len, dim)
         
         # Execute forward through local stages

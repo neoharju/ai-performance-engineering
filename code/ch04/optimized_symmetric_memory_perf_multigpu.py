@@ -10,7 +10,7 @@ import datetime
 import os
 import sys
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import torch
 import torch.distributed as dist
@@ -68,13 +68,16 @@ class OptimizedSymmetricMemoryPerfBenchmark(VerificationPayloadMixin, BaseBenchm
         self._local_buffers: Optional[torch.Tensor] = None
         self._peer_buffers: Optional[torch.Tensor] = None
         self._prev_buffers: Optional[torch.Tensor] = None
+        self._copy_streams: Optional[Tuple[torch.cuda.Stream, torch.cuda.Stream]] = None
+        self._buffer_events: Optional[List[Tuple[torch.cuda.Event, torch.cuda.Event]]] = None
+        self._buffer_inflight: Optional[List[bool]] = None
         self.rank = 0
         self.world_size = 1
         self.peer_rank = 0
         self._last_avg_ms = 0.0
         self._last_gbps = 0.0
         self._bytes_transferred = 0.0
-        self._inner_iterations = 50
+        self._inner_iterations = 200
         self.register_workload_metadata(requests_per_iteration=1.0)
         self._verify_input: Optional[torch.Tensor] = None
 
@@ -107,25 +110,57 @@ class OptimizedSymmetricMemoryPerfBenchmark(VerificationPayloadMixin, BaseBenchm
         self._prev_buffers = self.handle.get_buffer((self.rank - 1) % self.world_size).view(
             self._buffer_count, self.numel
         )
+        self._copy_streams = (
+            torch.cuda.Stream(device=device),
+            torch.cuda.Stream(device=device),
+        )
+        self._buffer_events = [
+            (torch.cuda.Event(enable_timing=False), torch.cuda.Event(enable_timing=False))
+            for _ in range(self._buffer_count)
+        ]
+        self._buffer_inflight = [False] * self._buffer_count
         
         torch.cuda.synchronize()
 
     def benchmark_fn(self) -> Optional[Dict[str, float]]:
         """Run direct peer copy via SymmetricMemory and measure performance."""
-        if self._local_buffers is None or self._peer_buffers is None or self._prev_buffers is None:
+        if (
+            self._local_buffers is None
+            or self._peer_buffers is None
+            or self._prev_buffers is None
+            or self._copy_streams is None
+            or self._buffer_events is None
+            or self._buffer_inflight is None
+        ):
             raise RuntimeError("Tensors not initialized")
 
+        stream_a, stream_b = self._copy_streams
         start = torch.cuda.Event(enable_timing=True)
         end = torch.cuda.Event(enable_timing=True)
+        default_stream = torch.cuda.current_stream()
+        stream_a.wait_stream(default_stream)
+        stream_b.wait_stream(default_stream)
 
         start.record()
         for idx in range(self._inner_iterations):
             buf_idx = idx % self._buffer_count
+            if self._buffer_inflight[buf_idx]:
+                evt_a, evt_b = self._buffer_events[buf_idx]
+                stream_a.wait_event(evt_a)
+                stream_b.wait_event(evt_b)
             local_buf = self._local_buffers[buf_idx]
             peer_buf = self._peer_buffers[buf_idx]
             prev_buf = self._prev_buffers[buf_idx]
-            peer_buf.copy_(local_buf, non_blocking=True)
-            local_buf.copy_(prev_buf, non_blocking=True)
+            with torch.cuda.stream(stream_a):
+                peer_buf.copy_(local_buf, non_blocking=True)
+            with torch.cuda.stream(stream_b):
+                local_buf.copy_(prev_buf, non_blocking=True)
+            evt_a, evt_b = self._buffer_events[buf_idx]
+            evt_a.record(stream_a)
+            evt_b.record(stream_b)
+            self._buffer_inflight[buf_idx] = True
+        default_stream.wait_stream(stream_a)
+        default_stream.wait_stream(stream_b)
         end.record()
         torch.cuda.synchronize()
         dist.barrier()
@@ -190,6 +225,9 @@ class OptimizedSymmetricMemoryPerfBenchmark(VerificationPayloadMixin, BaseBenchm
         self._local_buffers = None
         self._peer_buffers = None
         self._prev_buffers = None
+        self._copy_streams = None
+        self._buffer_events = None
+        self._buffer_inflight = None
         if dist.is_initialized():
             dist.barrier()
         if torch.cuda.is_available():
@@ -237,7 +275,7 @@ class OptimizedSymmetricMemoryPerfBenchmark(VerificationPayloadMixin, BaseBenchm
 
 def get_benchmark() -> BaseBenchmark:
     """Factory function for harness discovery."""
-    return OptimizedSymmetricMemoryPerfBenchmark()
+    return OptimizedSymmetricMemoryPerfBenchmark(size_mb=2.0)
 
 
 if __name__ == "__main__":
