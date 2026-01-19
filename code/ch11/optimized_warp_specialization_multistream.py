@@ -7,7 +7,15 @@ from ch11.stream_overlap_base import ConcurrentStreamOptimized
 
 class OptimizedWarpSpecializationStreamsBenchmark(ConcurrentStreamOptimized):
     def __init__(self) -> None:
-        super().__init__("warp_specialization_multistream")
+        # Keep num_streams at 2 (harness limit for custom streams)
+        # Increase num_elements and num_segments to better demonstrate overlap benefits
+        # Larger workload provides more opportunities for stream overlap
+        super().__init__(
+            "warp_specialization_multistream",
+            num_elements=48_000_000,  # Increased from 24M to 48M for better overlap demonstration
+            num_segments=32,  # Increased from 16 to better distribute work across 2 streams
+            num_streams=2,  # Keep at 2 (harness allows max 2 custom streams)
+        )
         # Application replay is unstable for this multistream profile on NCU.
         self.preferred_ncu_replay_mode = "kernel"
 

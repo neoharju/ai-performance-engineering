@@ -56,21 +56,21 @@ pre-commit==4.0.1
 pytest==8.3.4
 hypothesis==6.148.2  # Property-based testing for benchmark integrity tests
 pyyaml==6.0.2
-pydantic==2.9.0
-pydantic-core==2.23.2  # Required by pydantic 2.9.0
+pydantic==2.12.4
+pydantic-core==2.41.5  # Required by pydantic 2.12.4
 typer==0.12.0
 typer-slim[standard]==0.12.0  # Required by typer 0.12.0 and typer-cli 0.12.0
 click==8.1.7  # Pin to Typer-compatible Click to avoid CLI help/runtime errors
 rich==13.7.0
 
 # Model development helpers
-transformers==4.40.2
+transformers==4.56.0
 datasets==2.21.0
 accelerate==0.29.0
 sentencepiece==0.2.0
-tokenizers==0.19.1
+tokenizers==0.22.2
 # Pin dependencies to prevent conflicts
-huggingface-hub<1.0,>=0.19.3  # Required by transformers 4.40.2 and tokenizers 0.19.1
+huggingface-hub==0.34.6  # Required by transformers 4.56.0 and tokenizers 0.22.2
 
 # Optional model serving & optimization
 torchtitan==0.2.0

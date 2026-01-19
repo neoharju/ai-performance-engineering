@@ -1568,8 +1568,8 @@ echo ""
 echo "Installing pinned harness deps (pydantic/typer/typing_extensions) into system Python..."
 pip_install --no-cache-dir --upgrade --ignore-installed \
     click==8.1.7 \
-    pydantic==2.9.0 \
-    pydantic-core==2.23.2 \
+    pydantic==2.12.4 \
+    pydantic-core==2.41.5 \
     typing-extensions==4.15.0 \
     typer==0.12.0 \
     typer-slim[standard]==0.12.0
@@ -1615,7 +1615,7 @@ if [ -f "$TEMP_REQUIREMENTS" ]; then
             matplotlib==3.10.6 seaborn==0.13.2 tensorboard==2.20.0 wandb==0.22.0 plotly==6.3.0 bokeh==3.8.0 dash==3.2.0 \
             click==8.1.7 \
             jupyter==1.1.1 ipykernel==6.30.1 black==25.9.0 flake8==7.3.0 mypy==1.18.2 pytest==8.3.4 typer==0.12.0 rich==13.7.0 \
-            transformers==4.40.2 datasets==2.21.0 sentencepiece==0.2.0 tokenizers==0.19.1 \
+            transformers==4.56.0 datasets==2.21.0 sentencepiece==0.2.0 tokenizers==0.22.2 \
             onnx==1.19.0 \
             py-spy==0.4.1 memory-profiler==0.61.0 line-profiler==5.0.0 pyinstrument==5.1.1 snakeviz==2.2.2 \
             optuna==4.5.0 hyperopt==0.2.7 ray==2.49.2 \
@@ -1633,7 +1633,7 @@ else
         matplotlib==3.10.6 seaborn==0.13.2 tensorboard==2.20.0 wandb==0.22.0 plotly==6.3.0 bokeh==3.8.0 dash==3.2.0 \
         click==8.1.7 \
         jupyter==1.1.1 ipykernel==6.30.1 black==25.9.0 flake8==7.3.0 mypy==1.18.2 pytest==8.3.4 typer==0.12.0 rich==13.7.0 \
-        transformers==4.40.2 datasets==2.21.0 sentencepiece==0.2.0 tokenizers==0.19.1 \
+        transformers==4.56.0 datasets==2.21.0 sentencepiece==0.2.0 tokenizers==0.22.2 \
         onnx==1.19.0 \
         py-spy==0.4.1 memory-profiler==0.61.0 line-profiler==5.0.0 pyinstrument==5.1.1 snakeviz==2.2.2 \
         optuna==4.5.0 hyperopt==0.2.7 ray==2.49.2 \
@@ -1843,7 +1843,7 @@ fi
 pip_install --no-cache-dir --upgrade --ignore-installed --no-deps "fsspec[http]==2024.6.1" || {
     echo "Warning: failed to pin fsspec[http]==2024.6.1"
 }
-pip_install --no-cache-dir --upgrade --ignore-installed --no-deps tokenizers==0.19.1 huggingface-hub==0.23.2 onnx==1.19.0 onnxscript==0.1.0 einops==0.8.0 || {
+pip_install --no-cache-dir --upgrade --ignore-installed --no-deps tokenizers==0.22.2 huggingface-hub==0.34.6 onnx==1.19.0 onnxscript==0.1.0 einops==0.8.0 || {
     echo "Warning: failed to pin tokenizers/huggingface-hub/onnx/onnxscript/einops"
 }
 
@@ -3323,8 +3323,8 @@ echo ""
 echo "Reinforcing final dependency pins (HF + TE runtime)..."
 pip_uninstall -y tokenizers huggingface-hub onnx onnxscript einops fsspec >/dev/null 2>&1 || true
 pip_install --no-cache-dir --force-reinstall --ignore-installed --no-deps \
-    tokenizers==0.19.1 \
-    huggingface-hub==0.23.2 \
+    tokenizers==0.22.2 \
+    huggingface-hub==0.34.6 \
     onnx==1.19.0 \
     onnxscript==0.1.0 \
     einops==0.8.0 \
@@ -3515,6 +3515,29 @@ if ! pip_install --no-cache-dir --upgrade gpt-oss; then
     echo "ERROR: Failed to install gpt-oss package"
     exit 1
 fi
-if ! python3 -m gpt_oss.chat "${GPT_OSS_MODEL_DIR}"; then
+TRITON_KERNELS_SPEC="${TRITON_KERNELS_SPEC:-triton-kernels==0.1.0}"
+if ! pip_install --no-cache-dir --upgrade --no-deps "${TRITON_KERNELS_SPEC}"; then
+    echo "WARNING: Failed to install ${TRITON_KERNELS_SPEC}; gpt_oss chat may not work."
+fi
+GPT_OSS_BACKEND="${GPT_OSS_BACKEND:-triton}"
+if [ "${GPT_OSS_BACKEND}" = "triton" ]; then
+    if ! python3 - <<'PY'
+import importlib
+modules = [
+    "triton_kernels.swiglu",
+    "triton_kernels.numerics_details.mxfp",
+    "triton_kernels.matmul_ogs",
+    "triton_kernels.routing",
+    "triton_kernels.tensor",
+]
+for name in modules:
+    importlib.import_module(name)
+PY
+    then
+        echo "WARNING: triton_kernels missing required modules; falling back to torch backend."
+        GPT_OSS_BACKEND="torch"
+    fi
+fi
+if ! python3 -m gpt_oss.chat --backend "${GPT_OSS_BACKEND}" "${GPT_OSS_MODEL_DIR}"; then
     echo "WARNING: gpt_oss chat invocation failed; skipping."
 fi
