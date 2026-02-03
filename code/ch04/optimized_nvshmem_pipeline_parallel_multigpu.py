@@ -47,25 +47,7 @@ def _configure_blackwell_nccl() -> None:
         configure_nccl_for_blackwell(verbose=False)
 
 
-def _virtualization_detected() -> bool:
-    try:
-        cpuinfo = Path("/proc/cpuinfo").read_text().lower()
-        if "hypervisor" in cpuinfo:
-            return True
-    except OSError:
-        pass
-    try:
-        product_name = Path("/sys/devices/virtual/dmi/id/product_name").read_text().lower()
-        if any(tag in product_name for tag in ("qemu", "kvm", "vmware", "virtualbox", "hyper-v")):
-            return True
-    except OSError:
-        pass
-    return False
-
-
 def _enable_symmem_pipeline() -> bool:
-    if _virtualization_detected():
-        return False
     return symmetric_memory_available()
 
 

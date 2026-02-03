@@ -26,9 +26,11 @@ static void enable_peer_access(int src, int dst) {
         std::exit(EXIT_SUCCESS);
     }
     CUDA_CHECK(cudaSetDevice(src));
-    cudaError_t status = cudaDeviceEnablePeerAccess(dst, 0);
-    if (status != cudaSuccess && status != cudaErrorPeerAccessAlreadyEnabled) {
-        CUDA_CHECK(status);
+    cudaError_t peer_status = cudaDeviceEnablePeerAccess(dst, 0);
+    if (peer_status != cudaSuccess && peer_status != cudaErrorPeerAccessAlreadyEnabled) {
+        std::fprintf(stderr, "CUDA error %s:%d: %s\n", __FILE__, __LINE__,
+                     cudaGetErrorString(peer_status));
+        std::exit(EXIT_FAILURE);
     }
 }
 

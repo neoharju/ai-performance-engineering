@@ -380,10 +380,12 @@ int main() {
     const size_t persist_bytes = 64ull * 1024ull * 1024ull;  // 64 MiB
     cudaError_t limit_status = cudaDeviceSetLimit(cudaLimitPersistingL2CacheSize, persist_bytes);
     if (limit_status == cudaErrorUnsupportedLimit || limit_status == cudaErrorInvalidValue) {
-        // Clear the error - L2 cache persistence not supported or invalid on this hardware
+        // Clear the error - L2 cache persistence not supported or invalid on this hardware.
         cudaGetLastError();
-    } else {
-        CUDA_CHECK(limit_status);
+    } else if (limit_status != cudaSuccess) {
+        std::fprintf(stderr, "CUDA error %s:%d: %s\n", __FILE__, __LINE__,
+                     cudaGetErrorString(limit_status));
+        std::exit(EXIT_FAILURE);
     }
     
     if (!config.has_unified_memory) {
