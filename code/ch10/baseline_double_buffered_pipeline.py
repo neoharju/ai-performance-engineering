@@ -23,7 +23,7 @@ class BaselineDoubleBufferedPipelineBenchmark(CudaBinaryBenchmark):
         super().__init__(
             chapter_dir=chapter_dir,
             binary_name="baseline_double_buffered_pipeline",
-            friendly_name="Baseline Double-buffered Pipeline",
+            friendly_name="Baseline Double Buffered Pipeline",
             iterations=3,
             warmup=5,
             timeout_seconds=180,

@@ -23,7 +23,7 @@ class BaselineClusterGroupSingleCtaBenchmark(CudaBinaryBenchmark):
         super().__init__(
             chapter_dir=chapter_dir,
             binary_name="baseline_cluster_group",
-            friendly_name="Baseline Cluster Group (Atomic)",
+            friendly_name="Baseline Cluster Group",
             iterations=3,
             warmup=5,
             timeout_seconds=60,

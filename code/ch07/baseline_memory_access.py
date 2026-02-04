@@ -23,7 +23,7 @@ class BaselineMemoryAccessBenchmark(CudaBinaryBenchmark):
         super().__init__(
             chapter_dir=chapter_dir,
             binary_name="baseline_memory_access",
-            friendly_name="Ch7 Baseline Memory Access",
+            friendly_name="Baseline Memory Access",
             iterations=3,
             warmup=5,
             timeout_seconds=90,

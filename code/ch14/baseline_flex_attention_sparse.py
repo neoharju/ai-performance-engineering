@@ -104,7 +104,6 @@ class BaselineFlexAttentionSparseBenchmark(VerificationPayloadMixin, BaseBenchma
         for _ in range(3):
             with torch.no_grad():
                 _ = self.model(self.x, self.allowed_mask)
-        self._synchronize()
 
     def benchmark_fn(self) -> None:
         if self.model is None or self.x is None or self.allowed_mask is None:
@@ -112,7 +111,6 @@ class BaselineFlexAttentionSparseBenchmark(VerificationPayloadMixin, BaseBenchma
         with self._nvtx_range("baseline_flex_attention_sparse"):
             with torch.no_grad():
                 self.output = self.model(self.x, self.allowed_mask)
-        self._synchronize()
         if self.output is None:
             raise RuntimeError("benchmark_fn() must produce output")
 

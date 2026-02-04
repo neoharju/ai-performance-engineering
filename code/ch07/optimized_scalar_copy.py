@@ -23,7 +23,7 @@ class OptimizedCopyVectorizedBenchmark(CudaBinaryBenchmark):
         super().__init__(
             chapter_dir=chapter_dir,
             binary_name="optimized_copy_scalar_vectorized",
-            friendly_name="Ch7 Vectorized Copy",
+            friendly_name="Optimized Copy Scalar Vectorized",
             iterations=3,
             warmup=5,
             timeout_seconds=120,

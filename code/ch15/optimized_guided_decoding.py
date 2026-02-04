@@ -56,7 +56,6 @@ class OptimizedGuidedDecodingBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.allowed_mask = mask
         self.slice_ids = self.allowed_token_ids[: self.output_slice].to(self.device)
         self.output = None
-        self._synchronize()
 
     def benchmark_fn(self) -> None:
         if self.logits is None or self.allowed_mask is None or self.slice_ids is None:
@@ -70,7 +69,6 @@ class OptimizedGuidedDecodingBenchmark(VerificationPayloadMixin, BaseBenchmark):
                 masked = logits.masked_fill(~mask, float("-inf"))
                 self.output = masked.index_select(1, slice_ids)
 
-        self._synchronize()
         if self.output is None:
             raise RuntimeError("benchmark_fn() must produce output for verification")
 

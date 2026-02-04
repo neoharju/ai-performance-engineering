@@ -34,7 +34,7 @@ def example_basic_usage():
         print(f"✓ Found {len(tools)} tools")
         
         # Call a simple tool
-        result = client.call_tool("aisp_status", {})
+        result = client.call_tool("status", {})
         print(f"✓ Status check: {result.get('status', {}).get('summary', 'OK')}")
         
     except Exception as e:
@@ -56,7 +56,7 @@ def example_context_manager():
         print(f"✓ Found {len(tools)} tools")
         
         # Call multiple tools
-        for tool_name in ["aisp_gpu_info", "aisp_system_software"]:
+        for tool_name in ["gpu_info", "system_software"]:
             try:
                 result = client.call_tool(tool_name, {})
                 print(f"✓ {tool_name}: OK")
@@ -86,7 +86,7 @@ def example_error_handling():
         
         # Try calling with invalid arguments
         try:
-            result = client.call_tool("aisp_status", {"invalid": "param"})
+            result = client.call_tool("status", {"invalid": "param"})
             print(f"✓ Tool handled invalid params gracefully")
         except Exception as e:
             print(f"✓ Caught error: {e}")
@@ -110,7 +110,7 @@ def example_timeout_handling():
         # Call a tool that might take longer
         try:
             # This will timeout if it takes > 1 second
-            result = client.call_tool("aisp_status", {}, timeout=1.0)
+            result = client.call_tool("status", {}, timeout=1.0)
             print(f"✓ Tool completed within timeout")
         except TimeoutError as e:
             print(f"✓ Caught timeout: {e}")
@@ -144,7 +144,7 @@ def example_concurrent_requests():
         
         # Make concurrent requests
         threads = []
-        tool_names = ["aisp_status", "aisp_gpu_info", "aisp_system_software"]
+        tool_names = ["status", "gpu_info", "system_software"]
         
         for tool_name in tool_names:
             t = threading.Thread(target=call_tool, args=(tool_name,))

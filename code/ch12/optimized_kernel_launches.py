@@ -58,7 +58,6 @@ class OptimizedKernelLaunchesBenchmark(VerificationPayloadMixin, BaseBenchmark):
                 x_warmup = x_warmup + 1.0
                 x_warmup = x_warmup * 0.99
                 x_warmup = torch.relu(x_warmup)
-        torch.cuda.synchronize(self.device)
         
         # Capture graph
         self.graph = torch.cuda.CUDAGraph()
@@ -89,7 +88,6 @@ class OptimizedKernelLaunchesBenchmark(VerificationPayloadMixin, BaseBenchmark):
         with nvtx_range("kernel_launches", enable=enable_nvtx):
             with torch.no_grad():
                 _ = self.replay_fn()
-        self._synchronize()
         if self._verify_input is None or self.x_capture is None:
             raise RuntimeError("Verification input or captured output missing")
         dtype = self._verify_input.dtype

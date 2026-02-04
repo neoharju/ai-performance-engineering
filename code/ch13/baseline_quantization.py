@@ -54,7 +54,6 @@ class BaselineQuantizationBenchmark(VerificationPayloadMixin, BaseBenchmark):
             device=self.device,
             dtype=torch.float32,
         )
-        self._synchronize()
     
     def benchmark_fn(self) -> None:
         """Benchmark: FP32 inference without quantization."""
@@ -63,7 +62,6 @@ class BaselineQuantizationBenchmark(VerificationPayloadMixin, BaseBenchmark):
         with self._nvtx_range("baseline_quantization"):
             with torch.no_grad():
                 self.output = self.model(self.data)
-        self._synchronize()
         if self.data is None or self.output is None:
             raise RuntimeError("benchmark_fn() must produce output for verification")
 

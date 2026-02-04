@@ -60,7 +60,6 @@ class OptimizedMatmulTCGen05PipelinedBenchmark(VerificationPayloadMixin, BaseBen
         dtype = torch.float16
         self.A = torch.randn(self.size, self.size, device=self.device, dtype=dtype)
         self.B = torch.randn(self.size, self.size, device=self.device, dtype=dtype)
-        self._synchronize()
 
     def benchmark_fn(self) -> None:
         if not self._tcgen05_available:
@@ -69,7 +68,6 @@ class OptimizedMatmulTCGen05PipelinedBenchmark(VerificationPayloadMixin, BaseBen
         with self._nvtx_range("optimized_matmul_tcgen05_pipelined"):
             with torch.no_grad():
                 self.output = matmul_tcgen05_no_wait(self.A, self.B)
-        self._synchronize()
         if self.output is None:
             raise RuntimeError("benchmark_fn() must produce output for verification")
 

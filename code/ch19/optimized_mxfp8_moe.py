@@ -269,7 +269,6 @@ class OptimizedMXFP8MoEBenchmark(VerificationPayloadMixin, BaseBenchmark):
                 self.output = self._graph_out
             else:
                 self.output = self._forward_grouped()
-        self._synchronize()
         if self.output is None or self.inputs is None or self.weights is None:
             raise RuntimeError("benchmark_fn() must produce output")
 

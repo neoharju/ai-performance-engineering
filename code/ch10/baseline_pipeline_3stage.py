@@ -20,7 +20,7 @@ class BaselinePipeline3StageBenchmark(CudaBinaryBenchmark):
         super().__init__(
             chapter_dir=chapter_dir,
             binary_name="baseline_pipeline_3stage",
-            friendly_name="2-Stage Pipeline GEMV (Baseline)",
+            friendly_name="Baseline Pipeline 3Stage",
             iterations=3,
             warmup=5,
             timeout_seconds=120,

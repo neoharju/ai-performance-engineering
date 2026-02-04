@@ -38,7 +38,6 @@ class OptimizedMemoryHBM3eBenchmark(VerificationPayloadMixin, BaseBenchmark):
         
         self.data = torch.randn(self.num_elements, device=self.device, dtype=torch.float32).contiguous()
         self.result = torch.zeros_like(self.data).contiguous()
-        self._synchronize()
     
     def benchmark_fn(self) -> None:
         assert self.data is not None and self.result is not None
@@ -47,7 +46,6 @@ class OptimizedMemoryHBM3eBenchmark(VerificationPayloadMixin, BaseBenchmark):
             # Using mul_ and add_ for in-place ops to reduce memory traffic
             torch.mul(self.data, 2.0, out=self.result)
             self.result.add_(1.1)  # Combines +1.0 and +0.1 into single op
-            self._synchronize()
         self.output = self.result
 
     def capture_verification_payload(self) -> None:

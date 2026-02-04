@@ -26,7 +26,7 @@ class OptimizedTMACopyBenchmark(CudaBinaryBenchmark):
         super().__init__(
             chapter_dir=chapter_dir,
             binary_name="optimized_tma_copy",
-            friendly_name="Optimized TMA Copy",
+            friendly_name="Optimized Tma Copy",
             iterations=3,
             warmup=5,
             timeout_seconds=120,

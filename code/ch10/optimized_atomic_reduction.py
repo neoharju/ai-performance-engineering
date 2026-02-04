@@ -30,7 +30,7 @@ class OptimizedAtomicReductionBenchmark(CudaBinaryBenchmark):
         super().__init__(
             chapter_dir=chapter_dir,
             binary_name="optimized_atomic_reduction",
-            friendly_name="Single-Pass Atomic Reduction (DSMEM-Free)",
+            friendly_name="Optimized Atomic Reduction",
             iterations=3,
             warmup=5,
             timeout_seconds=120,

@@ -13,11 +13,11 @@ ARCHITECTURE:
     │  CLI Command Groups       →  Engine Domains                          │
     │──────────────────────────────────────────────────────────────────────│
     │  aisp gpu [info|topology|power|bandwidth|features]  → gpu            │
-    │  aisp system [status|software|deps|capabilities|env|network] → system │
+    │  aisp system [status|software|deps|capabilities|context|parameters|container|cpu-memory|env|network] → system │
     │  aisp profile [nsys|ncu|compare|flame|hta]          → profile        │
     │  aisp optimize [recommend|roi|techniques]           → optimize       │
     │  aisp distributed [plan|nccl|topology|slurm]        → distributed    │
-    │  aisp inference [vllm|quantize|...]                 → inference      │
+    │  aisp inference [vllm|quantize|deploy|serve|estimate] → inference     │
     │  aisp ai [ask|explain|troubleshoot]                 → ai             │
     │  aisp benchmark [memory|pcie|tc|speed|diagnostics]  → benchmark      │
     │  aisp bench [run|targets|compare|report|export]     → benchmark      │
@@ -125,7 +125,7 @@ class GoalChoice(str, Enum):
 class TargetChoice(str, Enum):
     throughput = "throughput"
     latency = "latency"
-    balanced = "balanced"
+    memory = "memory"
 
 
 class SpeedTestChoice(str, Enum):
@@ -204,7 +204,7 @@ if typer:
     gpu_app = typer.Typer(help="GPU hardware: info, topology, power, bandwidth")
     
     # Domain 2: System - Software stack, dependencies, capabilities
-    system_app = typer.Typer(help="System: software versions, dependencies, capabilities")
+    system_app = typer.Typer(help="System: software, deps, capabilities, env, parameters")
     
     # Domain 3: Profile - nsys/ncu profiling, flame graphs, HTA
     profile_app = typer.Typer(help="Profiling: nsys, ncu, torch, flame graphs, HTA")
@@ -447,62 +447,40 @@ if typer:
         typer.echo(json.dumps(result, indent=2))
         raise typer.Exit(0)
 
+    @system_app.command("parameters", help="Kernel/system parameters (swappiness, dirty ratios)")
+    def system_parameters_cmd(ctx: typer.Context) -> None:
+        from core.engine import get_engine
+        result = get_engine().system.parameters()
+        typer.echo(json.dumps(result, indent=2))
+        raise typer.Exit(0)
+
+    @system_app.command("container", help="Container/cgroup limits")
+    def system_container_cmd(ctx: typer.Context) -> None:
+        from core.engine import get_engine
+        result = get_engine().system.container()
+        typer.echo(json.dumps(result, indent=2))
+        raise typer.Exit(0)
+
+    @system_app.command("cpu-memory", help="CPU/NUMA/cache hierarchy snapshot")
+    def system_cpu_memory_cmd(ctx: typer.Context) -> None:
+        from core.engine import get_engine
+        result = get_engine().system.cpu_memory()
+        typer.echo(json.dumps(result, indent=2))
+        raise typer.Exit(0)
+
     @system_app.command("env", help="Environment variables and paths")
     def system_env_cmd(ctx: typer.Context) -> None:
-        from cli.commands import system as system_cmds
-        _run(system_cmds.show_env, ctx)
+        from core.engine import get_engine
+        result = get_engine().system.env()
+        typer.echo(json.dumps(result, indent=2))
+        raise typer.Exit(0)
 
-    @system_app.command("network", help="Network and InfiniBand status")
+    @system_app.command("network", help="Network + InfiniBand status (structured)")
     def system_network_cmd(ctx: typer.Context) -> None:
-        """Display network interfaces, InfiniBand status, and GPUDirect RDMA info."""
-        import shutil
-
-        typer.echo("\n🌐 Network Status\n")
-
-        # InfiniBand status
-        ibstat_cmd = shutil.which("ibstat")
-        if ibstat_cmd:
-            typer.echo("InfiniBand Devices:")
-            try:
-                result = subprocess.run([ibstat_cmd], capture_output=True, text=True, timeout=5)
-                if result.returncode == 0 and result.stdout.strip():
-                    # Parse ibstat output for key info
-                    lines = result.stdout.strip().split('\n')
-                    for line in lines:
-                        if any(x in line for x in ['CA ', 'Port ', 'State:', 'Rate:', 'Link layer:']):
-                            typer.echo(f"  {line.strip()}")
-                else:
-                    typer.echo("  No InfiniBand devices found")
-            except Exception as e:
-                typer.echo(f"  Error querying ibstat: {e}")
-        else:
-            typer.echo("InfiniBand: ibstat not found (IB tools not installed)")
-
-        typer.echo()
-
-        # Check for GPUDirect RDMA
-        typer.echo("GPUDirect RDMA:")
-        try:
-            # Check for nv_peer_mem or nvidia_peermem module
-            result = subprocess.run(["lsmod"], capture_output=True, text=True, timeout=5)
-            if "nv_peer_mem" in result.stdout or "nvidia_peermem" in result.stdout:
-                typer.echo("  ✓ Peer memory module loaded (GPUDirect RDMA available)")
-            else:
-                typer.echo("  ✗ Peer memory module not loaded")
-        except Exception:
-            typer.echo("  Unable to check peer memory status")
-
-        typer.echo()
-
-        # NCCL network info
-        typer.echo("NCCL Network Environment:")
-        nccl_vars = ["NCCL_IB_DISABLE", "NCCL_NET_GDR_LEVEL", "NCCL_P2P_LEVEL",
-                     "NCCL_IB_GID_INDEX", "NCCL_SOCKET_IFNAME"]
-        for var in nccl_vars:
-            val = os.environ.get(var, "(not set)")
-            typer.echo(f"  {var}: {val}")
-
-        typer.echo()
+        from core.engine import get_engine
+        result = get_engine().system.network()
+        typer.echo(json.dumps(result, indent=2))
+        raise typer.Exit(0)
 
 # =============================================================================
 # Domain 4: Analyze - Bottlenecks, pareto, scaling, what-if
@@ -1254,20 +1232,39 @@ if typer and inference_app is not None:
     def inference_vllm(
         ctx: typer.Context,
         model: Optional[str] = typer.Option(None, "--model", help="Model name"),
+        model_size: Optional[float] = typer.Option(
+            None, "--model-size", help="Model size in billions (required)"
+        ),
+        gpus: int = typer.Option(1, "--gpus", help="Number of GPUs"),
+        gpu_memory_gb: float = typer.Option(80.0, "--gpu-memory-gb", help="VRAM per GPU (GB)"),
         target: TargetChoice = typer.Option(
-            TargetChoice.balanced,
+            TargetChoice.throughput,
             "--target",
             help="Optimization target",
             show_choices=True,
         ),
+        max_seq_length: int = typer.Option(8192, "--max-seq-length", help="Max sequence length"),
+        quantization: Optional[str] = typer.Option(None, "--quantization", help="Quantization (awq/gptq/fp8/int8)"),
+        compare: bool = typer.Option(False, "--compare", help="Compare inference engines instead of config"),
     ) -> None:
         from cli.commands import inference
-        _run(inference.vllm_config, ctx, model=model, target=target)
+        _run(
+            inference.vllm_config,
+            ctx,
+            model=model,
+            model_size=model_size,
+            gpus=gpus,
+            gpu_memory_gb=gpu_memory_gb,
+            target=target,
+            max_seq_length=max_seq_length,
+            quantization=quantization,
+            compare=compare,
+        )
 
     @inference_app.command("quantize", help="Quantization recommendations")
     def inference_quantize(
         ctx: typer.Context,
-        model_size: float = typer.Option(70.0, "--model-size", help="Model size in billions"),
+        model_size: Optional[float] = typer.Option(None, "--model-size", help="Model size in billions"),
         target_memory: Optional[float] = typer.Option(
             None, "--target-memory", help="Target memory per GPU (GB)"
         ),
@@ -1275,23 +1272,73 @@ if typer and inference_app is not None:
         from cli.commands import inference
         _run(inference.quantize, ctx, model_size=model_size, target_memory=target_memory)
 
-    @inference_app.command("deploy", help="Deployment configuration")
+    @inference_app.command("deploy", help="Deployment configuration (explicit model size required)")
     def inference_deploy(
         ctx: typer.Context,
         model: str = typer.Option("meta-llama/Llama-2-70b-hf", "--model", help="Model name"),
-        target: str = typer.Option("vllm", "--target", help="Backend target (vllm/tensorrt/triton)"),
+        model_size: Optional[float] = typer.Option(None, "--model-size", help="Model size in billions (required)"),
+        gpus: int = typer.Option(1, "--gpus", help="Number of GPUs"),
+        gpu_memory_gb: float = typer.Option(80.0, "--gpu-memory-gb", help="VRAM per GPU (GB)"),
+        goal: str = typer.Option("throughput", "--goal", help="Optimization goal (throughput/latency/memory)"),
+        max_seq_length: int = typer.Option(8192, "--max-seq-length", help="Max sequence length"),
     ) -> None:
         from cli.commands import inference
-        _run(inference.deploy_config, ctx, model=model, target=target)
+        _run(
+            inference.deploy_config,
+            ctx,
+            model=model,
+            model_size=model_size,
+            gpus=gpus,
+            gpu_memory_gb=gpu_memory_gb,
+            goal=goal,
+            max_seq_length=max_seq_length,
+        )
 
-    @inference_app.command("serve", help="Start inference server")
+    @inference_app.command("serve", help="Generate (and optionally run) inference server command")
     def inference_serve(
         ctx: typer.Context,
         model: str = typer.Option("meta-llama/Llama-2-70b-hf", "--model", help="Model name"),
-        gpus: int = typer.Option(1, "--gpus", help="Tensor parallel size"),
+        model_size: Optional[float] = typer.Option(None, "--model-size", help="Model size in billions (required)"),
+        gpus: int = typer.Option(1, "--gpus", help="Number of GPUs"),
+        gpu_memory_gb: float = typer.Option(80.0, "--gpu-memory-gb", help="VRAM per GPU (GB)"),
+        goal: str = typer.Option("throughput", "--goal", help="Optimization goal (throughput/latency/memory)"),
+        max_seq_length: int = typer.Option(8192, "--max-seq-length", help="Max sequence length"),
+        run: bool = typer.Option(False, "--run", help="Execute the launch command"),
     ) -> None:
         from cli.commands import inference
-        _run(inference.serve, ctx, model=model, gpus=gpus)
+        _run(
+            inference.serve,
+            ctx,
+            model=model,
+            model_size=model_size,
+            gpus=gpus,
+            gpu_memory_gb=gpu_memory_gb,
+            goal=goal,
+            max_seq_length=max_seq_length,
+            run=run,
+        )
+
+    @inference_app.command("estimate", help="Estimate inference throughput/latency")
+    def inference_estimate(
+        ctx: typer.Context,
+        model: str = typer.Option("meta-llama/Llama-2-70b-hf", "--model", help="Model name"),
+        model_size: Optional[float] = typer.Option(None, "--model-size", help="Model size in billions (required)"),
+        gpus: int = typer.Option(1, "--gpus", help="Number of GPUs"),
+        gpu_memory_gb: float = typer.Option(80.0, "--gpu-memory-gb", help="VRAM per GPU (GB)"),
+        goal: str = typer.Option("throughput", "--goal", help="Optimization goal (throughput/latency/memory)"),
+        max_seq_length: int = typer.Option(8192, "--max-seq-length", help="Max sequence length"),
+    ) -> None:
+        from cli.commands import inference
+        _run(
+            inference.estimate,
+            ctx,
+            model=model,
+            model_size=model_size,
+            gpus=gpus,
+            gpu_memory_gb=gpu_memory_gb,
+            goal=goal,
+            max_seq_length=max_seq_length,
+        )
 
 
 # =============================================================================

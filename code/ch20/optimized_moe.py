@@ -78,14 +78,12 @@ class OptimizedMoeBenchmark(VerificationPayloadMixin, BaseBenchmark):
         for _ in range(2):
             with torch.no_grad():
                 _ = self.model(self.inputs)
-        self._synchronize()
 
     def benchmark_fn(self) -> None:
         assert self.model is not None and self.inputs is not None
         with self._nvtx_range("optimized_moe"):
             with torch.no_grad():
                 _ = self.model(self.inputs)
-            self._synchronize()
 
     def capture_verification_payload(self) -> None:
         if self._verify_input is None or self.model is None:

@@ -24,7 +24,7 @@ class BaselineTransposeBenchmark(CudaBinaryBenchmark):
         super().__init__(
             chapter_dir=chapter_dir,
             binary_name="baseline_transpose",
-            friendly_name="Ch7 Baseline Transpose",
+            friendly_name="Baseline Transpose",
             iterations=3,
             warmup=5,
             timeout_seconds=90,

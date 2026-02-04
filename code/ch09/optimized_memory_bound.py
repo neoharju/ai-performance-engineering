@@ -48,7 +48,6 @@ class OptimizedMemoryBoundBenchmark(VerificationPayloadMixin, BaseBenchmark):
         torch.manual_seed(42)
         torch.cuda.manual_seed_all(42)
         self.data = torch.randn(self.N, dtype=torch.float32, device=self.device)
-        self._synchronize()
         self.register_workload_metadata(
             requests_per_iteration=self._workload.requests_per_iteration,
             tokens_per_iteration=self._workload.tokens_per_iteration,
@@ -64,7 +63,6 @@ class OptimizedMemoryBoundBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self._compiled_run = torch.compile(fused_kernel, mode="reduce-overhead", fullgraph=True)
         # Warmup to trigger compilation outside the timed region.
         _ = self._compiled_run(self.data)
-        self._synchronize()
     
     def benchmark_fn(self) -> None:
         """Benchmark: Fused operations (high AI)."""
@@ -74,7 +72,6 @@ class OptimizedMemoryBoundBenchmark(VerificationPayloadMixin, BaseBenchmark):
             raise RuntimeError("Compiled kernel not initialized")
         with self._nvtx_range("memory_bound"):
             self.output = self._compiled_run(self.data)
-        self._synchronize()
         if self.output is None:
             raise RuntimeError("benchmark_fn() must produce output for verification")
 

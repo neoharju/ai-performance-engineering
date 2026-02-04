@@ -65,7 +65,6 @@ class BaselineSpeculativeDecodingBenchmark(VerificationPayloadMixin, BaseBenchma
 
         self._output_ids = torch.empty((1, wl.total_tokens + 1), device=self.device, dtype=torch.int64)
         self.output = None
-        self._synchronize()
 
     def benchmark_fn(self) -> None:
         if self.target_model is None or self.input_ids is None or self._output_ids is None:
@@ -82,7 +81,6 @@ class BaselineSpeculativeDecodingBenchmark(VerificationPayloadMixin, BaseBenchma
                     out[:, t + 1] = logits[:, 0, :].argmax(dim=-1)
 
         self.output = out
-        self._synchronize()
 
     def capture_verification_payload(self) -> None:
         if self.input_ids is None or self.output is None:

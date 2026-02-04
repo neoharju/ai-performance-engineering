@@ -25,7 +25,7 @@ class BaselineFusedL2NormBenchmark(CudaBinaryBenchmark):
         super().__init__(
             chapter_dir=chapter_dir,
             binary_name="baseline_fused_l2norm",
-            friendly_name="Baseline Fused L2 Norm",
+            friendly_name="Baseline Fused L2Norm",
             iterations=5,
             warmup=5,
             timeout_seconds=90,

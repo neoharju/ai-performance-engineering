@@ -1,0 +1,89 @@
+"""Optimized AllReduce + RMSNorm (fused via torch.compile)."""
+
+from __future__ import annotations
+
+from typing import Optional, Callable
+
+import torch
+
+from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata
+from ch15.verification_payload_mixin import VerificationPayloadMixin
+from ch15.allreduce_rmsnorm_common import (
+    AllReduceRMSNormConfig,
+    build_shards,
+    fused_allreduce_rmsnorm,
+)
+
+
+class OptimizedAllReduceRMSNormBenchmark(VerificationPayloadMixin, BaseBenchmark):
+    """Optimized: compiled all-reduce + RMSNorm fusion."""
+
+    def __init__(self, cfg: Optional[AllReduceRMSNormConfig] = None) -> None:
+        super().__init__()
+        self.cfg = cfg or AllReduceRMSNormConfig()
+        self.shards: Optional[torch.Tensor] = None
+        self.output: Optional[torch.Tensor] = None
+        self._fused_fn: Optional[Callable[[torch.Tensor], torch.Tensor]] = None
+        self._workload = WorkloadMetadata(
+            requests_per_iteration=float(self.cfg.batch_size),
+            tokens_per_iteration=float(self.cfg.tokens_per_iter),
+        )
+        self.register_workload_metadata(
+            requests_per_iteration=float(self.cfg.batch_size),
+            tokens_per_iteration=float(self.cfg.tokens_per_iter),
+        )
+
+    def setup(self) -> None:
+        if not torch.cuda.is_available():
+            raise RuntimeError("SKIPPED: CUDA required for AR+RMSNorm fusion")
+        torch.manual_seed(42)
+        torch.cuda.manual_seed_all(42)
+        self.shards = build_shards(self.device, self.cfg)
+
+        def _fused(shards: torch.Tensor) -> torch.Tensor:
+            return fused_allreduce_rmsnorm(shards, self.cfg.eps)
+
+        try:
+            self._fused_fn = torch.compile(_fused, mode="max-autotune")
+        except Exception:
+            self._fused_fn = _fused
+
+        # Warmup compile + kernel caches
+        with torch.inference_mode():
+            _ = self._fused_fn(self.shards)
+        torch.cuda.synchronize(self.device)
+
+    def benchmark_fn(self) -> None:
+        if self.shards is None or self._fused_fn is None:
+            raise RuntimeError("Benchmark not initialized")
+        with torch.inference_mode():
+            self.output = self._fused_fn(self.shards)
+        if self.output is None:
+            raise RuntimeError("benchmark_fn() did not produce output")
+
+    def capture_verification_payload(self) -> None:
+        if self.shards is None or self.output is None:
+            raise RuntimeError("benchmark_fn() must run before capture_verification_payload()")
+        self._set_verification_payload(
+            inputs={"shards": self.shards.detach()},
+            output=self.output.detach(),
+            batch_size=self.cfg.batch_size,
+            parameter_count=0,
+            precision_flags={
+                "fp16": False,
+                "bf16": self.cfg.dtype == torch.bfloat16,
+                "fp8": False,
+                "tf32": torch.backends.cuda.matmul.allow_tf32,
+            },
+            output_tolerance=(1e-2, 1e-1),
+        )
+
+    def get_workload_metadata(self) -> Optional[WorkloadMetadata]:
+        return self._workload
+
+    def get_config(self) -> BenchmarkConfig:
+        return BenchmarkConfig(iterations=6, warmup=6)
+
+
+def get_benchmark() -> BaseBenchmark:
+    return OptimizedAllReduceRMSNormBenchmark()

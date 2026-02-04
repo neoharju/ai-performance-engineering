@@ -70,7 +70,6 @@ class OptimizedEndToEndBandwidthBenchmark(VerificationPayloadMixin, BaseBenchmar
                     warmup_device = torch.device("cuda", torch.cuda.current_device())
                 torch.cuda.set_device(warmup_device)
                 torch.ones((1, 1), device=warmup_device).matmul(torch.ones((1, 1), device=warmup_device))
-                torch.cuda.synchronize()
 
             torch.manual_seed(42)
             torch.cuda.manual_seed_all(42)
@@ -87,7 +86,6 @@ class OptimizedEndToEndBandwidthBenchmark(VerificationPayloadMixin, BaseBenchmar
             for _ in range(3):
                 with torch.no_grad():
                     _ = self.model(test_input)
-            torch.cuda.synchronize()
             
             self.inputs = [
                 torch.randn(self.batch_size, self.hidden_dim, device=self.device, dtype=torch.float32).contiguous()
@@ -99,7 +97,6 @@ class OptimizedEndToEndBandwidthBenchmark(VerificationPayloadMixin, BaseBenchmar
             for inp in self.inputs[:5]:
                 with torch.no_grad():
                     _ = self.model(inp)
-            self._synchronize()
         except Exception:
             restore_inductor_cudagraph_features(self._inductor_cfg_state)
             self._inductor_cfg_state = None
@@ -114,7 +111,6 @@ class OptimizedEndToEndBandwidthBenchmark(VerificationPayloadMixin, BaseBenchmar
                 self.output = out.view(
                     self.stacked_inputs.shape[0], self.stacked_inputs.shape[1], self.stacked_inputs.shape[2]
                 )
-            self._synchronize()
 
     def capture_verification_payload(self) -> None:
         if self.model is None or self.stacked_inputs is None or self.output is None:

@@ -85,7 +85,7 @@ from core.benchmark.expectations import (
     select_best_optimization,
     compute_speedup,
 )
-from core.discovery import chapter_slug, resolve_target_chapters
+from core.discovery import chapter_slug, resolve_target_chapters, is_cuda_binary_benchmark_file
 
 # Import verification system for mandatory correctness checks
 try:
@@ -1300,59 +1300,12 @@ def check_hardware_limitation(error_msg: str) -> Optional[str]:
 
 
 def discover_cuda_benchmarks(chapter_dir: Path) -> List[Tuple[Path, List[Path], str]]:
-    """Discover CUDA benchmark pairs by looking for baseline_*.cu files with matching optimized_*.cu.
-    
-    Uses precise matching: each optimized file matches the most specific baseline (longest matching prefix).
-    This prevents multiple baselines from matching the same optimized files.
-    
-    Args:
-        chapter_dir: Path to chapter directory (e.g., Path('ch01'))
-        
-    Returns:
-        List of tuples: (baseline_cu_path, [optimized_cu_paths], example_name)
-        Example: (Path('ch01/baseline_gemm.cu'), [Path('ch01/optimized_gemm_batched.cu')], 'gemm')
+    """Wrapper-only mode: CUDA benchmarks are executed via Python wrappers.
+
+    Direct .cu discovery is intentionally disabled so that CUDA binaries run
+    only through CudaBinaryBenchmark wrappers (baseline_*.py/optimized_*.py).
     """
-    # Files to exclude from benchmark discovery (standalone variants without proper baseline pairing)
-    # Add file stems here if they lack a matching baseline with compatible configuration
-    excluded_files: set[str] = set()
-    
-    baseline_files = sorted(chapter_dir.glob("baseline_*.cu"), key=lambda p: len(p.stem), reverse=True)
-    all_optimized_files = [f for f in chapter_dir.glob("optimized_*.cu") if f.stem not in excluded_files]
-    
-    # Map each optimized file to its most specific baseline
-    optimized_to_baseline = {}  # optimized_path -> baseline_path
-    
-    for baseline_file in baseline_files:
-        baseline_name = baseline_file.stem  # e.g., "baseline_gemm" or "baseline_cuda_graphs_conditional"
-        baseline_suffix = baseline_name.replace("baseline_", "")  # e.g., "gemm" or "cuda_graphs_conditional"
-        baseline_prefix = f"optimized_{baseline_suffix}"
-        
-        # Find optimized files that match this baseline
-        for opt_file in all_optimized_files:
-            opt_stem = opt_file.stem  # e.g., "optimized_gemm_batched" or "optimized_cuda_graphs_conditional"
-            
-            # Match if optimized file starts with baseline_prefix followed by end of string or underscore
-            if opt_stem == baseline_prefix or opt_stem.startswith(baseline_prefix + "_"):
-                # Only assign if not already assigned to a more specific baseline
-                if opt_file not in optimized_to_baseline:
-                    optimized_to_baseline[opt_file] = baseline_file
-    
-    # Group optimized files by baseline
-    baseline_to_optimized = {}  # baseline_path -> [optimized_paths]
-    for opt_file, baseline_file in optimized_to_baseline.items():
-        if baseline_file not in baseline_to_optimized:
-            baseline_to_optimized[baseline_file] = []
-        baseline_to_optimized[baseline_file].append(opt_file)
-    
-    # Build pairs
-    pairs = []
-    for baseline_file, optimized_files in baseline_to_optimized.items():
-        baseline_suffix = baseline_file.stem.replace("baseline_", "")
-        # Use full baseline suffix as example name (e.g., "cutlass_gemm", "cutlass_gemm_fp16")
-        example_name = baseline_suffix
-        pairs.append((baseline_file, sorted(optimized_files), example_name))
-    
-    return pairs
+    return []
 
 
 def cuda_binary_requires_multi_gpu(path: Path) -> bool:
@@ -2719,6 +2672,7 @@ def _test_chapter_impl(
     pm_sampling_interval: Optional[int] = None,
     nsys_timeout_seconds: Optional[int] = None,
     ncu_timeout_seconds: Optional[int] = None,
+    force_synchronize: bool = False,
     graph_capture_ratio_threshold: Optional[float] = None,
     graph_capture_memory_threshold_mb: Optional[float] = None,
     launch_via: str = "python",
@@ -2927,6 +2881,9 @@ def _test_chapter_impl(
     # Discover Python benchmarks
     logger.info(f"  Discovering Python benchmarks...")
     python_pairs = discover_benchmarks(chapter_dir)
+    def _is_cuda_wrapper(path: Path) -> bool:
+        return is_cuda_binary_benchmark_file(path)
+
     example_filters = None
     if only_examples:
         logger.info(f"  Requested examples: {only_examples}")
@@ -2936,8 +2893,12 @@ def _test_chapter_impl(
                 pair for pair in python_pairs if pair[2] in example_filters
             ]
             logger.info(f"  Filtered to {len(python_pairs)} example(s): {', '.join(sorted(example_filters))}")
-    if only_cuda:
-        python_pairs = []
+    if only_cuda or only_python:
+        cuda_wrapped_pairs = [pair for pair in python_pairs if _is_cuda_wrapper(pair[0])]
+        if only_cuda:
+            python_pairs = cuda_wrapped_pairs
+        elif only_python:
+            python_pairs = [pair for pair in python_pairs if pair not in cuda_wrapped_pairs]
     logger.info(f"  Found {len(python_pairs)} Python benchmark pair(s)")
 
     # Discover CUDA benchmarks and ensure executables are built
@@ -3010,6 +2971,7 @@ def _test_chapter_impl(
         deterministic=reproducible,  # Enable deterministic algorithms for reproducibility
         enforce_environment_validation=enforce_environment_validation,
         allow_virtualization=allow_virtualization,
+        force_synchronize=force_synchronize,
         ncu_metric_set=ncu_metric_set,
         profile_type=profile_type if enable_profiling else "none",
         launch_via=launch_via,
@@ -3266,13 +3228,14 @@ def _test_chapter_impl(
         for baseline_path, optimized_paths, example_name in python_pairs:
             logger.info(f"\n  Example: {example_name}")
             logger.info(f"    Baseline: {baseline_path.name}")
+            example_type = "cuda" if _is_cuda_wrapper(baseline_path) else "python"
             emit_event(
                 event_logger,
                 logger,
                 "example_start",
                 chapter=chapter_name,
                 example=example_name,
-                example_type="python",
+                example_type=example_type,
                 baseline_file=baseline_path.name,
                 optimized_files=[p.name for p in optimized_paths],
             )
@@ -3286,7 +3249,7 @@ def _test_chapter_impl(
                     "example_skip",
                     chapter=chapter_name,
                     example=example_name,
-                    example_type="python",
+                    example_type=example_type,
                     reason="informational_demo",
                 )
                 mark_progress(example_name)
@@ -3294,7 +3257,7 @@ def _test_chapter_impl(
         
             result_entry = {
                 'example': example_name,
-                'type': 'python',
+                'type': example_type,
                 'baseline_file': baseline_path.name,
                 'baseline_time_ms': None,
                 'baseline_throughput': None,
@@ -3328,7 +3291,7 @@ def _test_chapter_impl(
                     "example_skip",
                     chapter=chapter_name,
                     example=example_name,
-                    example_type="python",
+                    example_type=example_type,
                     reason=skip_reason,
                 )
                 mark_progress(example_name)
@@ -3357,7 +3320,7 @@ def _test_chapter_impl(
                         "example_skip",
                         chapter=chapter_name,
                         example=example_name,
-                        example_type="python",
+                        example_type=example_type,
                         reason=skip_reason,
                     )
                 else:
@@ -3370,7 +3333,7 @@ def _test_chapter_impl(
                         "example_error",
                         chapter=chapter_name,
                         example=example_name,
-                        example_type="python",
+                        example_type=example_type,
                         error="Failed to load baseline",
                     )
                 reset_cuda_state()  # Reset after failure or skip
@@ -3378,39 +3341,39 @@ def _test_chapter_impl(
                     reset_gpu_state()
                 mark_progress(example_name)
                 continue
-            
-                try:
-                    # Use benchmark_with_manifest for reproducibility
-                    run_id = f"{chapter_name}_{example_name}_baseline"
-                    baseline_phase_start = time.perf_counter()
-                    emit_event(
-                        event_logger,
-                        logger,
-                        "phase_start",
-                        chapter=chapter_name,
-                        example=example_name,
-                        example_type="python",
-                        phase="baseline_timing",
-                        variant="baseline",
-                        target=baseline_path.name,
-                    )
-                    emit_progress(
-                        "baseline_timing",
-                        step=f"{chapter_name}:{example_name}",
-                        step_detail="baseline timing",
-                    )
-                    baseline_run, baseline_config = _run_with_config(
-                        baseline_benchmark,
+
+            try:
+                # Use benchmark_with_manifest for reproducibility
+                run_id = f"{chapter_name}_{example_name}_baseline"
+                baseline_phase_start = time.perf_counter()
+                emit_event(
+                    event_logger,
+                    logger,
+                    "phase_start",
+                    chapter=chapter_name,
+                    example=example_name,
+                    example_type=example_type,
+                    phase="baseline_timing",
+                    variant="baseline",
+                    target=baseline_path.name,
+                )
+                emit_progress(
+                    "baseline_timing",
+                    step=f"{chapter_name}:{example_name}",
+                    step_detail="baseline timing",
+                )
+                baseline_run, baseline_config = _run_with_config(
+                    baseline_benchmark,
                     run_id=run_id,
                     target_label=f"{chapter_name}:{example_name}",
                 )
                 baseline_result = baseline_run.result
                 baseline_errors = list(getattr(baseline_result, "errors", None) or [])
-                    if baseline_errors:
-                        skip_reason = None
-                        for msg in baseline_errors:
-                            upper = msg.upper()
-                            if "SKIPPED" not in upper:
+                if baseline_errors:
+                    skip_reason = None
+                    for msg in baseline_errors:
+                        upper = msg.upper()
+                        if "SKIPPED" not in upper:
                             continue
                         if "SKIPPED:" in msg:
                             skip_reason = msg.split("SKIPPED:", 1)[1].strip()
@@ -3420,62 +3383,62 @@ def _test_chapter_impl(
                         break
 
                     error_message = baseline_errors[0].strip() if baseline_errors else "Benchmark harness reported errors"
-                        if skip_reason:
-                            logger.warning(f"    WARNING: SKIPPED: {skip_reason}")
-                            result_entry["status"] = "skipped"
-                            result_entry["error"] = f"SKIPPED: {skip_reason}"
-                            result_entry["skip_reason"] = skip_reason
-                            benchmark_results.append(result_entry)
-                            skipped_hw += 1
-                            emit_event(
-                                event_logger,
-                                logger,
-                                "phase_end",
-                                chapter=chapter_name,
-                                example=example_name,
-                                example_type="python",
-                                phase="baseline_timing",
-                                variant="baseline",
-                                status="skipped",
-                                duration_s=time.perf_counter() - baseline_phase_start,
-                                error=skip_reason,
-                            )
-                            emit_event(
-                                event_logger,
-                                logger,
-                                "example_skip",
-                                chapter=chapter_name,
+                    if skip_reason:
+                        logger.warning(f"    WARNING: SKIPPED: {skip_reason}")
+                        result_entry["status"] = "skipped"
+                        result_entry["error"] = f"SKIPPED: {skip_reason}"
+                        result_entry["skip_reason"] = skip_reason
+                        benchmark_results.append(result_entry)
+                        skipped_hw += 1
+                        emit_event(
+                            event_logger,
+                            logger,
+                            "phase_end",
+                            chapter=chapter_name,
                             example=example_name,
-                            example_type="python",
+                            example_type=example_type,
+                            phase="baseline_timing",
+                            variant="baseline",
+                            status="skipped",
+                            duration_s=time.perf_counter() - baseline_phase_start,
+                            error=skip_reason,
+                        )
+                        emit_event(
+                            event_logger,
+                            logger,
+                            "example_skip",
+                            chapter=chapter_name,
+                            example=example_name,
+                            example_type=example_type,
                             reason=skip_reason,
                         )
-                        else:
-                            logger.error(f"    Baseline FAILED: {error_message}")
-                            result_entry["status"] = "failed_error"
-                            result_entry["error"] = error_message
-                            benchmark_results.append(result_entry)
-                            failed_error += 1
-                            maybe_reset_gpu_for_error(error_message, f"{chapter_name}:{example_name}:baseline")
-                            emit_event(
-                                event_logger,
-                                logger,
-                                "phase_end",
-                                chapter=chapter_name,
-                                example=example_name,
-                                example_type="python",
-                                phase="baseline_timing",
-                                variant="baseline",
-                                status="failed",
-                                duration_s=time.perf_counter() - baseline_phase_start,
-                                error=error_message,
-                            )
-                            emit_event(
-                                event_logger,
-                                logger,
-                                "example_error",
-                                chapter=chapter_name,
+                    else:
+                        logger.error(f"    Baseline FAILED: {error_message}")
+                        result_entry["status"] = "failed_error"
+                        result_entry["error"] = error_message
+                        benchmark_results.append(result_entry)
+                        failed_error += 1
+                        maybe_reset_gpu_for_error(error_message, f"{chapter_name}:{example_name}:baseline")
+                        emit_event(
+                            event_logger,
+                            logger,
+                            "phase_end",
+                            chapter=chapter_name,
                             example=example_name,
-                            example_type="python",
+                            example_type=example_type,
+                            phase="baseline_timing",
+                            variant="baseline",
+                            status="failed",
+                            duration_s=time.perf_counter() - baseline_phase_start,
+                            error=error_message,
+                        )
+                        emit_event(
+                            event_logger,
+                            logger,
+                            "example_error",
+                            chapter=chapter_name,
+                            example=example_name,
+                            example_type=example_type,
                             error=error_message,
                         )
 
@@ -3561,7 +3524,7 @@ def _test_chapter_impl(
                     "phase_end",
                     chapter=chapter_name,
                     example=example_name,
-                    example_type="python",
+                    example_type=example_type,
                     phase="baseline_timing",
                     variant="baseline",
                     status="succeeded",
@@ -3573,7 +3536,7 @@ def _test_chapter_impl(
                     "baseline_result",
                     chapter=chapter_name,
                     example=example_name,
-                    example_type="python",
+                    example_type=example_type,
                     time_ms=baseline_time,
                     median_ms=baseline_timing.median_ms if baseline_timing else None,
                     min_ms=baseline_timing.min_ms if baseline_timing else None,
@@ -3601,7 +3564,7 @@ def _test_chapter_impl(
                             "example_error",
                             chapter=chapter_name,
                             example=example_name,
-                            example_type="python",
+                            example_type=example_type,
                             error=result_entry["error"],
                         )
                         mark_progress(example_name)
@@ -3628,7 +3591,7 @@ def _test_chapter_impl(
                             "example_error",
                             chapter=chapter_name,
                             example=example_name,
-                            example_type="python",
+                            example_type=example_type,
                             error=result_entry["error"],
                         )
                         mark_progress(example_name)
@@ -3665,7 +3628,7 @@ def _test_chapter_impl(
                             "profiler_start",
                             chapter=chapter_name,
                             example=example_name,
-                            example_type="python",
+                            example_type=example_type,
                             variant="baseline",
                             profiler="nsys",
                             timeout_seconds=baseline_config.get_effective_timeout("nsys"),
@@ -3693,7 +3656,7 @@ def _test_chapter_impl(
                                 "profiler_end",
                                 chapter=chapter_name,
                                 example=example_name,
-                                example_type="python",
+                                example_type=example_type,
                                 variant="baseline",
                                 profiler="nsys",
                                 status="succeeded",
@@ -3708,7 +3671,7 @@ def _test_chapter_impl(
                                 "profiler_end",
                                 chapter=chapter_name,
                                 example=example_name,
-                                example_type="python",
+                                example_type=example_type,
                                 variant="baseline",
                                 profiler="nsys",
                                 status="failed",
@@ -3723,7 +3686,7 @@ def _test_chapter_impl(
                             "profiler_end",
                             chapter=chapter_name,
                             example=example_name,
-                            example_type="python",
+                            example_type=example_type,
                             variant="baseline",
                             profiler="nsys",
                             status="skipped",
@@ -3745,7 +3708,7 @@ def _test_chapter_impl(
                             "profiler_start",
                             chapter=chapter_name,
                             example=example_name,
-                            example_type="python",
+                            example_type=example_type,
                             variant="baseline",
                             profiler="ncu",
                             timeout_seconds=baseline_config.get_effective_timeout("ncu"),
@@ -3773,7 +3736,7 @@ def _test_chapter_impl(
                                 "profiler_end",
                                 chapter=chapter_name,
                                 example=example_name,
-                                example_type="python",
+                                example_type=example_type,
                                 variant="baseline",
                                 profiler="ncu",
                                 status="succeeded",
@@ -3788,7 +3751,7 @@ def _test_chapter_impl(
                                 "profiler_end",
                                 chapter=chapter_name,
                                 example=example_name,
-                                example_type="python",
+                                example_type=example_type,
                                 variant="baseline",
                                 profiler="ncu",
                                 status="failed",
@@ -3803,7 +3766,7 @@ def _test_chapter_impl(
                             "profiler_end",
                             chapter=chapter_name,
                             example=example_name,
-                            example_type="python",
+                            example_type=example_type,
                             variant="baseline",
                             profiler="ncu",
                             status="skipped",
@@ -3825,7 +3788,7 @@ def _test_chapter_impl(
                             "profiler_start",
                             chapter=chapter_name,
                             example=example_name,
-                            example_type="python",
+                            example_type=example_type,
                             variant="baseline",
                             profiler="torch",
                             timeout_seconds=baseline_config.get_effective_timeout("torch"),
@@ -3852,7 +3815,7 @@ def _test_chapter_impl(
                                 "profiler_end",
                                 chapter=chapter_name,
                                 example=example_name,
-                                example_type="python",
+                                example_type=example_type,
                                 variant="baseline",
                                 profiler="torch",
                                 status="succeeded",
@@ -3867,7 +3830,7 @@ def _test_chapter_impl(
                                 "profiler_end",
                                 chapter=chapter_name,
                                 example=example_name,
-                                example_type="python",
+                                example_type=example_type,
                                 variant="baseline",
                                 profiler="torch",
                                 status="failed",
@@ -3882,7 +3845,7 @@ def _test_chapter_impl(
                             "profiler_end",
                             chapter=chapter_name,
                             example=example_name,
-                            example_type="python",
+                            example_type=example_type,
                             variant="baseline",
                             profiler="torch",
                             status="skipped",
@@ -3903,7 +3866,7 @@ def _test_chapter_impl(
                             "profiler_summary",
                             chapter=chapter_name,
                             example=example_name,
-                            example_type="python",
+                            example_type=example_type,
                             variant="baseline",
                             metrics=baseline_metrics,
                         )
@@ -3923,7 +3886,7 @@ def _test_chapter_impl(
                         "example_skip",
                         chapter=chapter_name,
                         example=example_name,
-                        example_type="python",
+                        example_type=example_type,
                         reason=skip_reason,
                     )
                     if "baseline_phase_start" in locals():
@@ -3933,7 +3896,7 @@ def _test_chapter_impl(
                             "phase_end",
                             chapter=chapter_name,
                             example=example_name,
-                            example_type="python",
+                            example_type=example_type,
                             phase="baseline_timing",
                             variant="baseline",
                             status="skipped",
@@ -3950,7 +3913,7 @@ def _test_chapter_impl(
                         "example_error",
                         chapter=chapter_name,
                         example=example_name,
-                        example_type="python",
+                        example_type=example_type,
                         error=result_entry['error'],
                     )
                     if "baseline_phase_start" in locals():
@@ -3960,7 +3923,7 @@ def _test_chapter_impl(
                             "phase_end",
                             chapter=chapter_name,
                             example=example_name,
-                            example_type="python",
+                            example_type=example_type,
                             phase="baseline_timing",
                             variant="baseline",
                             status="failed",
@@ -4000,7 +3963,7 @@ def _test_chapter_impl(
                         "optimization_skip",
                         chapter=chapter_name,
                         example=example_name,
-                        example_type="python",
+                        example_type=example_type,
                         optimization_file=opt_name,
                         technique=technique,
                         reason=skip_reason,
@@ -4036,7 +3999,7 @@ def _test_chapter_impl(
                             "optimization_skip",
                             chapter=chapter_name,
                             example=example_name,
-                            example_type="python",
+                            example_type=example_type,
                             optimization_file=opt_name,
                             technique=technique,
                             reason=skip_reason,
@@ -4056,7 +4019,7 @@ def _test_chapter_impl(
                             "optimization_error",
                             chapter=chapter_name,
                             example=example_name,
-                            example_type="python",
+                            example_type=example_type,
                             optimization_file=opt_name,
                             technique=technique,
                             error="Failed to load",
@@ -4082,7 +4045,7 @@ def _test_chapter_impl(
                         "phase_start",
                         chapter=chapter_name,
                         example=example_name,
-                        example_type="python",
+                        example_type=example_type,
                         phase="optimized_timing",
                         variant="optimized",
                         technique=technique,
@@ -4130,7 +4093,7 @@ def _test_chapter_impl(
                                 "phase_end",
                                 chapter=chapter_name,
                                 example=example_name,
-                                example_type="python",
+                                example_type=example_type,
                                 phase="optimized_timing",
                                 variant="optimized",
                                 technique=technique,
@@ -4144,7 +4107,7 @@ def _test_chapter_impl(
                                 "optimization_skip",
                                 chapter=chapter_name,
                                 example=example_name,
-                                example_type="python",
+                                example_type=example_type,
                                 optimization_file=opt_name,
                                 technique=technique,
                                 reason=skip_reason,
@@ -4165,7 +4128,7 @@ def _test_chapter_impl(
                                 "phase_end",
                                 chapter=chapter_name,
                                 example=example_name,
-                                example_type="python",
+                                example_type=example_type,
                                 phase="optimized_timing",
                                 variant="optimized",
                                 technique=technique,
@@ -4179,7 +4142,7 @@ def _test_chapter_impl(
                                 "optimization_error",
                                 chapter=chapter_name,
                                 example=example_name,
-                                example_type="python",
+                                example_type=example_type,
                                 optimization_file=opt_name,
                                 technique=technique,
                                 error=error_message,
@@ -4217,7 +4180,7 @@ def _test_chapter_impl(
                         "phase_end",
                         chapter=chapter_name,
                         example=example_name,
-                        example_type="python",
+                        example_type=example_type,
                         phase="optimized_timing",
                         variant="optimized",
                         technique=technique,
@@ -4443,7 +4406,7 @@ def _test_chapter_impl(
                                 "profiler_start",
                                 chapter=chapter_name,
                                 example=example_name,
-                                example_type="python",
+                                example_type=example_type,
                                 variant="optimized",
                                 profiler="nsys",
                                 technique=technique,
@@ -4471,7 +4434,7 @@ def _test_chapter_impl(
                                     "profiler_end",
                                     chapter=chapter_name,
                                     example=example_name,
-                                    example_type="python",
+                                    example_type=example_type,
                                     variant="optimized",
                                     profiler="nsys",
                                     technique=technique,
@@ -4487,7 +4450,7 @@ def _test_chapter_impl(
                                     "profiler_end",
                                     chapter=chapter_name,
                                     example=example_name,
-                                    example_type="python",
+                                    example_type=example_type,
                                     variant="optimized",
                                     profiler="nsys",
                                     technique=technique,
@@ -4503,7 +4466,7 @@ def _test_chapter_impl(
                                 "profiler_end",
                                 chapter=chapter_name,
                                 example=example_name,
-                                example_type="python",
+                                example_type=example_type,
                                 variant="optimized",
                                 profiler="nsys",
                                 technique=technique,
@@ -4526,7 +4489,7 @@ def _test_chapter_impl(
                                 "profiler_start",
                                 chapter=chapter_name,
                                 example=example_name,
-                                example_type="python",
+                                example_type=example_type,
                                 variant="optimized",
                                 profiler="ncu",
                                 technique=technique,
@@ -4554,7 +4517,7 @@ def _test_chapter_impl(
                                     "profiler_end",
                                     chapter=chapter_name,
                                     example=example_name,
-                                    example_type="python",
+                                    example_type=example_type,
                                     variant="optimized",
                                     profiler="ncu",
                                     technique=technique,
@@ -4570,7 +4533,7 @@ def _test_chapter_impl(
                                     "profiler_end",
                                     chapter=chapter_name,
                                     example=example_name,
-                                    example_type="python",
+                                    example_type=example_type,
                                     variant="optimized",
                                     profiler="ncu",
                                     technique=technique,
@@ -4586,7 +4549,7 @@ def _test_chapter_impl(
                                 "profiler_end",
                                 chapter=chapter_name,
                                 example=example_name,
-                                example_type="python",
+                                example_type=example_type,
                                 variant="optimized",
                                 profiler="ncu",
                                 technique=technique,
@@ -4609,7 +4572,7 @@ def _test_chapter_impl(
                                 "profiler_start",
                                 chapter=chapter_name,
                                 example=example_name,
-                                example_type="python",
+                                example_type=example_type,
                                 variant="optimized",
                                 profiler="torch",
                                 technique=technique,
@@ -4636,7 +4599,7 @@ def _test_chapter_impl(
                                     "profiler_end",
                                     chapter=chapter_name,
                                     example=example_name,
-                                    example_type="python",
+                                    example_type=example_type,
                                     variant="optimized",
                                     profiler="torch",
                                     technique=technique,
@@ -4652,7 +4615,7 @@ def _test_chapter_impl(
                                     "profiler_end",
                                     chapter=chapter_name,
                                     example=example_name,
-                                    example_type="python",
+                                    example_type=example_type,
                                     variant="optimized",
                                     profiler="torch",
                                     technique=technique,
@@ -4668,7 +4631,7 @@ def _test_chapter_impl(
                                 "profiler_end",
                                 chapter=chapter_name,
                                 example=example_name,
-                                example_type="python",
+                                example_type=example_type,
                                 variant="optimized",
                                 profiler="torch",
                                 technique=technique,
@@ -4694,7 +4657,7 @@ def _test_chapter_impl(
                                 "profiler_summary",
                                 chapter=chapter_name,
                                 example=example_name,
-                                example_type="python",
+                                example_type=example_type,
                                 variant="optimized",
                                 technique=technique,
                                 metrics=optimized_metrics,
@@ -4707,7 +4670,7 @@ def _test_chapter_impl(
                         "optimization_result",
                         chapter=chapter_name,
                         example=example_name,
-                        example_type="python",
+                        example_type=example_type,
                         optimization_file=opt_name,
                         technique=technique,
                         status=opt_result.get("status"),
@@ -4818,7 +4781,7 @@ def _test_chapter_impl(
                             "phase_end",
                             chapter=chapter_name,
                             example=example_name,
-                            example_type="python",
+                            example_type=example_type,
                             phase="optimized_timing",
                             variant="optimized",
                             technique=technique,
@@ -4855,7 +4818,7 @@ def _test_chapter_impl(
                         "best_optimization",
                         chapter=chapter_name,
                         example=example_name,
-                        example_type="python",
+                        example_type=example_type,
                         optimization_goal=optimization_goal,
                         technique=best_opt.get("technique") or best_opt.get("file"),
                         optimization_file=best_opt.get("file"),
@@ -4968,7 +4931,7 @@ def _test_chapter_impl(
                 "example_end",
                 chapter=chapter_name,
                 example=example_name,
-                example_type="python",
+                example_type=example_type,
                 status=result_entry.get("status"),
                 best_speedup=result_entry.get("best_speedup"),
                 best_memory_savings_pct=result_entry.get("best_memory_savings_pct"),
@@ -7851,6 +7814,7 @@ def test_chapter(
     pm_sampling_interval: Optional[int] = None,
     nsys_timeout_seconds: Optional[int] = None,
     ncu_timeout_seconds: Optional[int] = None,
+    force_synchronize: bool = False,
     graph_capture_ratio_threshold: Optional[float] = None,
     graph_capture_memory_threshold_mb: Optional[float] = None,
     launch_via: str = "python",
@@ -7903,6 +7867,7 @@ def test_chapter(
         pm_sampling_interval=pm_sampling_interval,
         nsys_timeout_seconds=nsys_timeout_seconds,
         ncu_timeout_seconds=ncu_timeout_seconds,
+        force_synchronize=force_synchronize,
         launch_via=launch_via,
         nproc_per_node=nproc_per_node,
         nnodes=nnodes,
@@ -8356,12 +8321,17 @@ def main():
     parser.add_argument(
         '--only-cuda',
         action='store_true',
-        help='Run only CUDA benchmarks (skip Python).'
+        help='Run only CUDA binary benchmarks (Python wrappers).'
     )
     parser.add_argument(
         '--only-python',
         action='store_true',
-        help='Run only Python benchmarks (skip CUDA).'
+        help='Run only Python benchmarks (skip CUDA binary wrappers).'
+    )
+    parser.add_argument(
+        '--force-sync',
+        action='store_true',
+        help='Force a device-wide synchronize immediately after benchmark_fn() (opt-in safeguard).'
     )
     parser.add_argument(
         '--timeout-multiplier',
@@ -8569,6 +8539,7 @@ def main():
             target_extra_args=extra_arg_map,
             only_cuda=bool(args.only_cuda),
             only_python=bool(args.only_python),
+            force_synchronize=bool(args.force_sync),
             event_logger=event_logger,
         )
         all_results.append(result)

@@ -108,60 +108,6 @@
       },
       "type": "python"
     },
-    "cluster_gemm_tcgen05_cta2": {
-      "example": "cluster_gemm_tcgen05_cta2",
-      "metadata": {
-        "best_memory_savings_pct": -17.765440666204025,
-        "best_memory_savings_ratio": 0.849145550972304,
-        "best_optimization": "optimized_cluster_gemm_tcgen05_cta2",
-        "best_optimization_file": "optimized_cluster_gemm_tcgen05_cta2.py",
-        "best_optimization_memory_mb": 212.125,
-        "best_optimization_speedup": 137.7990605761382,
-        "best_optimization_technique": "optimized_cluster_gemm_tcgen05_cta2",
-        "best_optimization_time_ms": 0.13082477422330968,
-        "optimization_goal": "speed"
-      },
-      "metrics": {
-        "baseline_memory_mb": 180.125,
-        "baseline_p75_ms": 17.999935150146484,
-        "baseline_throughput.bytes_per_s": null,
-        "baseline_throughput.custom_unit_name": "FLOPs",
-        "baseline_throughput.custom_unit_per_s": 952979595230.2622,
-        "baseline_throughput.goodput": null,
-        "baseline_throughput.latency_ms": 18.027530988057453,
-        "baseline_throughput.requests_per_s": 55.470713136616524,
-        "baseline_throughput.samples_per_s": 232661033.99176323,
-        "baseline_throughput.schemaVersion": "1.0",
-        "baseline_throughput.tokens_per_s": 232661033.99176323,
-        "baseline_time_ms": 18.027530988057453,
-        "best_memory_savings_pct": -17.765440666204025,
-        "best_memory_savings_ratio": 0.849145550972304,
-        "best_optimized_memory_mb": 212.125,
-        "best_optimized_p75_ms": 0.13036799430847168,
-        "best_optimized_speedup": 137.7990605761382,
-        "best_optimized_throughput.bytes_per_s": null,
-        "best_optimized_throughput.custom_unit_name": "FLOPs",
-        "best_optimized_throughput.custom_unit_per_s": 131319692970958.55,
-        "best_optimized_throughput.goodput": null,
-        "best_optimized_throughput.latency_ms": 0.13082477422330968,
-        "best_optimized_throughput.requests_per_s": 7643.812159714204,
-        "best_optimized_throughput.samples_per_s": 32060471916.737926,
-        "best_optimized_throughput.schemaVersion": "1.0",
-        "best_optimized_throughput.tokens_per_s": 32060471916.737926,
-        "best_optimized_time_ms": 0.13082477422330968,
-        "best_speedup": 137.7990605761382,
-        "is_regression": false
-      },
-      "provenance": {
-        "git_commit": "4fe709b0cf0876851d645e87c589d44dc5a59a91",
-        "hardware_key": "2x_b200",
-        "iterations": 20,
-        "profile_name": "none",
-        "timestamp": "2026-01-03T06:52:24.752862",
-        "warmup_iterations": 5
-      },
-      "type": "python"
-    },
     "moe_readiness_multigpu": {
       "example": "moe_readiness_multigpu",
       "metadata": {

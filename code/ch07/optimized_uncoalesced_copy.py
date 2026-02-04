@@ -24,7 +24,7 @@ class OptimizedCopyCoalescedBenchmark(CudaBinaryBenchmark):
         super().__init__(
             chapter_dir=chapter_dir,
             binary_name="optimized_copy_uncoalesced_coalesced",
-            friendly_name="Ch7 Coalesced Copy",
+            friendly_name="Optimized Copy Uncoalesced Coalesced",
             iterations=3,
             warmup=5,
             timeout_seconds=90,

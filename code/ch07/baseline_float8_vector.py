@@ -21,7 +21,7 @@ class BaselineFloat8VectorBenchmark(CudaBinaryBenchmark):
         super().__init__(
             chapter_dir=chapter_dir,
             binary_name="baseline_float8_vector",
-            friendly_name="Scalar/float4 Loads (Baseline)",
+            friendly_name="Baseline Float8 Vector",
             iterations=3,
             warmup=5,
             timeout_seconds=120,

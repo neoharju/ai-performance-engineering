@@ -23,7 +23,7 @@ class BaselineCopyScalarBenchmark(CudaBinaryBenchmark):
         super().__init__(
             chapter_dir=chapter_dir,
             binary_name="baseline_copy_scalar",
-            friendly_name="Ch7 Scalar Copy",
+            friendly_name="Baseline Copy Scalar",
             iterations=3,
             warmup=5,
             timeout_seconds=90,

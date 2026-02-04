@@ -60,7 +60,6 @@ class BaselineTorchAOQuantizationBenchmark(VerificationPayloadMixin, BaseBenchma
             dtype=torch.float32,
         )
         self._verify_input = self.data.detach().clone()
-        self._synchronize()
 
     def benchmark_fn(self) -> None:
         if self.model is None or self.data is None:
@@ -68,7 +67,6 @@ class BaselineTorchAOQuantizationBenchmark(VerificationPayloadMixin, BaseBenchma
         with self._nvtx_range("baseline_torchao_quantization"):
             with torch.no_grad():
                 self.output = self.model(self.data)
-        self._synchronize()
         if self._verify_input is None or self.output is None:
             raise RuntimeError("benchmark_fn() must produce output for verification")
 

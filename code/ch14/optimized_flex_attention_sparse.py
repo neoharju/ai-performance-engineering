@@ -298,13 +298,11 @@ class FlexAttentionSparseBenchmark(VerificationPayloadMixin, BaseBenchmark):
         for _ in range(3):
             with torch.no_grad():
                 _ = self.attn(self.x)
-        torch.cuda.synchronize(self.device)
 
     def benchmark_fn(self) -> None:
         """Benchmark: FlexAttention sliding window forward pass."""
         with torch.no_grad():
             self.output = self.attn(self.x)
-            self._synchronize()
         if self.output is None or self.x is None:
             raise RuntimeError("benchmark_fn() must produce output")
         self._payload_dtype = self.x.dtype

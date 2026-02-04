@@ -23,7 +23,7 @@ class OptimizedDoubleBufferedPipelineBenchmark(CudaBinaryBenchmark):
         super().__init__(
             chapter_dir=chapter_dir,
             binary_name="optimized_double_buffered_pipeline",
-            friendly_name="Optimized Double-buffered Pipeline",
+            friendly_name="Optimized Double Buffered Pipeline",
             iterations=3,
             warmup=5,
             timeout_seconds=180,

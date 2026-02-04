@@ -75,14 +75,12 @@ class OptimizedFlashInferBlockSparseBenchmark(VerificationPayloadMixin, BaseBenc
             self.head_dim,
             sm_scale=sm_scale,
         )
-        self._synchronize()
 
     def benchmark_fn(self) -> None:
         if self.q is None or self.k is None or self.v is None or self.wrapper is None:
             raise RuntimeError("Benchmark not initialized")
         with self._nvtx_range("optimized_flashinfer_block_sparse"):
             self.output = self.wrapper.run(self.q, self.k, self.v)
-        self._synchronize()
         if self.output is None:
             raise RuntimeError("benchmark_fn() must produce output for verification")
 

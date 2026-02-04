@@ -98,6 +98,7 @@ class BenchmarkDefaults:
     gpu_sm_clock_mhz: Optional[int] = None
     gpu_mem_clock_mhz: Optional[int] = None
     clear_l2_cache: bool = True
+    force_synchronize: bool = False
     clear_compile_cache: bool = True
     reset_memory_pool: bool = True
     adaptive_iterations: bool = True

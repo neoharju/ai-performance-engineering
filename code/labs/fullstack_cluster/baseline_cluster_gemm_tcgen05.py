@@ -1,4 +1,4 @@
-"""Inline tcgen05 baseline benchmark that mirrors the optimized build."""
+"""Inline tcgen05 baseline benchmark (SM100 inline path)."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ repo_root = Path(__file__).resolve().parent.parent
 if str(repo_root) not in sys.path:
     sys.path.insert(0, str(repo_root))
 
-from labs.fullstack_cluster import baseline_matmul_non_tcgen05
+from labs.fullstack_cluster import optimized_matmul_tcgen05
 from labs.fullstack_cluster.capstone_benchmarks import CapstoneMatmulBenchmark
 from labs.fullstack_cluster.gpu_requirements import ensure_tcgen05_supported
 
@@ -17,7 +17,7 @@ from labs.fullstack_cluster.gpu_requirements import ensure_tcgen05_supported
 class BaselineCapstoneGemmTCGen05Benchmark(CapstoneMatmulBenchmark):
     def __init__(self) -> None:
         super().__init__(
-            runner=baseline_matmul_non_tcgen05,
+            runner=optimized_matmul_tcgen05,
             label="capstone_baseline_tcgen05_inline",
             iterations=1,
             warmup=5,

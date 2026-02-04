@@ -18,6 +18,17 @@ os.environ.setdefault("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 # Keep linear warnings visible by default; callers can still override PYTHONWARNINGS.
 os.environ.setdefault("PYTHONWARNINGS", "default")
+# Targeted JIT deprecations (must be set before any torch import).
+warnings.filterwarnings(
+    "ignore",
+    message=r"`torch\.jit\.script_method` is deprecated.*",
+    category=DeprecationWarning,
+)
+warnings.filterwarnings(
+    "ignore",
+    message=r"`torch\.jit\.script` is deprecated.*",
+    category=DeprecationWarning,
+)
 # Torch debug logging is enabled in many environments via TORCH_LOGS.
 # When those atexit hooks fire after pytest has closed capture streams,
 # the logging writes can raise ValueError on a closed file. Disable noisy
@@ -80,6 +91,17 @@ def _parse_timeout(config) -> float:
 def pytest_configure(config):
     # Accept the ini option from pytest.ini even when pytest-timeout isn't loaded.
     config._global_timeout = _parse_timeout(config)
+    # Re-apply JIT deprecation filters after pytest config loads.
+    warnings.filterwarnings(
+        "ignore",
+        message=r"`torch\.jit\.script_method` is deprecated.*",
+        category=DeprecationWarning,
+    )
+    warnings.filterwarnings(
+        "ignore",
+        message=r"`torch\.jit\.script` is deprecated.*",
+        category=DeprecationWarning,
+    )
 
 
 def pytest_addoption(parser):

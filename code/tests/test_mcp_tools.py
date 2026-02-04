@@ -38,164 +38,190 @@ class ToolCase:
 
 CATEGORY_TOOLS: Dict[str, List[str]] = {
     "gpu": [
-        "aisp_gpu_info",
-        "aisp_gpu_bandwidth",
-        "aisp_gpu_topology",
-        "aisp_gpu_topology_matrix",
-        "aisp_gpu_power",
+        "gpu_info",
+        "gpu_bandwidth",
+        "gpu_topology",
+        "gpu_topology_matrix",
+        "gpu_power",
     ],
     "system": [
-        "aisp_system_software",
-        "aisp_system_dependencies",
-        "aisp_system_context",
-        "aisp_system_capabilities",
-        "aisp_system_full",
+        "system_software",
+        "system_dependencies",
+        "system_context",
+        "system_capabilities",
+        "system_parameters",
+        "system_container",
+        "system_cpu_memory",
+        "system_env",
+        "system_network",
+        "system_full",
     ],
     "info": [
-        "aisp_info_features",
+        "info_features",
     ],
     "benchmarking": [
-        "aisp_benchmark_targets",
-        "aisp_list_chapters",
-        "aisp_run_benchmarks",
-        "aisp_benchmark_variants",
-        "aisp_benchmark_deep_dive_compare",
-        "aisp_benchmark_llm_patch_loop",
-        "aisp_benchmark_report",
-        "aisp_benchmark_export",
-        "aisp_benchmark_compare_runs",
-        "aisp_benchmark_triage",
+        "benchmark_targets",
+        "list_chapters",
+        "run_benchmarks",
+        "benchmark_variants",
+        "benchmark_deep_dive_compare",
+        "benchmark_llm_patch_loop",
+        "benchmark_report",
+        "benchmark_export",
+        "benchmark_compare_runs",
+        "benchmark_triage",
+        "benchmark_data",
+        "benchmark_overview",
+        "benchmark_history",
+        "benchmark_trends",
+        "benchmark_compare",
     ],
     "analysis": [
-        "aisp_analyze_bottlenecks",
-        "aisp_analyze_pareto",
-        "aisp_analyze_scaling",
-        "aisp_analyze_stacking",
-        "aisp_analyze_whatif",
-        "aisp_analyze_comm_overlap",
-        "aisp_analyze_memory_patterns",
-        "aisp_analyze_dataloader",
-        "aisp_analyze_energy",
-        "aisp_predict_scaling",
+        "analyze_bottlenecks",
+        "analyze_pareto",
+        "analyze_scaling",
+        "analyze_stacking",
+        "analyze_whatif",
+        "analyze_comm_overlap",
+        "analyze_memory_patterns",
+        "analyze_dataloader",
+        "analyze_energy",
+        "predict_scaling",
     ],
     "optimization": [
-        "aisp_recommend",
-        "aisp_optimize_roi",
-        "aisp_optimize_techniques",
+        "optimize",
+        "recommend",
+        "optimize_roi",
+        "optimize_techniques",
     ],
     "distributed": [
-        "aisp_distributed_plan",
-        "aisp_distributed_nccl",
-        "aisp_launch_plan",
+        "distributed_plan",
+        "distributed_nccl",
+        "launch_plan",
     ],
     "inference": [
-        "aisp_inference_vllm",
-        "aisp_inference_quantization",
+        "inference_vllm",
+        "inference_quantization",
+        "inference_deploy",
+        "inference_estimate",
     ],
     "ai_llm": [
-        "aisp_ask",
-        "aisp_explain",
-        "aisp_ai_status",
+        "ask",
+        "explain",
+        "ai_status",
+        "ai_troubleshoot",
     ],
     "profiling": [
-        "aisp_profile_flame",
-        "aisp_profile_memory",
-        "aisp_profile_kernels",
-        "aisp_profile_roofline",
-        "aisp_profile_nsys",
-        "aisp_profile_ncu",
-        "aisp_profile_torch",
-        "aisp_profile_hta",
-        "aisp_profile_compare",
-        "aisp_compare_nsys",
-        "aisp_compare_ncu",
-        "aisp_nsys_summary",
+        "profile_flame",
+        "profile_memory",
+        "profile_kernels",
+        "profile_roofline",
+        "profile_nsys",
+        "profile_ncu",
+        "profile_torch",
+        "profile_hta",
+        "profile_compare",
+        "compare_nsys",
+        "compare_ncu",
+        "nsys_summary",
     ],
     "exports": [
-        "aisp_export_csv",
-        "aisp_export_pdf",
-        "aisp_export_html",
+        "export_csv",
+        "export_pdf",
+        "export_html",
     ],
     "hw": [
-        "aisp_hw_speed",
-        "aisp_hw_roofline",
-        "aisp_hw_disk",
-        "aisp_hw_pcie",
-        "aisp_hw_cache",
-        "aisp_hw_tc",
-        "aisp_hw_network",
-        "aisp_hw_ib",
-        "aisp_hw_nccl",
-        "aisp_hw_p2p",
+        "hw_speed",
+        "hw_roofline",
+        "hw_disk",
+        "hw_pcie",
+        "hw_cache",
+        "hw_tc",
+        "hw_network",
+        "hw_ib",
+        "hw_nccl",
+        "hw_p2p",
     ],
     "huggingface": [
-        "aisp_hf",
+        "hf",
     ],
     "cluster_cost": [
-        "aisp_cluster_slurm",
-        "aisp_cost_estimate",
+        "cluster_slurm",
+        "cost_estimate",
     ],
     "tools": [
-        "aisp_tools_kv_cache",
-        "aisp_tools_cost_per_token",
-        "aisp_tools_compare_precision",
-        "aisp_tools_detect_cutlass",
-        "aisp_tools_dump_hw",
-        "aisp_tools_probe_hw",
+        "tools_kv_cache",
+        "tools_cost_per_token",
+        "tools_compare_precision",
+        "tools_detect_cutlass",
+        "tools_dump_hw",
+        "tools_probe_hw",
     ],
     "utility": [
-        "aisp_status",
-        "aisp_context_summary",
-        "aisp_context_full",
-        "aisp_triage",
-        "aisp_job_status",
-        "aisp_suggest_tools",
+        "status",
+        "context_summary",
+        "context_full",
+        "triage",
+        "job_status",
+        "suggest_tools",
     ],
 }
 
 SLOW_TOOLS = {
-    "aisp_gpu_bandwidth",
-    "aisp_run_benchmarks",
-    "aisp_benchmark_variants",
-    "aisp_benchmark_deep_dive_compare",
-    "aisp_benchmark_llm_patch_loop",
-    "aisp_profile_nsys",
-    "aisp_profile_ncu",
-    "aisp_profile_torch",
-    "aisp_profile_hta",
-    "aisp_profile_flame",
-    "aisp_profile_memory",
-    "aisp_profile_kernels",
-    "aisp_profile_roofline",
-    "aisp_compare_nsys",
-    "aisp_compare_ncu",
-    "aisp_hw_speed",
-    "aisp_hw_roofline",
-    "aisp_hw_disk",
-    "aisp_hw_pcie",
-    "aisp_hw_cache",
-    "aisp_hw_tc",
-    "aisp_hw_nccl",
-    "aisp_hw_ib",
-    "aisp_hw_p2p",
+    "gpu_bandwidth",
+    "run_benchmarks",
+    "optimize",
+    "benchmark_variants",
+    "benchmark_deep_dive_compare",
+    "benchmark_llm_patch_loop",
+    "profile_nsys",
+    "profile_ncu",
+    "profile_torch",
+    "profile_hta",
+    "profile_flame",
+    "profile_memory",
+    "profile_kernels",
+    "profile_roofline",
+    "compare_nsys",
+    "compare_ncu",
+    "hw_speed",
+    "hw_roofline",
+    "hw_disk",
+    "hw_pcie",
+    "hw_cache",
+    "hw_tc",
+    "hw_nccl",
+    "hw_ib",
+    "hw_p2p",
 }
 
 BENCHMARK_SLOW_TOOLS = {
-    "aisp_run_benchmarks",
-    "aisp_benchmark_variants",
-    "aisp_benchmark_deep_dive_compare",
-    "aisp_benchmark_llm_patch_loop",
+    "run_benchmarks",
+    "optimize",
+    "benchmark_variants",
+    "benchmark_deep_dive_compare",
+    "benchmark_llm_patch_loop",
 }
 
 TOOL_PARAMS: Dict[str, Dict[str, Any]] = {
-    "aisp_run_benchmarks": {
+    "optimize": {
+        "target": "ch10:atomic_reduction",
+        "profile": "minimal",
+        "iterations": 1,
+        "warmup": 5,
+        "llm_analysis": False,
+        "force_llm": False,
+        "apply_patches": False,
+        "rebenchmark_llm_patches": False,
+    },
+    "run_benchmarks": {
         "targets": ["ch10:atomic_reduction"],
         "profile": "minimal",
         "iterations": 1,
         "warmup": 5,
         "llm_analysis": False,
     },
-    "aisp_benchmark_variants": {
+    "benchmark_variants": {
         "targets": ["ch10:atomic_reduction"],
         "profile": "minimal",
         "iterations": 1,
@@ -205,33 +231,35 @@ TOOL_PARAMS: Dict[str, Dict[str, Any]] = {
         "apply_patches": False,
         "rebenchmark_llm_patches": False,
     },
-    "aisp_benchmark_report": {
+    "benchmark_report": {
         "data_file": str(BENCH_FILE),
         "output": str(REPORT_OUTPUT),
         "format": "pdf",
         "title": "MCP Report",
         "author": "MCP Tests",
     },
-    "aisp_benchmark_export": {
+    "benchmark_export": {
         "data_file": str(BENCH_FILE),
         "format": "csv",
         "output": str(EXPORT_OUTPUT),
     },
-    "aisp_benchmark_compare_runs": {
+    "benchmark_compare_runs": {
         "baseline": str(BENCH_FILE),
         "candidate": str(BENCH_FILE),
         "top": 3,
     },
-    "aisp_analyze_whatif": {"max_vram_gb": 24, "max_latency_ms": 50, "include_context": False},
-    "aisp_recommend": {"model_size": 7, "gpus": 1, "goal": "throughput", "include_context": False},
-    "aisp_distributed_plan": {"model_size": 7, "gpus": 4, "nodes": 1, "include_context": False},
-    "aisp_distributed_nccl": {"nodes": 1, "gpus": 4, "include_context": False},
-    "aisp_launch_plan": {"model_params": 7, "nodes": 1, "gpus": 2, "batch_size": 1},
-    "aisp_inference_vllm": {"model": "7b", "target": "throughput", "include_context": False},
-    "aisp_inference_quantization": {"model_size": 7, "include_context": False},
-    "aisp_ask": {"question": "What is tensor parallelism?", "include_context": False},
-    "aisp_explain": {"concept": "warp divergence", "include_context": False},
-    "aisp_profile_nsys": {
+    "analyze_whatif": {"max_vram_gb": 24, "max_latency_ms": 50, "include_context": False},
+    "recommend": {"model_size": 7, "gpus": 1, "goal": "throughput", "include_context": False},
+    "distributed_plan": {"model_size": 7, "gpus": 4, "nodes": 1, "include_context": False},
+    "distributed_nccl": {"nodes": 1, "gpus": 4, "include_context": False},
+    "launch_plan": {"nodes": 1, "gpus_per_node": 2, "script": "train.py"},
+    "inference_vllm": {"model": "7b", "model_size": 7, "target": "throughput", "include_context": False},
+    "inference_deploy": {"model": "7b", "model_size": 7, "goal": "throughput", "include_context": False},
+    "inference_estimate": {"model": "7b", "model_size": 7, "goal": "throughput", "include_context": False},
+    "inference_quantization": {"model_size": 7, "include_context": False},
+    "ask": {"question": "What is tensor parallelism?", "include_context": False},
+    "explain": {"concept": "warp divergence", "include_context": False},
+    "profile_nsys": {
         "command": ["python", "-c", "print('nsys')"],
         "output_name": "mcp_nsys_test",
         "output_dir": str(ARTIFACT_RUNS_DIR),
@@ -241,7 +269,7 @@ TOOL_PARAMS: Dict[str, Dict[str, Any]] = {
         "trace_forks": False,
         "include_context": False,
     },
-    "aisp_profile_ncu": {
+    "profile_ncu": {
         "command": ["python", "-c", "print('ncu')"],
         "output_name": "mcp_ncu_test",
         "output_dir": str(ARTIFACT_RUNS_DIR),
@@ -249,34 +277,31 @@ TOOL_PARAMS: Dict[str, Dict[str, Any]] = {
         "workload_type": "memory_bound",
         "include_context": False,
     },
-    "aisp_compare_nsys": {"profiles_dir": str(PROFILE_FIXTURE_DIR), "include_context": False},
-    "aisp_compare_ncu": {"profiles_dir": str(PROFILE_FIXTURE_DIR), "include_context": False},
-    "aisp_nsys_summary": {"report_path": str(NSYS_SAMPLE), "include_context": False},
-    "aisp_export_csv": {"detailed": False, "include_context": False},
-    "aisp_export_pdf": {"include_context": False},
-    "aisp_export_html": {"include_context": False},
-    "aisp_hw_speed": {"gemm_size": 256, "mem_size_mb": 8, "mem_stride": 64, "include_context": False},
-    "aisp_hw_roofline": {"size_mb": 8, "strides": [64, 128]},
-    "aisp_hw_disk": {"file_size_mb": 8, "block_size_kb": 128, "tmp_dir": str(MICROBENCH_DIR)},
-    "aisp_hw_pcie": {"size_mb": 8, "iters": 1},
-    "aisp_hw_cache": {"size_mb": 8, "stride": 64},
-    "aisp_hw_tc": {"size": 512, "precision": "fp16"},
-    "aisp_hw_sfu": {"elements": 1024},
-    "aisp_hw_tcp": {"size_mb": 4, "port": 50007},
-    "aisp_hw_ib": {"size_mb": 64},
-    "aisp_hw_nccl": {"collective": "all_reduce", "gpus": 2},
-    "aisp_hw_p2p": {"size_mb": 64},
-    "aisp_info_features": {},
-    "aisp_info_network": {},
-    "aisp_profile_compare": {"chapter": "ch11"},
-    "aisp_benchmark_deep_dive_compare": {
+    "compare_nsys": {"profiles_dir": str(PROFILE_FIXTURE_DIR), "include_context": False},
+    "compare_ncu": {"profiles_dir": str(PROFILE_FIXTURE_DIR), "include_context": False},
+    "nsys_summary": {"report_path": str(NSYS_SAMPLE), "include_context": False},
+    "export_csv": {"detailed": False, "include_context": False},
+    "export_pdf": {"include_context": False},
+    "export_html": {"include_context": False},
+    "hw_speed": {"gemm_size": 256, "mem_size_mb": 8, "mem_stride": 64, "include_context": False},
+    "hw_roofline": {"size_mb": 8, "strides": [64, 128]},
+    "hw_disk": {"file_size_mb": 8, "block_size_kb": 128, "tmp_dir": str(MICROBENCH_DIR)},
+    "hw_pcie": {"size_mb": 8, "iters": 1},
+    "hw_cache": {"size_mb": 8, "stride": 64},
+    "hw_tc": {"size": 512, "precision": "fp16"},
+    "hw_ib": {"size_mb": 64},
+    "hw_nccl": {"collective": "all_reduce", "gpus": 2},
+    "hw_p2p": {"size_mb": 64},
+    "info_features": {},
+    "profile_compare": {"chapter": "ch11"},
+    "benchmark_deep_dive_compare": {
         "targets": ["ch10:atomic_reduction"],
         "output_dir": str(REPO_ROOT / "artifacts" / "mcp-deep-dive-tests"),
         "iterations": 1,
         "warmup": 5,
         "timeout_seconds": 900,
     },
-    "aisp_benchmark_llm_patch_loop": {
+    "benchmark_llm_patch_loop": {
         "targets": ["ch10:atomic_reduction"],
         "output_dir": str(REPO_ROOT / "artifacts" / "mcp-llm-loop-tests"),
         "compare_output_dir": str(REPO_ROOT / "artifacts" / "mcp-llm-loop-compare-tests"),
@@ -287,22 +312,27 @@ TOOL_PARAMS: Dict[str, Dict[str, Any]] = {
         "force_llm": True,
         "llm_explain": True,
     },
-    "aisp_profile_torch": {
+    "profile_torch": {
         "script": str(REPO_ROOT / "tests" / "fixtures" / "mcp_torch_profile_target.py"),
         "output_dir": str(ARTIFACT_RUNS_DIR),
         "run_id": "mcp_torch_test",
     },
-    "aisp_profile_hta": {
+    "profile_hta": {
         "command": ["python", "-c", "print('hta')"],
         "output_dir": str(ARTIFACT_RUNS_DIR),
         "run_id": "mcp_hta_test",
     },
-    "aisp_hf": {"action": "search", "query": "llama", "limit": 3},
-    "aisp_cluster_slurm": {"model": "7b", "nodes": 1, "gpus": 2},
-    "aisp_cost_estimate": {"model_size": 7, "training_tokens": 100, "provider": "aws"},
-    "aisp_help": {"query": "benchmark"},
-    "aisp_suggest_tools": {"query": "profile this model"},
-    "aisp_job_status": {"job_id": "test_job_missing"},
+    "hf": {"action": "search", "query": "llama", "limit": 3},
+    "cluster_slurm": {"model": "7b", "nodes": 1, "gpus": 2},
+    "cost_estimate": {"gpu_type": "h100", "num_gpus": 1, "hours_per_day": 1},
+    "suggest_tools": {"query": "profile this model"},
+    "job_status": {"job_id": "test_job_missing"},
+    "benchmark_data": {"page": 1, "page_size": 10},
+    "benchmark_overview": {},
+    "benchmark_history": {},
+    "benchmark_trends": {},
+    "benchmark_compare": {"baseline": str(BENCH_FILE), "candidate": str(BENCH_FILE), "top": 3},
+    "ai_troubleshoot": {"issue": "NCCL timeout", "symptoms": ["timeout"], "config": {"gpus": 4}},
 }
 
 
@@ -373,7 +403,16 @@ def test_expected_tool_registration_matches_catalog():
     expected = {case.name for case in ALL_TOOL_CASES}
     registered = set(mcp_server.TOOLS.keys())
     assert expected == registered, "Tool catalog must mirror MCP server registry"
-    assert len(expected) == 82
+    assert len(expected) == 96
+
+
+def test_optimize_path_resolution():
+    from mcp.mcp_server import _resolve_benchmark_target_from_path
+
+    path = REPO_ROOT / "ch10" / "baseline_atomic_reduction.py"
+    target, err = _resolve_benchmark_target_from_path(str(path))
+    assert err is None
+    assert target == "ch10:atomic_reduction"
 
 
 def test_tool_list_protocol_matches_registration(server: mcp_server.MCPServer):
@@ -383,9 +422,42 @@ def test_tool_list_protocol_matches_registration(server: mcp_server.MCPServer):
     assert names == expected
 
 
+@pytest.mark.parametrize(
+    ("query", "expected_tool"),
+    [
+        ("optimize ch10/baseline_atomic_reduction.py", "optimize"),
+        ("tune cuda kernel occupancy", "profile_ncu"),
+        ("torch.compile graph breaks", "profile_torch"),
+        ("autotune tile sizes", "benchmark_variants"),
+        ("compare nsys reports", "compare_nsys"),
+        ("compare benchmark runs", "benchmark_compare_runs"),
+        ("memory coalescing analysis", "analyze_memory_patterns"),
+            ("slurm script for training", "cluster_slurm"),
+            ("check cuda version", "system_software"),
+            ("kv cache size", "tools_kv_cache"),
+            ("benchmark history", "benchmark_history"),
+            ("performance trends over time", "benchmark_trends"),
+            ("gpu temperature", "gpu_power"),
+            ("huggingface search llama", "hf"),
+            ("export csv here", "export_csv"),
+            ("network status ib", "system_network"),
+            ("topology matrix", "gpu_topology_matrix"),
+            ("cloud cost estimate", "cost_estimate"),
+            ("llm status", "ai_status"),
+    ],
+)
+def test_suggest_tools_common_intents(server: mcp_server.MCPServer, query: str, expected_tool: str):
+    result = server.call_tool("suggest_tools", {"query": query})
+    payload = _payload_from_result(result)
+    tool_result = payload.get("result") or {}
+    suggestions = tool_result.get("suggestions") or []
+    tools = {entry.get("tool") for entry in suggestions if isinstance(entry, dict)}
+    assert expected_tool in tools
+
+
 def test_tool_response_is_text_only(server: mcp_server.MCPServer):
     """MCP responses must emit only text content to satisfy clients that reject other types."""
-    result = server.call_tool("aisp_status", {})
+    result = server.call_tool("status", {})
     assert isinstance(result.content, list)
     assert len(result.content) == 1, "MCP content should contain exactly one text entry"
     entry = result.content[0]
@@ -396,11 +468,11 @@ def test_tool_response_is_text_only(server: mcp_server.MCPServer):
 
 def test_nsys_summary_uses_fixture_csv(server: mcp_server.MCPServer):
     result = server.call_tool(
-        "aisp_nsys_summary",
+        "nsys_summary",
         {"report_path": str(NSYS_SAMPLE), "include_context": False},
     )
     payload = _payload_from_result(result)
-    assert payload["tool"] == "aisp_nsys_summary"
+    assert payload["tool"] == "nsys_summary"
     assert payload["status"] == "ok"
     tool_result = payload["result"]
     assert tool_result.get("success") is True
@@ -428,7 +500,7 @@ def test_mcp_protocol_round_trip(server: mcp_server.MCPServer):
         tool_list = await server.handle_message({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
         assert tool_list and "tools" in tool_list["result"]
 
-        sample_tool = "aisp_status"
+        sample_tool = "status"
         call = await server.handle_message(
             {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": sample_tool, "arguments": {}}}
         )
@@ -451,36 +523,36 @@ def test_slow_tools_opt_in_execution(server: mcp_server.MCPServer, case: ToolCas
     payload = _payload_from_result(result)
     assert payload["tool"] == case.name
     assert payload["status"] in {"ok", "error"}
-    if case.name == "aisp_benchmark_deep_dive_compare":
+    if case.name == "benchmark_deep_dive_compare":
         assert payload["status"] == "ok"
         tool_result = payload["result"]
         assert tool_result.get("success") is True
         assert Path(tool_result["analysis_json"]).exists()
-    if case.name == "aisp_run_benchmarks":
+    if case.name == "run_benchmarks":
         tool_result = payload["result"]
         if tool_result.get("returncode", 1) == 0 and tool_result.get("results_json"):
             assert "triage" in tool_result
-    if case.name == "aisp_profile_nsys":
+    if case.name == "profile_nsys":
         tool_result = payload["result"]
         if tool_result.get("success"):
             assert "nsys_metrics" in tool_result
             assert isinstance(tool_result["nsys_metrics"], dict)
-    if case.name == "aisp_profile_ncu":
+    if case.name == "profile_ncu":
         tool_result = payload["result"]
         if tool_result.get("success"):
             assert "ncu_metrics" in tool_result
             assert isinstance(tool_result["ncu_metrics"], dict)
-    if case.name == "aisp_profile_hta":
+    if case.name == "profile_hta":
         tool_result = payload["result"]
         if tool_result.get("success"):
             assert "nsys_metrics" in tool_result
             assert isinstance(tool_result["nsys_metrics"], dict)
-    if case.name == "aisp_profile_torch":
+    if case.name == "profile_torch":
         tool_result = payload["result"]
         if tool_result.get("success"):
             assert "torch_metrics" in tool_result
             assert "report" in tool_result
-    if case.name == "aisp_compare_nsys":
+    if case.name == "compare_nsys":
         tool_result = payload["result"]
         if NSYS_REP_FIXTURE.exists():
             assert tool_result.get("metrics")
@@ -492,7 +564,7 @@ def test_slow_tools_opt_in_execution(server: mcp_server.MCPServer, case: ToolCas
             assert ncu_comparison.get("kernel_comparison") or ncu_comparison.get("metrics")
             if ncu_comparison.get("kernel_comparison") is not None:
                 assert len(ncu_comparison["kernel_comparison"]) > 0
-    if case.name == "aisp_compare_ncu":
+    if case.name == "compare_ncu":
         tool_result = payload["result"]
         if NCU_REP_FIXTURE.exists():
             assert not tool_result.get("error")
@@ -512,8 +584,8 @@ def test_benchmark_export_runs_inprocess(server: mcp_server.MCPServer, tmp_path:
     BENCH_FILE.write_text(json.dumps({"benchmarks": []}))
     output_path = tmp_path / "export.json"
     params = {"data_file": str(BENCH_FILE), "format": "json", "output": str(output_path)}
-    result = server.call_tool("aisp_benchmark_export", params)
+    result = server.call_tool("benchmark_export", params)
     payload = _payload_from_result(result)
-    assert payload["tool"] == "aisp_benchmark_export"
+    assert payload["tool"] == "benchmark_export"
     assert payload["result"].get("output") == str(output_path)
     assert output_path.exists()

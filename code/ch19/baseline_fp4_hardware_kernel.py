@@ -28,7 +28,7 @@ class BaselineFP4HardwareKernelBenchmark(CudaBinaryBenchmark):
         super().__init__(
             chapter_dir=chapter_dir,
             binary_name="baseline_fp4_hardware_kernel",
-            friendly_name="Baseline FP4 Hardware Kernel (Manual GEMM)",
+            friendly_name="Baseline Fp4 Hardware Kernel",
             iterations=1,
             warmup=1,
             timeout_seconds=300,

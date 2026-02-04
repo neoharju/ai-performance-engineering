@@ -76,10 +76,11 @@ aisp profile nsys python train.py
 ### MCP Tools (for AI assistants)
 
 ```
-aisp_gpu_info          - Get GPU hardware info
-aisp_analyze_bottlenecks - Identify performance issues
-aisp_recommend         - Get optimization recommendations
-aisp_ask              - Ask performance questions
+gpu_info          - Get GPU hardware info
+analyze_bottlenecks - Identify performance issues
+optimize          - Run quick LLM benchmark variants from a target or file path
+recommend         - Get optimization recommendations
+ask              - Ask performance questions
 ```
 
 ---
@@ -92,12 +93,11 @@ Hardware information, topology, power management, and bandwidth testing.
 
 | Operation | Description | CLI | MCP Tool |
 |-----------|-------------|-----|----------|
-| `info()` | GPU name, memory, temperature, utilization | `aisp gpu info` | `aisp_gpu_info` |
-| `topology()` | Multi-GPU topology, NVLink, P2P matrix | `aisp gpu topology` | `aisp_gpu_topology` |
-| `power()` | Power draw, limits, thermal status | `aisp gpu power` | `aisp_gpu_power` |
-| `bandwidth()` | Memory bandwidth test (HBM) | `aisp gpu bandwidth` | `aisp_gpu_bandwidth` |
-| `nvlink()` | NVLink status and bandwidth | - | `aisp_gpu_topology` |
-| `control()` | Clock settings, persistence mode | - | - |
+| `info()` | GPU name, memory, temperature, utilization | `aisp gpu info` | `gpu_info` |
+| `topology()` | Multi-GPU topology, NVLink, P2P matrix | `aisp gpu topology` | `gpu_topology` |
+| `power()` | Power draw, limits, thermal status | `aisp gpu power` | `gpu_power` |
+| `bandwidth()` | Memory bandwidth test (HBM) | `aisp gpu bandwidth` | `gpu_bandwidth` |
+| `topology_matrix()` | Raw `nvidia-smi topo -m` matrix | - | `gpu_topology_matrix` |
 
 **Python API:**
 ```python
@@ -115,12 +115,15 @@ Software stack, dependencies, and environment information.
 
 | Operation | Description | CLI | MCP Tool |
 |-----------|-------------|-----|----------|
-| `software()` | PyTorch, CUDA, Python versions | `aisp system software` | `aisp_system_software` |
-| `dependencies()` | ML/AI dependency health | `aisp system deps` | `aisp_system_dependencies` |
-| `capabilities()` | Hardware features (TMA, FP8, tensor cores) | `aisp system capabilities` | `aisp_system_capabilities` |
-| `context()` | Full system context for AI analysis | `aisp system context` | `aisp_system_context` |
-| `parameters()` | Kernel parameters affecting performance | - | `aisp_system_parameters` |
-| `container()` | Container/cgroup limits | - | `aisp_container_limits` |
+| `software()` | PyTorch, CUDA, Python versions | `aisp system software` | `system_software` |
+| `dependencies()` | ML/AI dependency health | `aisp system deps` | `system_dependencies` |
+| `capabilities()` | Hardware features (TMA, FP8, tensor cores) | `aisp system capabilities` | `system_capabilities` |
+| `context()` | Full system context for AI analysis | `aisp system context` | `system_context` |
+| `parameters()` | Kernel parameters affecting performance | `aisp system parameters` | `system_parameters` |
+| `container()` | Container/cgroup limits | `aisp system container` | `system_container` |
+| `cpu_memory()` | CPU/NUMA/cache hierarchy snapshot | `aisp system cpu-memory` | `system_cpu_memory` |
+| `env()` | Environment variables + paths | `aisp system env` | `system_env` |
+| `network()` | Network + InfiniBand status | `aisp system network` | `system_network` |
 
 **Python API:**
 ```python
@@ -128,7 +131,14 @@ engine.system.software()      # Software versions
 engine.system.dependencies()  # Dependency health
 engine.system.capabilities()  # Hardware capabilities
 engine.system.context()       # Full context for AI
+engine.system.parameters()    # Kernel/system parameters
+engine.system.container()     # Container/cgroup limits
+engine.system.cpu_memory()    # CPU/NUMA/cache snapshot
+engine.system.env()           # Environment variables
+engine.system.network()       # Network/IB status
 ```
+
+**MCP-only system tools:** `system_full`, `context_summary`, `context_full`, `status`, `triage`.
 
 ---
 
@@ -138,16 +148,18 @@ Profiling with Nsight Systems, Nsight Compute, and torch.profiler.
 
 | Operation | Description | CLI | MCP Tool |
 |-----------|-------------|-----|----------|
-| `flame_graph()` | Flame graph visualization data | `aisp profile flame` | `aisp_profile_flame` |
-| `kernels()` | Kernel execution breakdown | - | `aisp_profile_kernels` |
-| `memory_timeline()` | Memory allocation timeline | - | `aisp_profile_memory` |
-| `hta()` | Holistic Trace Analysis | - | `aisp_profile_hta` |
-| `torch()` | torch.profiler capture summary | - | `aisp_profile_torch` |
-| `roofline()` | Roofline model data | - | `aisp_profile_roofline` |
-| `compare(chapter)` | Compare baseline vs optimized | `aisp profile compare` | `aisp_profile_compare` |
+| `nsys(command)` | Nsight Systems capture | `aisp profile nsys` | `profile_nsys` |
+| `ncu(command)` | Nsight Compute capture | `aisp profile ncu` | `profile_ncu` |
+| `torch(script)` | torch.profiler capture summary | `aisp profile torch` | `profile_torch` |
+| `hta(command)` | HTA capture + analysis | `aisp profile hta-capture` | `profile_hta` |
+| `flame_graph()` | Flame graph visualization data | `aisp profile flame` | `profile_flame` |
+| `kernels()` | Kernel execution breakdown | `aisp profile kernels` | `profile_kernels` |
+| `memory_timeline()` | Memory allocation timeline | `aisp profile memory` | `profile_memory` |
+| `roofline()` | Roofline model data | `aisp profile roofline` | `profile_roofline` |
+| `compare(chapter)` | Compare baseline vs optimized | `aisp profile compare` | `profile_compare` |
 | `list_profiles()` | List available profile pairs | - | - |
 
-**MCP profiling captures include metrics JSON:** `aisp_profile_nsys` returns `nsys_metrics`, `aisp_profile_ncu` returns `ncu_metrics`, `aisp_profile_torch` returns `torch_metrics` (and `report` alias), and `aisp_profile_hta` includes `nsys_metrics`. Use these payloads to analyze regressions and bottleneck shifts.
+**MCP profiling captures include metrics JSON:** `profile_nsys` returns `nsys_metrics`, `profile_ncu` returns `ncu_metrics`, `profile_torch` returns `torch_metrics` (and `report` alias), and `profile_hta` includes `nsys_metrics`. Use these payloads to analyze regressions and bottleneck shifts.
 
 **Python API:**
 ```python
@@ -166,16 +178,16 @@ Performance analysis, bottleneck detection, and what-if scenarios.
 
 | Operation | Description | CLI | MCP Tool |
 |-----------|-------------|-----|----------|
-| `bottlenecks(mode)` | Identify performance bottlenecks | `aisp analyze bottleneck` | `aisp_analyze_bottlenecks` |
-| `pareto()` | Pareto frontier (throughput vs latency vs memory) | - | `aisp_analyze_pareto` |
-| `scaling()` | Scaling analysis with GPU count | - | `aisp_analyze_scaling` |
-| `whatif(...)` | What-if constraint analysis | - | `aisp_analyze_whatif` |
-| `stacking()` | Optimization stacking compatibility | - | `aisp_analyze_stacking` |
-| `power()` | Power efficiency analysis | - | `aisp_gpu_power` |
-| `memory(...)` | Memory access pattern analysis | - | `aisp_memory_access` |
-| `warp_divergence()` | Warp divergence analysis | - | `aisp_warp_divergence` |
-| `bank_conflicts()` | Shared memory bank conflicts | - | `aisp_bank_conflicts` |
-| `leaderboards()` | Performance leaderboards | - | - |
+| `bottlenecks(mode)` | Identify performance bottlenecks | `aisp analyze bottlenecks` | `analyze_bottlenecks` |
+| `pareto()` | Pareto frontier (throughput vs latency vs memory) | `aisp analyze pareto` | `analyze_pareto` |
+| `scaling()` | Scaling analysis with GPU count | `aisp analyze scaling` | `analyze_scaling` |
+| `whatif(...)` | What-if constraint analysis | `aisp analyze whatif` | `analyze_whatif` |
+| `stacking()` | Optimization stacking compatibility | `aisp analyze stacking` | `analyze_stacking` |
+| `comm_overlap()` | Communication/compute overlap analysis | - | `analyze_comm_overlap` |
+| `memory_patterns()` | Memory access pattern analysis | - | `analyze_memory_patterns` |
+| `dataloader()` | DataLoader bottleneck analysis | - | `analyze_dataloader` |
+| `energy()` | Energy efficiency analysis | - | `analyze_energy` |
+| `predict_scaling()` | Predict scaling to more GPUs | - | `predict_scaling` |
 
 **Python API:**
 ```python
@@ -195,12 +207,11 @@ Optimization recommendations and technique analysis.
 
 | Operation | Description | CLI | MCP Tool |
 |-----------|-------------|-----|----------|
-| `recommend(model_size, gpus, goal)` | Get recommendations | `aisp optimize recommend` | `aisp_recommend` |
-| `techniques()` | List all optimization techniques | - | `aisp_optimize_techniques` |
-| `roi()` | Calculate optimization ROI | - | `aisp_optimize_roi` |
-| `compound(techniques)` | Analyze compound effects | - | - |
-| `playbooks()` | Optimization playbooks | - | - |
-| `details(technique)` | Technique details | - | - |
+| `recommend(model_size, gpus, goal)` | Get recommendations | `aisp optimize recommend` | `recommend` |
+| `techniques()` | List all optimization techniques | `aisp optimize techniques` | `optimize_techniques` |
+| `roi()` | Calculate optimization ROI | `aisp optimize roi` | `optimize_roi` |
+
+**MCP-only optimize workflow:** `optimize` accepts `path` or `target` and runs quick LLM variants (benchmark_variants defaults).
 
 **Python API:**
 ```python
@@ -208,7 +219,6 @@ engine.optimize.recommend(model_size=70, gpus=8)
 engine.optimize.recommend(model_size=7, goal="memory")
 engine.optimize.techniques()                     # All techniques
 engine.optimize.roi()                            # ROI analysis
-engine.optimize.compound(["flash-attention", "fsdp"])
 ```
 
 ---
@@ -219,21 +229,23 @@ Distributed training: parallelism planning, NCCL tuning, FSDP configuration.
 
 | Operation | Description | CLI | MCP Tool |
 |-----------|-------------|-----|----------|
-| `plan(model_size, gpus, nodes)` | Plan parallelism strategy | `aisp distributed plan` | `aisp_distributed_plan` |
-| `nccl(nodes, gpus)` | NCCL tuning recommendations | `aisp distributed nccl` | `aisp_distributed_nccl` |
-| `fsdp(model)` | FSDP configuration | - | - |
+| `plan(model_size, gpus, nodes)` | Plan parallelism strategy | `aisp distributed plan` | `distributed_plan` |
+| `topology()` | Parallelism topology snapshot | `aisp distributed topology` | - |
+| `nccl(nodes, gpus)` | NCCL tuning recommendations | `aisp distributed nccl` | `distributed_nccl` |
+| `fsdp(model)` | FSDP configuration | `aisp distributed zero` | - |
 | `tensor_parallel(model)` | Tensor parallelism config | - | - |
 | `pipeline(model)` | Pipeline parallelism config | - | - |
-| `slurm(...)` | Generate SLURM script | `aisp distributed slurm` | `aisp_cluster_slurm` |
-| `cost_estimate(...)` | Cloud cost estimation | - | `aisp_cost_estimate` |
+| `launch_plan(...)` | Generate torchrun launch plan | `aisp distributed launch-plan` | `launch_plan` |
+| `slurm(...)` | Generate SLURM script | `aisp distributed slurm` | `cluster_slurm` |
+| `cost_estimate(...)` | Cloud cost estimation | - | `cost_estimate` |
 
 **Python API:**
 ```python
 engine.distributed.plan(model_size=70, gpus=16, nodes=2)
+engine.distributed.topology()
 engine.distributed.nccl(nodes=2, gpus=8)
-engine.distributed.fsdp(model="7b")
 engine.distributed.slurm(model="70b", nodes=4, gpus=8)
-engine.distributed.cost_estimate(model_size=70, provider="aws")
+engine.distributed.cost_estimate(gpu_type="h100", num_gpus=4, hours_per_day=8)
 ```
 
 ---
@@ -244,17 +256,20 @@ Inference optimization: vLLM configuration, quantization, deployment.
 
 | Operation | Description | CLI | MCP Tool |
 |-----------|-------------|-----|----------|
-| `vllm_config(model, target)` | Generate vLLM configuration | `aisp inference vllm` | `aisp_inference_vllm` |
-| `quantization(model_size)` | Quantization recommendations | `aisp inference quantize` | `aisp_inference_quantization` |
-| `deploy(params)` | Deployment configuration | - | - |
-| `estimate(params)` | Inference performance estimate | - | - |
+| `vllm_config(model, target)` | Generate vLLM configuration (model size required) | `aisp inference vllm` | `inference_vllm` |
+| `quantization(model_size)` | Quantization recommendations | `aisp inference quantize` | `inference_quantization` |
+| `deploy(params)` | Deployment configuration | `aisp inference deploy` | `inference_deploy` |
+| `estimate(params)` | Inference performance estimate | `aisp inference estimate` | `inference_estimate` |
 
 **Python API:**
 ```python
-engine.inference.vllm_config(model="llama-70b", target="throughput")
+engine.inference.vllm_config(model="llama-70b", model_params_b=70, target="throughput")
 engine.inference.quantization(model_size=70)    # FP8, INT8, INT4 options
-engine.inference.deploy({"model": "70b", "replicas": 4})
+engine.inference.deploy({"model": "70b", "model_size": 70, "num_gpus": 4})
+engine.inference.estimate({"model": "70b", "model_size": 70, "num_gpus": 4})
 ```
+
+**CLI-only convenience:** `aisp inference serve` generates (and optionally runs) a launch command.
 
 ---
 
@@ -264,21 +279,27 @@ Benchmark execution, history tracking, and result comparison.
 
 | Operation | Description | CLI | MCP Tool |
 |-----------|-------------|-----|----------|
-| `run(targets, profile)` | Run benchmarks | `aisp bench run` | `aisp_run_benchmarks` |
-| `targets()` | List benchmark targets | `aisp bench list-targets` | `aisp_benchmark_targets` |
-| `history()` | Historical benchmark runs | - | - |
-| `data()` | Load benchmark results | - | - |
-| `available()` | Available benchmarks | - | `aisp_available_benchmarks` |
-| `speed_test()` | Quick speed tests | `aisp benchmark speed` | `aisp_hw_speed` |
+| `run(targets, profile)` | Run benchmarks | `aisp bench run` | `run_benchmarks` |
+| `targets()` | List benchmark targets | `aisp bench list-targets` | `benchmark_targets` |
+| `history()` | Historical benchmark runs | - | `benchmark_history` |
+| `data()` | Load benchmark results (filtered/paged) | - | `benchmark_data` |
+| `overview()` | Summary of latest results | - | `benchmark_overview` |
+| `trends()` | Performance trends over time | - | `benchmark_trends` |
+| `compare(params)` | Compare two benchmark runs (dashboard-style diff) | - | `benchmark_compare` |
+| `compare_runs(baseline, candidate)` | Compare two benchmark runs (bench CLI diff) | `aisp bench compare-runs` | `benchmark_compare_runs` |
+| `speed_test()` | Quick speed tests (diagnostic) | `aisp benchmark speed` | `hw_speed` |
 
 **Python API:**
 ```python
-engine.benchmark.run(targets=["ch07", "ch11"], profile="standard")
+engine.benchmark.run(targets=["ch07", "ch11"], profile="minimal")
 engine.benchmark.targets()                      # Available targets
 engine.benchmark.history()                      # Historical runs
 engine.benchmark.data()                         # Current results
+engine.benchmark.overview()                     # Summary stats
 engine.benchmark.speed_test()                   # Quick GEMM/attention test
 ```
+
+**Note:** `aisp benchmark ...` commands are diagnostic microbenchmarks (`hw_*` tools) and do not use the harness.
 
 ---
 
@@ -288,17 +309,19 @@ LLM-powered analysis, questions, and explanations.
 
 | Operation | Description | CLI | MCP Tool |
 |-----------|-------------|-----|----------|
-| `ask(question)` | Ask a performance question | `aisp ai ask` | `aisp_ask` |
-| `explain(concept)` | Explain a concept | `aisp ai explain` | `aisp_explain` |
+| `ask(question)` | Ask a performance question | `aisp ai ask` | `ask` |
+| `explain(concept)` | Explain a concept | `aisp ai explain` | `explain` |
 | `analyze_kernel(code)` | AI kernel analysis | - | - |
-| `suggest_tools(query)` | Suggest tools for a task | - | `aisp_suggest_tools` |
-| `status()` | AI/LLM availability | - | `aisp_ai_status` |
+| `troubleshoot(issue)` | Diagnose errors & fixes | `aisp ai troubleshoot` | `ai_troubleshoot` |
+| `suggest_tools(query)` | Suggest tools for a task | - | `suggest_tools` |
+| `status()` | AI/LLM availability | `aisp ai status` | `ai_status` |
 
 **Python API:**
 ```python
 engine.ai.ask("Why is my attention kernel slow?")
 engine.ai.ask("How do I fix CUDA OOM?", include_citations=True)
 engine.ai.explain("flash-attention")
+engine.ai.troubleshoot("NCCL timeout")
 engine.ai.suggest_tools("I keep OOMing on 24GB VRAM")
 engine.ai.status()                              # Check LLM availability
 ```
@@ -311,9 +334,9 @@ Export reports in various formats.
 
 | Operation | Description | CLI | MCP Tool |
 |-----------|-------------|-----|----------|
-| `csv(detailed)` | Export to CSV | `aisp bench export --format csv` | `aisp_export_csv` |
-| `pdf()` | Generate PDF report | `aisp bench report --format pdf` | `aisp_export_pdf` |
-| `html()` | Generate HTML report | `aisp bench report --format html` | `aisp_export_html` |
+| `csv(detailed)` | Export to CSV | `aisp bench export --format csv` | `export_csv` |
+| `pdf()` | Generate PDF report | `aisp bench report --format pdf` | `export_pdf` |
+| `html()` | Generate HTML report | `aisp bench report --format html` | `export_html` |
 
 **Python API:**
 ```python
@@ -343,18 +366,20 @@ engine.list_domains()     # List all domains and operations
 
 | Engine Domain | CLI Command Group | MCP Tool Prefix | Dashboard API |
 |---------------|-------------------|-----------------|---------------|
-| `gpu` | `aisp gpu` | `aisp_gpu_*` | `/api/gpu/*` |
-| `system` | `aisp system` | `aisp_system_*` | `/api/software`, `/api/deps` |
-| `profile` | `aisp profile` | `aisp_profile_*` | `/api/profiler/*` |
-| `analyze` | `aisp analyze` | `aisp_analyze_*` | `/api/analysis/*` |
-| `optimize` | `aisp optimize` | `aisp_optimize_*`, `aisp_recommend` | `/api/optimize/*` |
-| `distributed` | `aisp distributed` | `aisp_distributed_*` | `/api/parallelism/*` |
-| `inference` | `aisp inference` | `aisp_inference_*` | `/api/inference/*` |
-| `benchmark` | `aisp bench` | `aisp_benchmark_*`, `aisp_run_*` | `/api/benchmarks/*` |
-| `ai` | `aisp ai` | `aisp_ask`, `aisp_explain` | `/api/ai/*` |
-| `export` | `aisp bench report/export` | `aisp_export_*` | `/api/export/*` |
+| `gpu` | `aisp gpu` | `gpu_*` | `/api/gpu/*` |
+| `system` | `aisp system` | `system_*` | `/api/system/*` |
+| `profile` | `aisp profile` | `profile_*` | `/api/profile/*` |
+| `analyze` | `aisp analyze` | `analyze_*` | - (not exposed) |
+| `optimize` | `aisp optimize` | `optimize`, `optimize_*`, `recommend` | - (not exposed) |
+| `distributed` | `aisp distributed` | `distributed_*` | - (not exposed) |
+| `inference` | `aisp inference` | `inference_*` | - (not exposed) |
+| `benchmark` | `aisp bench` | `benchmark_*`, `run_benchmarks` | `/api/benchmark/*` |
+| `ai` | `aisp ai` | `ask`, `explain`, `ai_*` | `/api/ai/*` |
+| `export` | `aisp bench report/export` | `export_*` | - (not exposed) |
 
 ---
+
+**Dashboard API note:** The dashboard backend intentionally exposes only the subset of endpoints used by the UI. See `core/api/registry.py` for the authoritative list.
 
 ## Error Handling
 
@@ -414,9 +439,5 @@ explanation = engine.ai.ask(f"Explain these bottlenecks: {bottlenecks}")
 # Parameters are consistent across interfaces
 # CLI:       aisp optimize recommend --model-size 70 --gpus 8
 # Python:    engine.optimize.recommend(model_size=70, gpus=8)
-# MCP:       aisp_recommend with {"model_size": 70, "gpus": 8}
+# MCP:       recommend with {"model_size": 70, "gpus": 8}
 ```
-
-
-
-

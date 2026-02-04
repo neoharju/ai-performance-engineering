@@ -20,7 +20,7 @@ class BaselineWarpSpecPingPongBenchmark(CudaBinaryBenchmark):
         super().__init__(
             chapter_dir=chapter_dir,
             binary_name="baseline_warp_spec_pingpong",
-            friendly_name="Standard Warp Specialization (Baseline)",
+            friendly_name="Baseline Warp Spec Pingpong",
             iterations=3,
             warmup=5,
             timeout_seconds=120,

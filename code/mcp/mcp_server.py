@@ -3,7 +3,7 @@
 🚀 MCP Server for AI Systems Performance
 
 Exposes the unified PerformanceEngine as MCP tools for AI chat integration.
-Consolidated to ~80 tools (reduced from 86, preserving all unique functionality).
+Full-featured tool catalog (see --list for the authoritative tool count).
 
 Usage:
     # Start the MCP server
@@ -16,86 +16,95 @@ ARCHITECTURE:
     ┌─────────────────────────────────────────────────────────────────────────┐
     │  AI Chat Client                                                         │
     │  ↓                                                                      │
-    │  MCP Server (this file) - 80 tools (no functionality lost)              │
+    │  MCP Server (this file) - tool catalog (see --list for count)           │
     │  ↓                                                                      │
     │  PerformanceEngine (core/engine.py) - 10 unified domains                │
-    │  ├── gpu         : aisp_gpu_info, aisp_gpu_topology, aisp_gpu_power     │
-    │  ├── system      : aisp_system_software, aisp_system_dependencies       │
-    │  ├── profile     : aisp_profile_nsys, aisp_profile_ncu, aisp_profile_*  │
-    │  ├── analyze     : aisp_analyze_bottlenecks, aisp_analyze_pareto, ...   │
-    │  ├── optimize    : aisp_recommend, aisp_optimize_roi, ...               │
-    │  ├── distributed : aisp_distributed_plan, aisp_distributed_nccl         │
-    │  ├── inference   : aisp_inference_vllm, aisp_inference_quantization     │
-    │  ├── benchmark   : aisp_run_benchmarks, aisp_benchmark_targets          │
-    │  ├── ai          : aisp_ask, aisp_explain, aisp_ai_status               │
-    │  └── export      : aisp_export_csv, aisp_export_pdf, aisp_export_html   │
+    │  ├── gpu         : gpu_info, gpu_topology, gpu_power     │
+    │  ├── system      : system_software, system_env, system_* │
+    │  ├── profile     : profile_nsys, profile_ncu, profile_*  │
+    │  ├── analyze     : analyze_bottlenecks, analyze_pareto, ...   │
+    │  ├── optimize    : optimize, recommend, optimize_roi, ...     │
+    │  ├── distributed : distributed_plan, distributed_nccl         │
+    │  ├── inference   : inference_vllm, inference_deploy, ...      │
+    │  ├── benchmark   : run_benchmarks, benchmark_data, ...        │
+    │  ├── ai          : ask, explain, ai_troubleshoot         │
+    │  └── export      : export_csv, export_pdf, export_html   │
     └─────────────────────────────────────────────────────────────────────────┘
 
-TOOL NAMING: aisp_{domain}_{operation}
+TOOL NAMING: {domain}_{operation}
 
 QUICK START (4 tools):
-    aisp_triage        - START HERE: status + context in one call
-    aisp_status        - Quick health check (GPU/software/AI)
-    aisp_suggest_tools - Get tool recommendations for your task
-    aisp_job_status    - Poll async job completion
+    triage        - START HERE: status + context in one call
+    status        - Quick health check (GPU/software/AI)
+    suggest_tools - Get tool recommendations for your task
+    job_status    - Poll async job completion
 
 DOMAIN TOOLS (organized by 10-domain model):
 
-    GPU (4 tools):
-        aisp_gpu_info, aisp_gpu_bandwidth, aisp_gpu_topology, aisp_gpu_power
+    GPU (5 tools):
+        gpu_info, gpu_bandwidth, gpu_topology, gpu_power,
+        gpu_topology_matrix
 
-    System (3 tools):
-        aisp_system_software, aisp_system_dependencies, aisp_system_context
+    System (10 tools):
+        system_software, system_dependencies, system_context,
+        system_capabilities, system_parameters, system_container,
+        system_cpu_memory, system_env, system_network,
+        system_full
 
     Profile (8 tools):
-        aisp_profile_nsys, aisp_profile_ncu, aisp_profile_torch,
-        aisp_profile_hta, aisp_profile_flame, aisp_profile_memory,
-        aisp_profile_kernels, aisp_profile_compare
+        profile_nsys, profile_ncu, profile_torch,
+        profile_hta, profile_flame, profile_memory,
+        profile_kernels, profile_compare
 
     Analyze (5 tools):
-        aisp_analyze_bottlenecks, aisp_analyze_pareto, aisp_analyze_scaling,
-        aisp_analyze_stacking, aisp_analyze_whatif
+        analyze_bottlenecks, analyze_pareto, analyze_scaling,
+        analyze_stacking, analyze_whatif
 
-    Optimize (3 tools):
-        aisp_recommend, aisp_optimize_roi, aisp_optimize_techniques
+    Optimize (4 tools):
+        optimize, recommend, optimize_roi, optimize_techniques
 
     Distributed (3 tools):
-        aisp_distributed_plan, aisp_distributed_nccl, aisp_cluster_slurm
+        distributed_plan, distributed_nccl, cluster_slurm
 
-    Inference (2 tools):
-        aisp_inference_vllm, aisp_inference_quantization
+    Inference (4 tools):
+        inference_vllm, inference_quantization,
+        inference_deploy, inference_estimate
 
-    Benchmark (6 tools):
-        aisp_run_benchmarks, aisp_benchmark_targets, aisp_benchmark_report,
-        aisp_benchmark_export, aisp_benchmark_compare_runs, aisp_benchmark_triage
+    Benchmark (15 tools):
+        run_benchmarks, list_chapters, benchmark_targets, benchmark_report,
+        benchmark_export, benchmark_compare_runs, benchmark_triage,
+        benchmark_data, benchmark_overview, benchmark_history,
+        benchmark_trends, benchmark_compare,
+        benchmark_variants, benchmark_deep_dive_compare,
+        benchmark_llm_patch_loop
 
-    AI (3 tools):
-        aisp_ask, aisp_explain, aisp_ai_status
+    AI (4 tools):
+        ask, explain, ai_status, ai_troubleshoot
 
     Export (3 tools):
-        aisp_export_csv, aisp_export_pdf, aisp_export_html
+        export_csv, export_pdf, export_html
 
     HuggingFace (1 tool):
-        aisp_hf (search/trending/download via action param)
+        hf (search/trending/download via action param)
 
 BENCHMARKS VS DIAGNOSTICS:
-    - `aisp_run_benchmarks` runs harness benchmarks (comparative `baseline_*.py` vs
+    - `run_benchmarks` runs harness benchmarks (comparative `baseline_*.py` vs
       `optimized_*.py`) and includes the full validity protections.
-    - `aisp_hw_*` tools run diagnostic microbenchmarks for quick hardware sanity
+    - `hw_*` tools run diagnostic microbenchmarks for quick hardware sanity
       checks and intentionally bypass the benchmark harness protections. Do not
       use them to claim baseline-vs-optimized speedups.
 
 HARDWARE MICRO-BENCHMARKS (10 tools):
-    aisp_hw_speed, aisp_hw_roofline, aisp_hw_disk, aisp_hw_pcie,
-    aisp_hw_cache, aisp_hw_tc, aisp_hw_ib, aisp_hw_nccl, aisp_hw_p2p,
-    aisp_hw_network
+    hw_speed, hw_roofline, hw_disk, hw_pcie,
+    hw_cache, hw_tc, hw_ib, hw_nccl, hw_p2p,
+    hw_network
 
 WORKFLOW EXAMPLES:
-    New session:     aisp_triage → aisp_recommend → specific tools
-    Slow training:   aisp_analyze_bottlenecks → aisp_profile_nsys → fix
-    Multi-GPU:       aisp_gpu_topology → aisp_distributed_plan → aisp_distributed_nccl
-    Inference:       aisp_inference_quantization → aisp_inference_vllm → deploy
-    Benchmarks:      aisp_run_benchmarks(async=true) → aisp_job_status → aisp_benchmark_triage
+    New session:     triage → recommend → specific tools
+    Slow training:   analyze_bottlenecks → profile_nsys → fix
+    Multi-GPU:       gpu_topology → distributed_plan → distributed_nccl
+    Inference:       inference_quantization → inference_vllm → inference_deploy
+    Benchmarks:      run_benchmarks(async=true) → job_status → benchmark_triage
 """
 
 import asyncio
@@ -244,87 +253,91 @@ _OUTPUT_ENVELOPE_SUMMARY = (
 
 # Explicit overrides for tools that have notable runtime/side effects.
 _EXPECTATION_OVERRIDES: Dict[str, str] = {
-    "aisp_run_benchmarks": "Runs the bench CLI; can take minutes and writes artifacts/logs under artifacts/runs/<run_id>/ by default. Run IDs are self-describing (timestamp + run kind + targets). Also runs triage + HTML report generation unless auto_analyze/auto_report are disabled. Use artifacts_dir to control output location. For full baseline-vs-optimized profiling + diffs, use profile='deep_dive' or aisp_benchmark_deep_dive_compare.",
-    "aisp_benchmark_deep_dive_compare": "Runs bench with profile='deep_dive' (slow) and then compares baseline vs optimized profiles (nsys+ncu). Emits side-by-side JSON + narrative and writes a self-describing run directory under output_dir (default: artifacts/runs).",
-    "aisp_benchmark_report": "Generates a report from existing benchmark JSON; writes PDF/HTML to the chosen output.",
-    "aisp_benchmark_export": "Exports existing benchmark JSON to csv/markdown/json; writes to the chosen output file.",
-    "aisp_benchmark_compare_runs": "Diffs two benchmark JSON files; CPU-bound and quick, writes only if an output is specified.",
-    "aisp_profile_nsys": "Calls Nsight Systems; requires nsys installed and writes .nsys-rep under artifacts/runs/<run_id>/profiles/tools/<tool>/<label>/ by default. Slow/interactive; run aisp_status or aisp_triage first. Default preset is full; set preset=light explicitly to shrink traces.",
-    "aisp_profile_ncu": "Calls Nsight Compute; requires ncu installed and writes .ncu-rep under artifacts/runs/<run_id>/profiles/tools/<tool>/<label>/ by default. Slow/interactive; run aisp_status or aisp_triage first. Defaults to memory_bound metric set; opt into heavier modes explicitly.",
-    "aisp_profile_compare": "Generates flame graph comparison + side-by-side Nsight Systems/Compute JSON report; parses NSYS reports and may traverse multiple files; allow extra runtime.",
-    "aisp_hw_speed": "Runs GPU/host micro-benchmarks; stresses hardware briefly. Run aisp_status first; supports precheck_only/dry_run/timeout_seconds.",
-    "aisp_hw_roofline": "Runs roofline micro-benchmark; stresses memory subsystem briefly. Run aisp_status first; supports precheck_only/dry_run/timeout_seconds.",
-    "aisp_hw_disk": "Runs disk I/O hardware benchmark; writes temporary files to tmp_dir. Supports precheck_only/dry_run/timeout_seconds.",
-    "aisp_hw_pcie": "Runs PCIe hardware benchmark; exercises host↔GPU transfers. Run aisp_status first; supports precheck_only/dry_run/timeout_seconds.",
-    "aisp_hw_cache": "Runs memory hierarchy hardware benchmark; exercises GPU cache. Run aisp_status first; supports precheck_only/dry_run/timeout_seconds.",
-    "aisp_hw_tc": "Runs tensor core hardware benchmark; exercises GPU math units. Run aisp_status first; supports precheck_only/dry_run/timeout_seconds.",
-    "aisp_tools_compare_precision": "Runs aisp tools compare-precision; may run evaluation workloads and write reports depending on args.",
-    "aisp_tools_dump_hw": "Runs aisp tools dump-hw; can be slow unless --fast is set.",
-    "aisp_tools_probe_hw": "Runs aisp tools probe-hw; probes hardware capabilities and writes artifacts/hardware_capabilities.json.",
+    "run_benchmarks": "Runs the bench CLI; can take minutes and writes artifacts/logs under artifacts/runs/<run_id>/ by default. Run IDs are self-describing (timestamp + run kind + targets). Also runs triage + HTML report generation unless auto_analyze/auto_report are disabled. Use artifacts_dir to control output location. For full baseline-vs-optimized profiling + diffs, use profile='deep_dive' or benchmark_deep_dive_compare.",
+    "benchmark_deep_dive_compare": "Runs bench with profile='deep_dive' (slow) and then compares baseline vs optimized profiles (nsys+ncu). Emits side-by-side JSON + narrative and writes a self-describing run directory under output_dir (default: artifacts/runs).",
+    "benchmark_report": "Generates a report from existing benchmark JSON; writes PDF/HTML to the chosen output.",
+    "benchmark_export": "Exports existing benchmark JSON to csv/markdown/json; writes to the chosen output file.",
+    "benchmark_compare_runs": "Diffs two benchmark JSON files; CPU-bound and quick, writes only if an output is specified.",
+    "profile_nsys": "Calls Nsight Systems; requires nsys installed and writes .nsys-rep under artifacts/runs/<run_id>/profiles/tools/<tool>/<label>/ by default. Slow/interactive; run status or triage first. Default preset is full; set preset=light explicitly to shrink traces.",
+    "profile_ncu": "Calls Nsight Compute; requires ncu installed and writes .ncu-rep under artifacts/runs/<run_id>/profiles/tools/<tool>/<label>/ by default. Slow/interactive; run status or triage first. Defaults to memory_bound metric set; opt into heavier modes explicitly.",
+    "profile_compare": "Generates flame graph comparison + side-by-side Nsight Systems/Compute JSON report; parses NSYS reports and may traverse multiple files; allow extra runtime.",
+    "hw_speed": "Runs GPU/host micro-benchmarks; stresses hardware briefly. Run status first; supports precheck_only/dry_run/timeout_seconds.",
+    "hw_roofline": "Runs roofline micro-benchmark; stresses memory subsystem briefly. Run status first; supports precheck_only/dry_run/timeout_seconds.",
+    "hw_disk": "Runs disk I/O hardware benchmark; writes temporary files to tmp_dir. Supports precheck_only/dry_run/timeout_seconds.",
+    "hw_pcie": "Runs PCIe hardware benchmark; exercises host↔GPU transfers. Run status first; supports precheck_only/dry_run/timeout_seconds.",
+    "hw_cache": "Runs memory hierarchy hardware benchmark; exercises GPU cache. Run status first; supports precheck_only/dry_run/timeout_seconds.",
+    "hw_tc": "Runs tensor core hardware benchmark; exercises GPU math units. Run status first; supports precheck_only/dry_run/timeout_seconds.",
+    "tools_compare_precision": "Runs aisp tools compare-precision; may run evaluation workloads and write reports depending on args.",
+    "tools_dump_hw": "Runs aisp tools dump-hw; can be slow unless --fast is set.",
+    "tools_probe_hw": "Runs aisp tools probe-hw; probes hardware capabilities and writes artifacts/hardware_capabilities.json.",
 }
 
 _SELECTION_HINTS: Dict[str, str] = {
-    "aisp_triage": (
-        "First call for combined status + context; use aisp_status for a faster health-only check; "
-        "use aisp_suggest_tools when you only need tool recommendations."
+    "triage": (
+        "First call for combined status + context; use status for a faster health-only check; "
+        "use suggest_tools when you only need tool recommendations."
     ),
-    "aisp_status": (
-        "Health-only snapshot; use aisp_triage for context or aisp_system_full for full inventory."
+    "status": (
+        "Health-only snapshot; use triage for context or system_full for full inventory."
     ),
-    "aisp_suggest_tools": (
-        "Intent-to-tool mapping; use aisp_ask for answers or aisp_triage for system snapshot."
+    "suggest_tools": (
+        "Intent-to-tool mapping; use ask for answers or triage for system snapshot."
     ),
-    "aisp_run_benchmarks": (
-        "Run benchmarks; use aisp_benchmark_targets to discover targets and "
-        "aisp_benchmark_deep_dive_compare for one-shot run+profile+diff."
+    "run_benchmarks": (
+        "Run benchmarks; use benchmark_targets to discover targets and "
+        "benchmark_deep_dive_compare for one-shot run+profile+diff."
     ),
-    "aisp_benchmark_deep_dive_compare": (
-        "One-shot run+profile+diff; use aisp_run_benchmarks if you only want results without deep profiling."
+    "optimize": (
+        "Shortcut for benchmark_variants using a benchmark file path or target; "
+        "runs quick LLM variants by default."
     ),
-    "aisp_benchmark_triage": (
-        "Analyze a single run; use aisp_benchmark_compare_runs to compare two runs."
+    "benchmark_deep_dive_compare": (
+        "One-shot run+profile+diff; use run_benchmarks if you only want results without deep profiling."
     ),
-    "aisp_benchmark_compare_runs": (
-        "Compare baseline vs candidate runs; use aisp_benchmark_triage for single-run analysis."
+    "benchmark_triage": (
+        "Analyze a single run; use benchmark_compare_runs to compare two runs."
     ),
-    "aisp_benchmark_report": (
-        "Human-readable PDF/HTML report; use aisp_benchmark_export for CSV/markdown/json data exports."
+    "benchmark_compare_runs": (
+        "Compare baseline vs candidate runs; use benchmark_triage for single-run analysis."
     ),
-    "aisp_benchmark_export": (
-        "Raw data export (CSV/markdown/json); use aisp_benchmark_report for PDF/HTML reports."
+    "benchmark_report": (
+        "Human-readable PDF/HTML report; use benchmark_export for CSV/markdown/json data exports."
     ),
-    "aisp_profile_nsys": (
-        "Timeline/API tracing; use aisp_profile_ncu for kernel metrics or aisp_profile_torch for PyTorch ops."
+    "benchmark_export": (
+        "Raw data export (CSV/markdown/json); use benchmark_report for PDF/HTML reports."
     ),
-    "aisp_profile_ncu": (
-        "Kernel metrics; use aisp_profile_nsys for timeline or aisp_profile_torch for PyTorch ops."
+    "profile_nsys": (
+        "Timeline/API tracing; use profile_ncu for kernel metrics or profile_torch for PyTorch ops."
     ),
-    "aisp_profile_torch": (
-        "PyTorch operator breakdown; use aisp_profile_nsys for timeline or aisp_profile_ncu for kernel metrics."
+    "profile_ncu": (
+        "Kernel metrics; use profile_nsys for timeline or profile_torch for PyTorch ops."
     ),
-    "aisp_profile_compare": (
-        "Narrative + flamegraph comparison; use aisp_compare_nsys/ncu for raw metric diffs."
+    "profile_torch": (
+        "PyTorch operator breakdown; use profile_nsys for timeline or profile_ncu for kernel metrics."
     ),
-    "aisp_compare_nsys": (
-        "Timeline comparison; use aisp_compare_ncu for kernel metrics and aisp_profile_compare for narrative+flamegraph."
+    "profile_compare": (
+        "Narrative + flamegraph comparison; use compare_nsys/ncu for raw metric diffs."
     ),
-    "aisp_compare_ncu": (
-        "Kernel metric comparison; use aisp_compare_nsys for timeline and aisp_profile_compare for narrative+flamegraph."
+    "compare_nsys": (
+        "Timeline comparison; use compare_ncu for kernel metrics and profile_compare for narrative+flamegraph."
     ),
-    "aisp_ask": (
-        "Conceptual performance Q&A; use aisp_explain to interpret existing tool outputs."
+    "compare_ncu": (
+        "Kernel metric comparison; use compare_nsys for timeline and profile_compare for narrative+flamegraph."
     ),
-    "aisp_explain": (
-        "Interpret tool outputs/results; use aisp_ask for general performance questions."
+    "ask": (
+        "Conceptual performance Q&A; use explain to interpret existing tool outputs."
     ),
-    "aisp_export_csv": (
-        "Inline CSV payload; use aisp_benchmark_export for file output and aisp_benchmark_report for PDF/HTML."
+    "explain": (
+        "Interpret tool outputs/results; use ask for general performance questions."
     ),
-    "aisp_export_html": (
-        "Inline HTML payload; use aisp_benchmark_report for file output or aisp_export_pdf for PDF."
+    "export_csv": (
+        "Inline CSV payload; use benchmark_export for file output and benchmark_report for PDF/HTML."
     ),
-    "aisp_export_pdf": (
-        "Inline PDF payload; use aisp_benchmark_report for file output or aisp_export_html for HTML."
+    "export_html": (
+        "Inline HTML payload; use benchmark_report for file output or export_pdf for PDF."
+    ),
+    "export_pdf": (
+        "Inline PDF payload; use benchmark_report for file output or export_html for HTML."
     ),
 }
 
@@ -396,7 +409,7 @@ def _expectations_from_name_and_schema(name: str, schema: Optional[Dict[str, Any
         notes.append("Runs benchmarks; can be long-running and GPU-intensive.")
     elif "profile" in name_key:
         notes.append("Runs profiling; may be slower and produce trace files.")
-    elif name_key.startswith("aisp_hw_") or name_key.startswith("aisp_test_"):
+    elif name_key.startswith("hw_") or name_key.startswith("test_"):
         notes.append("Runs hardware benchmarks; may briefly stress hardware.")
     else:
         notes.append("Typically fast, read-only snapshot.")
@@ -749,6 +762,59 @@ def _resolve_artifact_path(path_value: Optional[str]) -> Optional[Path]:
     if not path.is_absolute():
         path = (CODE_ROOT / path).resolve()
     return path
+
+
+def _resolve_benchmark_target_from_path(path_value: str) -> Tuple[Optional[str], Optional[str]]:
+    """Resolve a benchmark file path to a unique chapter:example target."""
+    if not path_value:
+        return None, "path is required"
+    path = Path(str(path_value))
+    if not path.is_absolute():
+        path = (CODE_ROOT / path).resolve()
+    if not path.exists():
+        return None, f"Benchmark path not found: {path}"
+    if path.is_dir():
+        return None, f"Path must be a benchmark file, not a directory: {path}"
+
+    try:
+        from core.discovery import discover_all_chapters, discover_benchmarks, chapter_slug, get_bench_roots
+    except Exception as exc:
+        return None, f"Benchmark discovery import failed: {exc}"
+
+    try:
+        from core.harness.run_benchmarks import discover_cuda_benchmarks
+    except Exception as exc:
+        return None, f"CUDA benchmark discovery import failed: {exc}"
+
+    roots = get_bench_roots(repo_root=CODE_ROOT)
+    bench_root = roots[0] if roots else CODE_ROOT
+    candidates: List[str] = []
+
+    for chapter_dir in discover_all_chapters(CODE_ROOT, bench_roots=roots):
+        try:
+            python_pairs = discover_benchmarks(chapter_dir)
+        except Exception:
+            python_pairs = []
+        for baseline, optimized_list, example_name in python_pairs:
+            if path == baseline.resolve() or any(path == opt.resolve() for opt in optimized_list):
+                slug = chapter_slug(chapter_dir, CODE_ROOT, bench_root=bench_root)
+                candidates.append(f"{slug}:{example_name}")
+
+        try:
+            cuda_pairs = discover_cuda_benchmarks(chapter_dir)
+        except Exception:
+            cuda_pairs = []
+        for baseline, optimized_list, example_name in cuda_pairs:
+            if path == baseline.resolve() or any(path == opt.resolve() for opt in optimized_list):
+                slug = chapter_slug(chapter_dir, CODE_ROOT, bench_root=bench_root)
+                candidates.append(f"{slug}:{example_name}")
+
+    unique = sorted(set(candidates))
+    if not unique:
+        return None, f"No benchmark target found for path: {path}"
+    if len(unique) > 1:
+        return None, f"Benchmark path maps to multiple targets: {', '.join(unique)}"
+    return unique[0], None
 
 
 def _file_entry(path: Path) -> Dict[str, Any]:
@@ -1182,13 +1248,13 @@ def _context_snapshot() -> Dict[str, Any]:
 def _default_next_steps(tool_name: str, status_is_error: bool) -> List[str]:
     """Actionable nudges to keep the caller moving."""
     steps: List[str] = [
-        "If you need environment details, set include_context=true on this tool or call aisp_context_summary.",
-        "If you're unsure what to run next, call aisp_suggest_tools with a short intent.",
+        "If you need environment details, set include_context=true on this tool or call context_summary.",
+        "If you're unsure what to run next, call suggest_tools with a short intent.",
     ]
     if status_is_error:
-        steps.insert(0, "Call aisp_status to check GPU/software health after this failure.")
-    elif tool_name not in {"aisp_triage", "aisp_context_summary", "aisp_context_full"}:
-        steps.insert(0, "Use aisp_triage first if you still need a quick status snapshot.")
+        steps.insert(0, "Call status to check GPU/software health after this failure.")
+    elif tool_name not in {"triage", "context_summary", "context_full"}:
+        steps.insert(0, "Use triage first if you still need a quick status snapshot.")
     return steps
 
 
@@ -1247,15 +1313,15 @@ def _content_from_payload(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
 # =============================================================================
 
 @register_tool(
-    "aisp_gpu_info",
+    "gpu_info",
     "Tags: gpu, info, snapshot, health-check, inventory, nvidia-smi. "
     "Get GPU hardware snapshot: name, architecture, VRAM (total/used/free), temperature, power draw, utilization %. "
     "Returns: {gpus: [{name, memory_total_gb, memory_used_gb, temperature_c, power_w, utilization_pct}], count}. "
     "⚡ FAST (~1s). USE FIRST when: Starting any performance investigation, verifying hardware before profiling. "
     "USE INSTEAD OF: Running nvidia-smi manually in terminal. "
     "Example: \"Show GPU names, memory, temps\" or \"What GPUs do I have?\" or \"Check VRAM before loading model\". "
-    "WORKFLOW: aisp_gpu_info → aisp_status → aisp_recommend → specific optimization tools. "
-    "NOT FOR: Feature detection (aisp_info_features), topology (aisp_gpu_topology), power throttling (aisp_gpu_power).",
+    "WORKFLOW: gpu_info → status → recommend → specific optimization tools. "
+    "NOT FOR: Feature detection (info_features), topology (gpu_topology), power throttling (gpu_power).",
     {"type": "object", "properties": with_context_params({})}
 )
 def tool_gpu_info(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -1268,13 +1334,13 @@ def tool_gpu_info(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_gpu_bandwidth",
+    "gpu_bandwidth",
     "Tags: bandwidth, memory, hbm, nvlink, throughput, spec-check. "
     "Run GPU memory bandwidth test measuring actual vs theoretical HBM bandwidth. "
     "Returns: {bandwidth_gbps, theoretical_gbps, efficiency_pct, test_size_mb}. "
     "USE when: Validating memory throughput matches GPU spec, diagnosing memory-bound kernels, checking for HBM/PCIe issues. "
     "Example: \"Check H100 bandwidth vs spec\" or \"Why is my memory-bound kernel slow?\". "
-    "NOT FOR: PCIe H2D/D2H bandwidth (use aisp_hw_pcie), GPU-to-GPU P2P (use aisp_hw_p2p). 🕐 MEDIUM (~10s). WORKFLOW: aisp_gpu_info → aisp_gpu_bandwidth → diagnose memory-bound.",
+    "NOT FOR: PCIe H2D/D2H bandwidth (use hw_pcie), GPU-to-GPU P2P (use hw_p2p). 🕐 MEDIUM (~10s). WORKFLOW: gpu_info → gpu_bandwidth → diagnose memory-bound.",
     {"type": "object", "properties": with_context_params({})}
 )
 def tool_gpu_bandwidth(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -1287,13 +1353,13 @@ def tool_gpu_bandwidth(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_gpu_topology",
+    "gpu_topology",
     "Tags: topology, nvlink, pcie, multi-gpu, interconnect, p2p, numa. "
     "Get multi-GPU topology: NVLink/PCIe connections, NUMA affinity, P2P capability matrix. "
     "Returns: {gpu_count, connections: [{src, dst, type, bandwidth_gbps}], numa_nodes, p2p_matrix}. "
     "USE when: Planning tensor/pipeline parallelism, debugging P2P transfer issues, optimizing GPU placement. "
     "Example: \"Show NVLink/PCIe layout on 8x GPU server\" or \"Which GPUs have NVLink?\". "
-    "NOT FOR: Raw topology matrix output (use aisp_gpu_topology_matrix for nvidia-smi topo -m). ⚡ FAST (~2s). WORKFLOW: aisp_gpu_topology → aisp_distributed_plan → aisp_distributed_nccl.",
+    "NOT FOR: Raw topology matrix output (use gpu_topology_matrix for nvidia-smi topo -m). ⚡ FAST (~2s). WORKFLOW: gpu_topology → distributed_plan → distributed_nccl.",
     {"type": "object", "properties": with_context_params({})}
 )
 def tool_gpu_topology(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -1306,13 +1372,13 @@ def tool_gpu_topology(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_gpu_power",
+    "gpu_power",
     "Tags: power, thermal, throttling, headroom, tdp, temperature. "
     "Get GPU power and thermal status: current power draw, power limit, temperature, throttling state. "
     "Returns: {gpus: [{power_w, power_limit_w, headroom_w, temperature_c, throttling, fan_pct}]}. "
     "USE when: Checking for thermal/power throttling, verifying TDP headroom before heavy workloads. "
     "Example: \"Are GPUs power-throttling right now?\" or \"How much thermal headroom do I have?\". "
-    "NOT FOR: General GPU info (use aisp_gpu_info), sustained power monitoring over time. ⚡ FAST (~1s). WORKFLOW: aisp_gpu_power → if throttling → reduce workload.",
+    "NOT FOR: General GPU info (use gpu_info), sustained power monitoring over time. ⚡ FAST (~1s). WORKFLOW: gpu_power → if throttling → reduce workload.",
     {"type": "object", "properties": with_context_params({})}
 )
 def tool_gpu_power(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -1329,13 +1395,13 @@ def tool_gpu_power(params: Dict[str, Any]) -> Dict[str, Any]:
 # =============================================================================
 
 @register_tool(
-    "aisp_system_software",
+    "system_software",
     "Tags: software, versions, pytorch, cuda, python, driver, stack. "
     "Get software stack versions: PyTorch, CUDA toolkit, cuDNN, Python, NVIDIA driver. "
     "Returns: {pytorch_version, cuda_version, cudnn_version, python_version, driver_version, transformers_version}. "
     "USE when: Filing bug reports, checking compatibility, reproducing issues, verifying install. "
     "Example: \"What PyTorch and CUDA versions are installed?\" or \"Is my CUDA version compatible with FlashAttention?\". "
-    "NOT FOR: Checking if dependencies import correctly (use aisp_system_dependencies). ⚡ FAST (~1s). WORKFLOW: aisp_system_software → check → verify compatibility.",
+    "NOT FOR: Checking if dependencies import correctly (use system_dependencies). ⚡ FAST (~1s). WORKFLOW: system_software → check → verify compatibility.",
     {"type": "object", "properties": with_context_params({})}
 )
 def tool_system_software(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -1348,13 +1414,13 @@ def tool_system_software(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_system_dependencies",
+    "system_dependencies",
     "Tags: deps, health, import, missing, broken, install, torch.cuda. "
     "Check health of ML/AI dependencies: torch, triton, flash-attn, transformers, vllm, etc. "
     "Returns: {dependencies: [{name, installed, importable, version, error}], healthy_count, broken_count}. "
     "USE when: Diagnosing import errors, checking if optional dependencies are available, debugging install issues. "
     "Example: \"Why does torch.cuda fail to import?\" or \"Is flash-attn installed correctly?\". "
-    "NOT FOR: Version numbers only (use aisp_system_software), general system health (use aisp_status). ⚡ FAST (~2s). WORKFLOW: aisp_system_dependencies → fix broken → retry.",
+    "NOT FOR: Version numbers only (use system_software), general system health (use status). ⚡ FAST (~2s). WORKFLOW: system_dependencies → fix broken → retry.",
     {"type": "object", "properties": with_context_params({})}
 )
 def tool_system_dependencies(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -1367,30 +1433,120 @@ def tool_system_dependencies(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_run_benchmarks",
+    "system_parameters",
+    "Tags: kernel, sysctl, tuning, swappiness, dirty_ratio, numa, io, networking. "
+    "Inspect kernel parameters that commonly affect performance (swappiness, dirty ratios, NUMA balancing, net buffers). "
+    "Returns: {parameters: [{name, path, current, recommended, description, needs_tuning}], quick_tune_commands}. "
+    "USE when: Validating host tuning before benchmarks or diagnosing IO/NUMA slowdowns. "
+    "Example: \"Check system tuning parameters\" or \"Show swappiness and dirty ratios\". "
+    "NOT FOR: Software versions (use system_software). ⚡ FAST (~1s). WORKFLOW: system_parameters → apply quick_tune_commands.",
+    {"type": "object", "properties": with_context_params({})}
+)
+def tool_system_parameters(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Inspect kernel parameters that impact performance."""
+    from core.engine import get_engine
+    include_context, context_level = extract_context_opts(params)
+    result = get_engine().system.parameters()
+    return attach_context_if_requested(result, include_context, context_level)
+
+
+@register_tool(
+    "system_container",
+    "Tags: container, cgroup, limits, quota, memory, cpu, docker, k8s. "
+    "Inspect container/cgroup limits (CPU quota, memory limit, cgroup version). "
+    "Returns: {in_container, container_type, cgroup_version, cpu_limit, memory_limit_gb, recommendations}. "
+    "USE when: Diagnosing throttling in containers or Kubernetes. "
+    "Example: \"Am I CPU throttled in this container?\" or \"Show cgroup limits\". "
+    "NOT FOR: Hardware capabilities (use system_capabilities). ⚡ FAST (~1s).",
+    {"type": "object", "properties": with_context_params({})}
+)
+def tool_system_container(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Inspect container/cgroup limits."""
+    from core.engine import get_engine
+    include_context, context_level = extract_context_opts(params)
+    result = get_engine().system.container()
+    return attach_context_if_requested(result, include_context, context_level)
+
+
+@register_tool(
+    "system_cpu_memory",
+    "Tags: cpu, numa, cache, memory, tlb, topology, host-bound. "
+    "Analyze CPU/memory hierarchy (NUMA nodes, cache sizes, memory stats). "
+    "Returns: {cpu, cache_hierarchy, memory, numa, tlb, recommendations}. "
+    "USE when: Diagnosing host-bound workloads or dataloader bottlenecks. "
+    "Example: \"Show NUMA layout\" or \"Check CPU cache hierarchy\". "
+    "NOT FOR: GPU topology (use gpu_topology). ⚡ FAST (~1s).",
+    {"type": "object", "properties": with_context_params({})}
+)
+def tool_system_cpu_memory(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Analyze CPU/memory hierarchy."""
+    from core.engine import get_engine
+    include_context, context_level = extract_context_opts(params)
+    result = get_engine().system.cpu_memory()
+    return attach_context_if_requested(result, include_context, context_level)
+
+
+@register_tool(
+    "system_env",
+    "Tags: environment, vars, cuda, nccl, torch, paths. "
+    "Snapshot key environment variables and working directory. "
+    "Returns: {cwd, reported_keys, environment}. "
+    "USE when: Debugging env-dependent behavior or verifying CUDA/NCCL settings. "
+    "Example: \"Show CUDA/NCCL env vars\". "
+    "NOT FOR: Full system context (use system_context). ⚡ FAST (~1s).",
+    {"type": "object", "properties": with_context_params({})}
+)
+def tool_system_env(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Snapshot environment variables relevant to performance."""
+    from core.engine import get_engine
+    include_context, context_level = extract_context_opts(params)
+    result = get_engine().system.env()
+    return attach_context_if_requested(result, include_context, context_level)
+
+
+@register_tool(
+    "system_network",
+    "Tags: network, ib, infiniband, rdma, gpudirect, nccl, interfaces. "
+    "Inspect network interfaces, InfiniBand status, and GPUDirect/NCCL env hints. "
+    "Returns: {interfaces, infiniband, gpudirect_rdma, nccl_env}. "
+    "USE when: Debugging multi-node networking or NCCL connectivity issues. "
+    "Example: \"Check InfiniBand status\" or \"Show NCCL network env\". "
+    "NOT FOR: NCCL collective tuning (use distributed_nccl). ⚡ FAST (~1s).",
+    {"type": "object", "properties": with_context_params({})}
+)
+def tool_system_network(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Inspect network/InfiniBand status."""
+    from core.engine import get_engine
+    include_context, context_level = extract_context_opts(params)
+    result = get_engine().system.network()
+    return attach_context_if_requested(result, include_context, context_level)
+
+
+@register_tool(
+    "run_benchmarks",
     "Tags: benchmarks, run, profiling, performance-test, chapters, labs, validation. "
     "Run benchmarks via the bench CLI with optional profiling and LLM analysis. "
     "Returns: {stdout, stderr, returncode, duration_seconds, results_json (best-effort), run_dir (best-effort), suggested_next_steps}. "
-    "⚠️ SLOW: 2-30+ minutes depending on targets. ALWAYS run aisp_status first! "
+    "⚠️ SLOW: 2-30+ minutes depending on targets. ALWAYS run status first! "
     "USE when: Validating optimizations, generating benchmark data for comparison. "
     "Example: \"Run ch07 benchmarks\" or \"Benchmark attention examples\". "
     "SAFE WORKFLOW: "
-    "1. aisp_status → verify GPU/CUDA ready "
-    "2. aisp_list_chapters → see what's available "
-    "3. aisp_run_benchmarks(targets=['ch07'], dry_run=true) → preview command "
-    "4. aisp_run_benchmarks(targets=['ch07'], async=true) → run in background "
-    "5. aisp_job_status(job_id=...) → poll until complete "
-    "6. aisp_benchmark_triage → analyze results and get recommendations. "
+    "1. status → verify GPU/CUDA ready "
+    "2. list_chapters → see what's available "
+    "3. run_benchmarks(targets=['ch07'], dry_run=true) → preview command "
+    "4. run_benchmarks(targets=['ch07'], async=true) → run in background "
+    "5. job_status(job_id=...) → poll until complete "
+    "6. benchmark_triage → analyze results and get recommendations. "
     "DEEP DIVE WORKFLOW (manual): "
-    "1) aisp_benchmark_targets → pick target like 'ch10:atomic_reduction' "
-    "2) aisp_run_benchmarks(targets=['ch10:atomic_reduction'], profile='deep_dive', artifacts_dir='artifacts/runs') "
-    "3) aisp_benchmark_triage(data_file=results_json from step 2) "
-    "4) aisp_profile_compare / aisp_compare_nsys / aisp_compare_ncu (point at a profiles_dir that contains baseline+optimized .nsys-rep/.ncu-rep). "
-    "DEEP DIVE WORKFLOW (one-shot): use aisp_benchmark_deep_dive_compare for run+profile+diff in one call. "
-    "WORKFLOW: aisp_status → aisp_list_chapters → aisp_run_benchmarks → aisp_benchmark_triage. "
+    "1) benchmark_targets → pick target like 'ch10:atomic_reduction' "
+    "2) run_benchmarks(targets=['ch10:atomic_reduction'], profile='deep_dive', artifacts_dir='artifacts/runs') "
+    "3) benchmark_triage(data_file=results_json from step 2) "
+    "4) profile_compare / compare_nsys / compare_ncu (point at a profiles_dir that contains baseline+optimized .nsys-rep/.ncu-rep). "
+    "DEEP DIVE WORKFLOW (one-shot): use benchmark_deep_dive_compare for run+profile+diff in one call. "
+    "WORKFLOW: status → list_chapters → run_benchmarks → benchmark_triage. "
     "By default, MCP runs post-benchmark triage + HTML report generation for richer detail. "
     "Disable with auto_analyze=false or auto_report=false if you only want raw results. "
-    "NOT FOR: Quick GPU health (use aisp_hw_speed first).",
+    "NOT FOR: Quick GPU health (use hw_speed first).",
     {
         "type": "object",
         "properties": with_context_params({
@@ -1399,7 +1555,7 @@ def tool_system_dependencies(params: Dict[str, Any]) -> Dict[str, Any]:
                 "items": {"type": "string"},
                 "description": (
                     "Benchmark targets as chapter or chapter:example (or lab paths like labs/<lab>:example); "
-                    "discover via aisp_benchmark_targets or aisp_list_chapters. "
+                    "discover via benchmark_targets or list_chapters. "
                     "Examples: ['ch07'] or ['ch10:atomic_reduction']."
                 ),
             },
@@ -1458,7 +1614,7 @@ def tool_system_dependencies(params: Dict[str, Any]) -> Dict[str, Any]:
             },
             "async": {
                 "type": "boolean",
-                "description": "Run in background and return job_id; poll with aisp_job_status",
+                "description": "Run in background and return job_id; poll with job_status",
                 "default": False
             },
             "timeout_seconds": {
@@ -1507,7 +1663,7 @@ def tool_system_dependencies(params: Dict[str, Any]) -> Dict[str, Any]:
             },
             "auto_analyze": {
                 "type": "boolean",
-                "description": "Automatically run aisp_benchmark_triage after a successful run.",
+                "description": "Automatically run benchmark_triage after a successful run.",
                 "default": True,
             },
             "auto_report": {
@@ -1687,7 +1843,7 @@ def tool_run_benchmarks(params: Dict[str, Any]) -> Dict[str, Any]:
             "run_id": run_id,
             "run_dir": str(run_dir) if run_dir else None,
             "progress_path": str(progress_path) if progress_path else None,
-            "note": "Run aisp_status or aisp_triage first, then rerun without precheck_only.",
+            "note": "Run status or triage first, then rerun without precheck_only.",
         }
 
     if not cuda_check.get("ok", True):
@@ -1726,9 +1882,9 @@ def tool_run_benchmarks(params: Dict[str, Any]) -> Dict[str, Any]:
             "run_dir": str(run_dir) if run_dir else None,
             "progress_path": str(progress_path) if progress_path else None,
         }
-        queued = _queue_job("aisp_run_benchmarks", _execute_benchmarks, params, run_metadata=run_metadata)
+        queued = _queue_job("run_benchmarks", _execute_benchmarks, params, run_metadata=run_metadata)
         queued["targets"] = targets
-        queued["note"] = "Background benchmark started; poll with aisp_job_status using job_id. When complete, use aisp_benchmark_triage to analyze results."
+        queued["note"] = "Background benchmark started; poll with job_status using job_id. When complete, use benchmark_triage to analyze results."
         return queued
 
     result = _execute_benchmarks()
@@ -1750,37 +1906,37 @@ def _benchmark_next_steps(result: Dict[str, Any]) -> List[Dict[str, Any]]:
     if returncode == 0:
         # Success path
         steps.append({
-            "tool": "aisp_benchmark_triage",
+            "tool": "benchmark_triage",
             "reason": "Analyze benchmark results and get optimization recommendations",
             "priority": "high"
         })
         steps.append({
-            "tool": "aisp_benchmark_report",
+            "tool": "benchmark_report",
             "reason": "Generate shareable PDF/HTML report",
             "params": {"format": "html"}
         })
         steps.append({
-            "tool": "aisp_benchmark_compare_runs",
+            "tool": "benchmark_compare_runs",
             "reason": "Compare with previous baseline if available",
             "note": "Requires baseline benchmark_test_results.json"
         })
         steps.append({
-            "tool": "aisp_analyze_pareto",
+            "tool": "analyze_pareto",
             "reason": "Find optimal throughput/latency/memory tradeoffs"
         })
     else:
         # Failure path
         steps.append({
-            "tool": "aisp_status",
+            "tool": "status",
             "reason": "Check system health after benchmark failure",
             "priority": "high"
         })
         steps.append({
-            "tool": "aisp_system_dependencies",
+            "tool": "system_dependencies",
             "reason": "Verify all dependencies are correctly installed"
         })
         steps.append({
-            "tool": "aisp_analyze_bottlenecks",
+            "tool": "analyze_bottlenecks",
             "reason": "Identify what might be causing issues"
         })
 
@@ -1788,11 +1944,11 @@ def _benchmark_next_steps(result: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 @register_tool(
-    "aisp_benchmark_variants",
+    "benchmark_variants",
     "Tags: benchmark, llm, variants, optimize, profiling. "
     "Shortcut to profile and generate optimized variants via LLM: runs benchmarks with profile='minimal', "
     "forces LLM analysis, applies patches, and rebenchmarks patched variants by default. "
-    "Returns the same outputs as aisp_run_benchmarks. "
+    "Returns the same outputs as run_benchmarks. "
     "USE when: You want to quickly profile and generate/test/benchmark new optimized variants for a target. "
     "Example: targets=['ch11:warp_specialization_multistream'].",
     {
@@ -1803,7 +1959,7 @@ def _benchmark_next_steps(result: Dict[str, Any]) -> List[Dict[str, Any]]:
                 "items": {"type": "string"},
                 "description": (
                     "Benchmark targets as chapter or chapter:example; "
-                    "discover via aisp_benchmark_targets or aisp_list_chapters."
+                    "discover via benchmark_targets or list_chapters."
                 ),
             },
             "profile": {
@@ -1855,7 +2011,7 @@ def _benchmark_next_steps(result: Dict[str, Any]) -> List[Dict[str, Any]]:
             },
             "async": {
                 "type": "boolean",
-                "description": "Run in background and return job_id; poll with aisp_job_status",
+                "description": "Run in background and return job_id; poll with job_status",
                 "default": False,
             },
             "timeout_seconds": {
@@ -1894,7 +2050,7 @@ def tool_benchmark_variants(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_benchmark_deep_dive_compare",
+    "benchmark_deep_dive_compare",
     "Tags: benchmark, deep_dive, compare, baseline, optimized, nsys, ncu, torch, one-shot, workflow. "
     "ONE-SHOT deep-dive workflow: run benchmarks with profile='deep_dive' AND return structured diffs from Nsight Systems + Nsight Compute (+ any available profiler artifacts). "
     "Also generates a side-by-side JSON report + narrative by default. "
@@ -1903,7 +2059,7 @@ def tool_benchmark_variants(params: Dict[str, Any]) -> Dict[str, Any]:
     "Defaults: iterations=1, warmup=5 to keep deep profiling fast; override if you need more stable timing stats. "
     "USE when: You want the common chain 'bench run → deep_dive profile → compare nsys+ncu' in one tool call. "
     "Example: targets=['ch10:atomic_reduction'], output_dir='artifacts/runs'. "
-    "Follow-ups: you can re-run the comparisons later by calling aisp_profile_compare / aisp_compare_nsys / aisp_compare_ncu with the returned profiles_dir.",
+    "Follow-ups: you can re-run the comparisons later by calling profile_compare / compare_nsys / compare_ncu with the returned profiles_dir.",
     {
         "type": "object",
         "properties": with_context_params(
@@ -1913,7 +2069,7 @@ def tool_benchmark_variants(params: Dict[str, Any]) -> Dict[str, Any]:
                     "items": {"type": "string"},
                     "description": (
                         "Benchmark targets to run (chapter or chapter:example). Prefer a single example pair for clean diffs. "
-                        "Discover targets via aisp_benchmark_targets or aisp_list_chapters."
+                        "Discover targets via benchmark_targets or list_chapters."
                     ),
                 },
                 "output_dir": {
@@ -1937,7 +2093,7 @@ def tool_benchmark_variants(params: Dict[str, Any]) -> Dict[str, Any]:
                 },
                 "async": {
                     "type": "boolean",
-                    "description": "Run in background and return job_id; poll with aisp_job_status",
+                    "description": "Run in background and return job_id; poll with job_status",
                     "default": False,
                 },
                 "timeout_seconds": {
@@ -2194,9 +2350,9 @@ def tool_benchmark_deep_dive_compare(params: Dict[str, Any]) -> Dict[str, Any]:
                         side_by_side_error = side_by_side_report.get("error", "side_by_side_failed")
 
                 followup_tool_calls = [
-                    {"tool": "aisp_profile_compare", "params": {"profiles_dir": str(profiles_dir)}},
-                    {"tool": "aisp_compare_nsys", "params": {"profiles_dir": str(profiles_dir)}},
-                    {"tool": "aisp_compare_ncu", "params": {"profiles_dir": str(profiles_dir)}},
+                    {"tool": "profile_compare", "params": {"profiles_dir": str(profiles_dir)}},
+                    {"tool": "compare_nsys", "params": {"profiles_dir": str(profiles_dir)}},
+                    {"tool": "compare_ncu", "params": {"profiles_dir": str(profiles_dir)}},
                 ]
 
                 benchmark_analyses.append(
@@ -2256,11 +2412,11 @@ def tool_benchmark_deep_dive_compare(params: Dict[str, Any]) -> Dict[str, Any]:
             "run_dir": str(run_dir),
             "progress_path": str(progress_path) if progress_path else None,
         }
-        queued = _queue_job("aisp_benchmark_deep_dive_compare", _run_and_analyze, params, run_metadata=run_metadata)
+        queued = _queue_job("benchmark_deep_dive_compare", _run_and_analyze, params, run_metadata=run_metadata)
         queued["output_dir"] = output_dir
         queued["run_id"] = run_id
         queued["targets"] = targets
-        queued["note"] = "Background deep-dive started; poll with aisp_job_status using job_id."
+        queued["note"] = "Background deep-dive started; poll with job_status using job_id."
         return queued
 
     result = _run_and_analyze()
@@ -2352,7 +2508,7 @@ def _extract_promoted_targets(results_json: Path) -> List[Dict[str, Any]]:
 
 
 @register_tool(
-    "aisp_benchmark_llm_patch_loop",
+    "benchmark_llm_patch_loop",
     "Tags: benchmark, llm, patches, deep_dive, compare, baseline, optimized, one-shot. "
     "Run the full LLM patch loop: deep-dive profile baseline/optimized, force LLM analysis, "
     "apply patches, rebenchmark, generate explanation, promote best patch, then run a clean "
@@ -2411,7 +2567,7 @@ def _extract_promoted_targets(results_json: Path) -> List[Dict[str, Any]]:
                 },
                 "async": {
                     "type": "boolean",
-                    "description": "Run in background and return job_id; poll with aisp_job_status",
+                    "description": "Run in background and return job_id; poll with job_status",
                     "default": False,
                 },
                 "timeout_seconds": {
@@ -2571,9 +2727,9 @@ def tool_benchmark_llm_patch_loop(params: Dict[str, Any]) -> Dict[str, Any]:
         }
 
     if run_async:
-        queued = _queue_job("aisp_benchmark_llm_patch_loop", _run_loop, params)
+        queued = _queue_job("benchmark_llm_patch_loop", _run_loop, params)
         queued["targets"] = targets
-        queued["note"] = "Background LLM patch loop started; poll with aisp_job_status using job_id."
+        queued["note"] = "Background LLM patch loop started; poll with job_status using job_id."
         return queued
 
     result = _run_loop()
@@ -2581,13 +2737,13 @@ def tool_benchmark_llm_patch_loop(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_system_context",
+    "system_context",
     "Tags: context, environment, inventory, full-dump, comprehensive. "
     "Get comprehensive system context: GPU info + software stack + hardware capabilities combined. "
     "Returns: {gpu, software, dependencies, capabilities} - all system info in one call. "
     "USE when: Need complete environment dump for analysis, sharing system state with others. "
     "Example: \"Provide full context for LLM analysis\" or \"Dump entire system state\". "
-    "PREFER aisp_triage or aisp_context_summary for quick checks; this is heavier. 🕐 SLOW (2-30+ min). NOT FOR: Quick GPU health (use aisp_hw_speed). ⚡ FAST (~2s). WORKFLOW: aisp_system_dependencies → fix broken → retry.",
+    "PREFER triage or context_summary for quick checks; this is heavier. 🕐 SLOW (2-30+ min). NOT FOR: Quick GPU health (use hw_speed). ⚡ FAST (~2s). WORKFLOW: system_dependencies → fix broken → retry.",
     {"type": "object", "properties": with_context_params({})}
 )
 def tool_system_context(params: Dict[str, Any]) -> ContextResult:
@@ -2600,13 +2756,13 @@ def tool_system_context(params: Dict[str, Any]) -> ContextResult:
 
 
 @register_tool(
-    "aisp_system_capabilities",
+    "system_capabilities",
     "Tags: capabilities, features, supported, compute-capability. "
     "Get hardware capabilities summary: compute capability, tensor cores, supported precisions. "
     "Returns: {compute_capability, sm_version, tensor_cores, supported_dtypes, max_shared_mem}. "
     "USE when: Checking if a feature (FP8, TF32, etc.) is supported, planning which optimizations to apply. "
     "Example: \"What features does my GPU support?\" or \"Can I use FP8 on this hardware?\". "
-    "PREFER aisp_info_features for detailed capability breakdown with TMA/cluster info. ⚡ FAST (~1s). WORKFLOW: aisp_system_capabilities → check features → aisp_recommend. NOT FOR: Version info (use aisp_system_software).",
+    "PREFER info_features for detailed capability breakdown with TMA/cluster info. ⚡ FAST (~1s). WORKFLOW: system_capabilities → check features → recommend. NOT FOR: Version info (use system_software).",
     {"type": "object", "properties": with_context_params({})}
 )
 def tool_system_capabilities(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -2619,13 +2775,126 @@ def tool_system_capabilities(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_benchmark_targets",
+    "benchmark_data",
+    "Tags: benchmark, data, table, pagination, filters, dashboard. "
+    "Fetch benchmark results with filtering/sorting/pagination (dashboard data view). "
+    "Returns: {timestamp, summary, benchmarks, pagination, filters}. "
+    "USE when: Building tables or filtering benchmark results. "
+    "Example: \"List failed benchmarks\" or \"Show top speedups\". "
+    "NOT FOR: Comparing two runs (use benchmark_compare). ⚡ FAST (~1s).",
+    {"type": "object", "properties": with_context_params({
+        "page": {"type": "integer", "description": "Page number (1-based)", "default": 1},
+        "page_size": {"type": "integer", "description": "Page size (1-500)", "default": 50},
+        "search": {"type": "string", "description": "Search substring for chapter/name"},
+        "sort_field": {
+            "type": "string",
+            "description": "Sort field",
+            "enum": ["name", "chapter", "speedup", "baseline_time_ms", "optimized_time_ms", "status"],
+            "default": "speedup",
+        },
+        "sort_dir": {"type": "string", "description": "Sort direction", "enum": ["asc", "desc"], "default": "desc"},
+        "status": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Filter by status (comma-separated string also accepted).",
+        },
+        "chapter": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Filter by chapter (comma-separated string also accepted).",
+        },
+        "benchmark": {"type": "string", "description": "Exact benchmark name filter"},
+        "optimization_goal": {"type": "string", "description": "Filter by optimization goal (performance/memory)"},
+    })}
+)
+def tool_benchmark_data(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Fetch benchmark data with filters."""
+    from core.api import handlers
+    include_context, context_level = extract_context_opts(params)
+    result = handlers.benchmark_data(params)
+    return attach_context_if_requested(result, include_context, context_level)
+
+
+@register_tool(
+    "benchmark_overview",
+    "Tags: benchmark, overview, summary, dashboard. "
+    "Summarize the latest benchmark results (status counts, top speedups, per-chapter stats). "
+    "Returns: {summary, status_counts, top_speedups, chapter_stats}. "
+    "USE when: High-level dashboard summary. "
+    "Example: \"Give me the latest benchmark summary\". ⚡ FAST (~1s).",
+    {"type": "object", "properties": with_context_params({})}
+)
+def tool_benchmark_overview(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Summarize latest benchmark results."""
+    from core.api import handlers
+    include_context, context_level = extract_context_opts(params)
+    result = handlers.benchmark_overview(params)
+    return attach_context_if_requested(result, include_context, context_level)
+
+
+@register_tool(
+    "benchmark_history",
+    "Tags: benchmark, history, runs, timeline. "
+    "List historical benchmark runs with summary stats. "
+    "Returns: {total_runs, latest, runs: [{date, avg_speedup, max_speedup, benchmark_count, ...}]}. "
+    "USE when: Building a history page or selecting runs to compare. "
+    "Example: \"List recent benchmark runs\". ⚡ FAST (~1s).",
+    {"type": "object", "properties": with_context_params({})}
+)
+def tool_benchmark_history(params: Dict[str, Any]) -> Dict[str, Any]:
+    """List historical benchmark runs."""
+    from core.api import handlers
+    include_context, context_level = extract_context_opts(params)
+    result = handlers.benchmark_history(params)
+    return attach_context_if_requested(result, include_context, context_level)
+
+
+@register_tool(
+    "benchmark_trends",
+    "Tags: benchmark, trends, speedup, history, dashboard. "
+    "Compute performance trends over time (avg/max speedup by run). "
+    "Returns: {trend_points, best_ever}. "
+    "USE when: Charting benchmark trends. "
+    "Example: \"Show benchmark speedup trends\". ⚡ FAST (~1s).",
+    {"type": "object", "properties": with_context_params({})}
+)
+def tool_benchmark_trends(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Compute benchmark trends."""
+    from core.api import handlers
+    include_context, context_level = extract_context_opts(params)
+    result = handlers.benchmark_trends(params)
+    return attach_context_if_requested(result, include_context, context_level)
+
+
+@register_tool(
+    "benchmark_compare",
+    "Tags: benchmark, compare, diff, regression, improvement. "
+    "Compare two benchmark run JSON files (baseline vs candidate). "
+    "Returns: {regressions, improvements, unchanged, summary}. "
+    "USE when: Diffing results from two runs. "
+    "Example: \"Compare two benchmark result files\". ⚡ FAST (~1s).",
+    {"type": "object", "properties": with_context_params({
+        "baseline": {"type": "string", "description": "Path to baseline benchmark_test_results.json"},
+        "candidate": {"type": "string", "description": "Path to candidate benchmark_test_results.json"},
+        "top": {"type": "integer", "description": "Show top N regressions/improvements", "default": 10},
+    }), "required": ["baseline", "candidate"]}
+)
+def tool_benchmark_compare(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Compare two benchmark runs."""
+    from core.api import handlers
+    include_context, context_level = extract_context_opts(params)
+    result = handlers.benchmark_compare(params)
+    return attach_context_if_requested(result, include_context, context_level)
+
+
+@register_tool(
+    "benchmark_targets",
     "Tags: benchmarks, targets, list, chapters, examples, discovery. "
     "List benchmark targets in chapter:example format (e.g., 'ch07:flash_attention'). "
     "Returns: {targets: [{chapter, example, path}], count} or filtered by chapter. "
-    "USE when: Finding exact target names to pass to aisp_run_benchmarks. "
+    "USE when: Finding exact target names to pass to run_benchmarks. "
     "Example: \"List targets for ch07\" or \"What examples are in the attention chapter?\". "
-    "PREFER aisp_list_chapters to see all chapters first. ⚡ FAST (~1s). WORKFLOW: aisp_benchmark_targets → aisp_run_benchmarks. NOT FOR: Running benchmarks (use aisp_run_benchmarks).",
+    "PREFER list_chapters to see all chapters first. ⚡ FAST (~1s). WORKFLOW: benchmark_targets → run_benchmarks. NOT FOR: Running benchmarks (use run_benchmarks).",
     {"type": "object", "properties": with_context_params({
         "chapter": {"type": "string", "description": "Optional chapter or lab slug to filter (e.g., 'ch07', 'labs/decode')"},
     })}
@@ -2642,22 +2911,22 @@ def tool_benchmark_targets(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_benchmark_report",
+    "benchmark_report",
     "Tags: report, pdf, html, export, visualization, share, document. "
     "Generate PDF/HTML report from benchmark results for sharing and documentation. "
     "Returns: {output_path, format, success} and writes report file. "
-    "⚡ FAST (~5s). USE AFTER: aisp_run_benchmarks or aisp_benchmark_triage. "
+    "⚡ FAST (~5s). USE AFTER: run_benchmarks or benchmark_triage. "
     "Example: \"Generate HTML report\" or \"Create PDF performance summary\". "
     "FORMATS: "
     "• html: Interactive, best for sharing/web "
     "• pdf: Static, best for formal documentation. "
-    "WORKFLOW: aisp_run_benchmarks → aisp_benchmark_triage → aisp_benchmark_report(format='html'). "
-    "REQUIRES: benchmark_test_results.json from aisp_run_benchmarks.",
+    "WORKFLOW: run_benchmarks → benchmark_triage → benchmark_report(format='html'). "
+    "REQUIRES: benchmark_test_results.json from run_benchmarks.",
     {"type": "object", "properties": with_context_params({
         "data_file": {
             "type": "string",
             "description": (
-                "Path to benchmark_test_results.json from aisp_run_benchmarks "
+                "Path to benchmark_test_results.json from run_benchmarks "
                 "(typically artifacts/runs/<run_id>/benchmark_test_results.json; defaults to latest in artifacts/runs/)."
             ),
         },
@@ -2699,18 +2968,18 @@ def tool_benchmark_report(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_benchmark_export",
+    "benchmark_export",
     "Tags: export, csv, markdown, json, data, share, spreadsheet. "
     "Export benchmark results to CSV/Markdown/JSON format for further analysis. "
     "Returns: {output_path, format, benchmarks_written, success}. "
     "USE when: Importing results into spreadsheets, documentation, or other tools. "
     "Example: \"Export benchmarks to CSV\" or \"Convert results to markdown table\". "
-    "REQUIRES: Run aisp_run_benchmarks first to generate benchmark_test_results.json. ⚡ FAST (~2s). WORKFLOW: aisp_run_benchmarks → aisp_benchmark_export. NOT FOR: Reports (use aisp_benchmark_report).",
+    "REQUIRES: Run run_benchmarks first to generate benchmark_test_results.json. ⚡ FAST (~2s). WORKFLOW: run_benchmarks → benchmark_export. NOT FOR: Reports (use benchmark_report).",
     {"type": "object", "properties": with_context_params({
         "data_file": {
             "type": "string",
             "description": (
-                "Path to benchmark_test_results.json from aisp_run_benchmarks "
+                "Path to benchmark_test_results.json from run_benchmarks "
                 "(typically artifacts/runs/<run_id>/benchmark_test_results.json; defaults to latest in artifacts/runs/)."
             ),
         },
@@ -2782,7 +3051,7 @@ def tool_benchmark_export(params: Dict[str, Any]) -> BenchmarkExportResult:
 
 
 @register_tool(
-    "aisp_benchmark_compare_runs",
+    "benchmark_compare_runs",
     "Tags: compare, diff, regression, improvement, delta, a-b-test, before-after. "
     "Compare two benchmark runs showing speedup deltas, regressions, and improvements. "
     "Returns: {regressions: [...], improvements: [...], unchanged: [...], summary}. "
@@ -2790,11 +3059,11 @@ def tool_benchmark_export(params: Dict[str, Any]) -> BenchmarkExportResult:
     "Example: \"Compare baseline vs optimized\" or \"Show top 10 regressions\". "
     "REQUIRES: Two benchmark_test_results.json files from separate runs. "
     "WORKFLOW: "
-    "1. aisp_run_benchmarks (baseline) → save results "
+    "1. run_benchmarks (baseline) → save results "
     "2. Make optimizations "
-    "3. aisp_run_benchmarks (candidate) → save results "
-    "4. aisp_benchmark_compare_runs(baseline=..., candidate=...) "
-    "5. If regressions: aisp_analyze_bottlenecks on affected benchmarks.",
+    "3. run_benchmarks (candidate) → save results "
+    "4. benchmark_compare_runs(baseline=..., candidate=...) "
+    "5. If regressions: analyze_bottlenecks on affected benchmarks.",
     {"type": "object", "properties": with_context_params({
         "baseline": {
             "type": "string",
@@ -2832,22 +3101,22 @@ def tool_benchmark_compare_runs(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_benchmark_triage",
+    "benchmark_triage",
     "Tags: benchmark, triage, analysis, recommendations, next-steps, post-benchmark, actionable. "
     "🔍 POST-BENCHMARK ANALYSIS: Analyze benchmark results and get actionable recommendations. "
     "Returns: {summary, regressions, improvements, top_issues, recommended_tools, optimization_plan}. "
-    "⚡ FAST (~2s). USE AFTER: aisp_run_benchmarks completes successfully. "
+    "⚡ FAST (~2s). USE AFTER: run_benchmarks completes successfully. "
     "Example: \"Analyze my benchmark results\" or \"What should I optimize based on benchmarks?\". "
     "PROVIDES: "
     "• Summary of all benchmark results (pass/fail/speedup) "
     "• Identification of regressions and improvements "
     "• Specific tool recommendations based on findings "
     "• Prioritized optimization plan. "
-    "WORKFLOW: aisp_run_benchmarks → aisp_benchmark_triage → implement recommendations → re-benchmark.",
+    "WORKFLOW: run_benchmarks → benchmark_triage → implement recommendations → re-benchmark.",
     {"type": "object", "properties": with_context_params({
         "data_file": {
             "type": "string",
-            "description": "Path to benchmark_test_results.json from aisp_run_benchmarks (defaults to latest in artifacts/)."
+            "description": "Path to benchmark_test_results.json from run_benchmarks (defaults to latest in artifacts/)."
         },
         "baseline_file": {
             "type": "string",
@@ -2879,10 +3148,10 @@ def tool_benchmark_triage(params: Dict[str, Any]) -> Dict[str, Any]:
 
     if not data_path or not data_path.exists():
         return make_error(
-            "No benchmark results found. Run aisp_run_benchmarks first.",
+            "No benchmark results found. Run run_benchmarks first.",
             include_context, context_level,
             searched_paths=[str(p) for p in search_paths] if not data_file else None,
-            hint="Specify data_file parameter or run aisp_run_benchmarks to generate results."
+            hint="Specify data_file parameter or run run_benchmarks to generate results."
         )
 
     try:
@@ -2922,7 +3191,7 @@ def tool_benchmark_triage(params: Dict[str, Any]) -> Dict[str, Any]:
 
     if regressions:
         recommended_tools.append({
-            "tool": "aisp_analyze_bottlenecks",
+            "tool": "analyze_bottlenecks",
             "reason": f"Identify root cause of {len(regressions)} regression(s)",
             "priority": "high"
         })
@@ -2934,7 +3203,7 @@ def tool_benchmark_triage(params: Dict[str, Any]) -> Dict[str, Any]:
 
     if slow_kernels:
         recommended_tools.append({
-            "tool": "aisp_profile_nsys",
+            "tool": "profile_nsys",
             "reason": f"Profile {len(slow_kernels)} slow benchmark(s) (>100ms baseline)",
             "params": {"preset": "light"}
         })
@@ -2948,28 +3217,28 @@ def tool_benchmark_triage(params: Dict[str, Any]) -> Dict[str, Any]:
         avg_attention_speedup = sum(b.get("speedup", 1.0) for b in attention_benchmarks) / len(attention_benchmarks)
         if avg_attention_speedup < 1.5:
             recommended_tools.append({
-                "tool": "aisp_explain",
+                "tool": "explain",
                 "reason": "Learn about FlashAttention optimization",
                 "params": {"concept": "flash-attention"}
             })
 
     if improvements:
         recommended_tools.append({
-            "tool": "aisp_benchmark_report",
+            "tool": "benchmark_report",
             "reason": f"Document {len(improvements)} improvement(s) in shareable report",
             "params": {"format": "html"}
         })
 
     # Always suggest comparison if we have results
     recommended_tools.append({
-        "tool": "aisp_benchmark_compare_runs",
+        "tool": "benchmark_compare_runs",
         "reason": "Compare with previous baseline for trend analysis",
         "note": "Save current results as baseline for future comparisons"
     })
 
     # Add general optimization recommendations
     recommended_tools.append({
-        "tool": "aisp_recommend",
+        "tool": "recommend",
         "reason": "Get optimization playbook based on your hardware and goals"
     })
 
@@ -3027,7 +3296,7 @@ def tool_benchmark_triage(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_analyze_bottlenecks",
+    "analyze_bottlenecks",
     "Tags: bottleneck, slow, latency, utilization, diagnosis, why-slow, root-cause, debug. "
     "Identify performance bottlenecks: memory-bound, compute-bound, communication-bound, host-bound. "
     "Returns: {bottleneck_type, confidence, profile_data, llm_analysis, recommendations, availability}. "
@@ -3035,10 +3304,10 @@ def tool_benchmark_triage(params: Dict[str, Any]) -> Dict[str, Any]:
     "Example: \"Why is my 7B model slow on 4xH100?\" or \"What's the bottleneck at batch 32, seq 4k?\". "
     "mode='both' (default) combines profiling data with LLM analysis for best results. "
     "WORKFLOW by bottleneck_type: "
-    "• memory-bound → aisp_profile_memory, aisp_analyze_whatif(max_vram_gb=X) "
-    "• compute-bound → aisp_profile_kernels, aisp_hw_tc "
-    "• communication-bound → aisp_distributed_nccl, aisp_hw_nccl "
-    "• host-bound → aisp_cpu_memory_analysis, aisp_data_loading NOT FOR: Kernel metrics (use aisp_profile_ncu).",
+    "• memory-bound → profile_memory, analyze_whatif(max_vram_gb=X) "
+    "• compute-bound → profile_kernels, hw_tc "
+    "• communication-bound → distributed_nccl, hw_nccl "
+    "• host-bound → cpu_memory_analysis, data_loading NOT FOR: Kernel metrics (use profile_ncu).",
     {"type": "object", "properties": with_context_params({
         "analysis_type": {
             "type": "string",
@@ -3086,17 +3355,17 @@ def tool_analyze_bottlenecks(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_analyze_pareto",
+    "analyze_pareto",
     "Tags: pareto, tradeoff, throughput, latency, memory, frontier, optimal, comparison, choose. "
     "Find Pareto-optimal configurations: best throughput/latency/memory tradeoffs. "
     "Returns: {pareto_frontier: [{config, throughput, latency_ms, memory_gb}], dominated_configs, analysis}. "
-    "⚡ FAST (~2s). USE AFTER: aisp_run_benchmarks with multiple configurations. "
+    "⚡ FAST (~2s). USE AFTER: run_benchmarks with multiple configurations. "
     "Example: \"Show Pareto frontier\" or \"What's the best throughput/latency tradeoff?\". "
     "PARETO EXPLAINED: Points on the frontier are 'optimal' - you can't improve one metric without sacrificing another. "
     "WORKFLOW: "
-    "1. aisp_run_benchmarks with varied batch_size/seq_len configs "
-    "2. aisp_analyze_pareto → find optimal operating points "
-    "3. aisp_analyze_whatif → check if constraints are met. "
+    "1. run_benchmarks with varied batch_size/seq_len configs "
+    "2. analyze_pareto → find optimal operating points "
+    "3. analyze_whatif → check if constraints are met. "
     "REQUIRES: benchmark_test_results.json with multiple configurations.",
     {"type": "object", "properties": with_context_params({})}
 )
@@ -3109,14 +3378,14 @@ def tool_analyze_pareto(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_analyze_scaling",
+    "analyze_scaling",
     "Tags: scaling, throughput, gpus, nodes, projection, extrapolation, multi-gpu. "
     "Analyze how performance scales with workload size, sequence length, batch size, or GPU count. "
     "Returns: {scaling_efficiency, projections: [{gpus, throughput, efficiency_pct}], bottleneck_at_scale}. "
     "⚡ FAST (~2s). USE when: Projecting performance to larger inputs, planning multi-GPU scaling. "
     "Example: \"Predict throughput if I double sequence length\" or \"How does it scale from 2 to 4 GPUs?\". "
-    "WORKFLOW: aisp_gpu_topology → aisp_analyze_scaling → aisp_distributed_plan. "
-    "ALSO USE: aisp_predict_scaling for specific GPU count predictions.",
+    "WORKFLOW: gpu_topology → analyze_scaling → distributed_plan. "
+    "ALSO USE: predict_scaling for specific GPU count predictions.",
     {"type": "object", "properties": with_context_params({})}
 )
 def tool_analyze_scaling(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -3128,14 +3397,14 @@ def tool_analyze_scaling(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_analyze_stacking",
+    "analyze_stacking",
     "Tags: stacking, combinations, techniques, compatibility, conflicts, compose. "
     "Analyze which optimization techniques work well together and which conflict. "
     "Returns: {compatible_stacks: [...], conflicts: [{technique1, technique2, reason}], recommended_order}. "
     "⚡ FAST (~2s). USE when: Planning to combine multiple optimizations, checking for conflicts. "
     "Example: \"Can FlashAttention + torch.compile + CUDA graphs coexist?\" or \"What's the best optimization order?\". "
-    "WORKFLOW: aisp_recommend → aisp_analyze_stacking → apply compatible techniques. "
-    "ALSO USE: aisp_optimize_techniques for full technique list, aisp_optimize_roi for prioritization.",
+    "WORKFLOW: recommend → analyze_stacking → apply compatible techniques. "
+    "ALSO USE: optimize_techniques for full technique list, optimize_roi for prioritization.",
     {"type": "object", "properties": with_context_params({})}
 )
 def tool_analyze_stacking(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -3147,7 +3416,7 @@ def tool_analyze_stacking(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_analyze_whatif",
+    "analyze_whatif",
     "Tags: constraints, latency, vram, throughput, what-if, feasibility, target, sla, budget. "
     "What-if analysis: Find optimizations that meet your constraints (VRAM, latency, throughput). "
     "Returns: {feasible_configs: [...], recommended_optimizations, tradeoff_analysis}. "
@@ -3158,7 +3427,7 @@ def tool_analyze_stacking(params: Dict[str, Any]) -> Dict[str, Any]:
     "• max_latency_ms=50: Real-time chatbot SLA "
     "• min_throughput=1000: High-volume batch processing "
     "• Combine: max_vram_gb=48, max_latency_ms=100 (A6000 real-time). "
-    "WORKFLOW: aisp_profile_memory → aisp_analyze_whatif → aisp_inference_quantization → verify.",
+    "WORKFLOW: profile_memory → analyze_whatif → inference_quantization → verify.",
     {"type": "object", "properties": with_context_params({
         "max_vram_gb": {
             "type": "number",
@@ -3187,7 +3456,136 @@ def tool_analyze_whatif(params: Dict[str, Any]) -> Dict[str, Any]:
 # =============================================================================
 
 @register_tool(
-    "aisp_recommend",
+    "optimize",
+    "Tags: optimize, benchmark, llm, variants, workflow, shortcut. "
+    "Resolve a benchmark file path or target and run quick LLM variants by default. "
+    "Accepts either `path` (benchmark file path) or `target` (chapter:example). "
+    "Fails fast if the path does not map to a unique benchmark target. "
+    "Returns the same outputs as benchmark_variants. "
+    "USE when: You have a benchmark file path or target and want quick LLM variant testing. "
+    "NOT FOR: General recommendations (use recommend). "
+    "Example: path='ch10/baseline_atomic_reduction.py' or target='ch10:atomic_reduction'.",
+    {
+        "type": "object",
+        "properties": with_context_params({
+            "path": {
+                "type": "string",
+                "description": "Benchmark file path (baseline_*/optimized_* .py or .cu)."
+            },
+            "target": {
+                "type": "string",
+                "description": "Benchmark target in chapter:example format."
+            },
+            "profile": {
+                "type": "string",
+                "description": "Profiling preset: none (no profiling), minimal (basic), deep_dive (full nsys/ncu profiling), or roofline",
+                "enum": ["none", "minimal", "deep_dive", "roofline"],
+                "default": "minimal",
+            },
+            "artifacts_dir": {
+                "type": "string",
+                "description": "Base directory for artifacts (bench creates a self-describing run dir underneath).",
+            },
+            "run_id": {
+                "type": "string",
+                "description": "Run ID for artifacts (default: <timestamp>__bench__profile-<type>__targets-<...>)",
+            },
+            "iterations": {
+                "type": "integer",
+                "description": "Override benchmark iterations (all targets).",
+            },
+            "warmup": {
+                "type": "integer",
+                "description": "Override warmup iterations (all targets).",
+            },
+            "llm_analysis": {
+                "type": "boolean",
+                "description": "Enable LLM-powered analysis (default true for this shortcut).",
+                "default": True,
+            },
+            "force_llm": {
+                "type": "boolean",
+                "description": "Force LLM analysis on all benchmarks regardless of speedup (default true for this shortcut).",
+                "default": True,
+            },
+            "apply_patches": {
+                "type": "boolean",
+                "description": "Apply LLM-suggested patches to create new optimized variants (default true for this shortcut).",
+                "default": True,
+            },
+            "rebenchmark_llm_patches": {
+                "type": "boolean",
+                "description": "Re-benchmark LLM-patched variants (default true for this shortcut).",
+                "default": True,
+            },
+            "llm_explain": {
+                "type": "boolean",
+                "description": "Generate LLM explanations for best patches (requires rebenchmark_llm_patches=true).",
+                "default": False,
+            },
+            "async": {
+                "type": "boolean",
+                "description": "Run in background and return job_id; poll with job_status",
+                "default": False,
+            },
+            "timeout_seconds": {
+                "type": "integer",
+                "description": "Max runtime before returning with partial output; set 0/null for no timeout",
+                "default": 900,
+            },
+            "allow_invalid_environment": {
+                "type": "boolean",
+                "description": (
+                    "Allow running benchmarks even if validate_environment() reports errors. "
+                    "Still emits warnings; results may be invalid. Intended for unit tests and diagnostics."
+                ),
+                "default": False,
+            },
+            "allow_virtualization": {
+                "type": "boolean",
+                "description": (
+                    "Allow running benchmarks in a virtualized environment (VM/hypervisor) by downgrading ONLY the "
+                    "virtualization check to a loud warning. Results are still invalid; bare metal is required."
+                ),
+                "default": True,
+            },
+        }),
+    },
+)
+def tool_optimize(params: Dict[str, Any]) -> Dict[str, Any]:
+    include_context, context_level = extract_context_opts(params)
+    path = params.get("path")
+    target = params.get("target")
+    if path is not None and not isinstance(path, str):
+        return make_error("path must be a string.", include_context, context_level)
+    if target is not None and not isinstance(target, str):
+        return make_error("target must be a string.", include_context, context_level)
+    if path and target:
+        return make_error("Provide either path or target, not both.", include_context, context_level)
+    if not path and not target:
+        return make_error("path or target is required.", include_context, context_level)
+
+    resolved_target = None
+    if path:
+        if not path.strip():
+            return make_error("path cannot be empty.", include_context, context_level)
+        resolved_target, err = _resolve_benchmark_target_from_path(str(path))
+        if err:
+            return make_error(err, include_context, context_level)
+    else:
+        resolved_target = target.strip()
+        if not resolved_target:
+            return make_error("target cannot be empty.", include_context, context_level)
+
+    merged = dict(params)
+    merged.pop("path", None)
+    merged.pop("target", None)
+    merged["targets"] = [resolved_target]
+    return tool_benchmark_variants(merged)
+
+
+@register_tool(
+    "recommend",
     "Tags: recommend, playbook, throughput, latency, memory, optimization, guide, strategy, gameplan. "
     "Get prioritized optimization recommendations for your model configuration and goal. "
     "Returns: {recommendations: [{technique, priority, expected_speedup, effort}], playbook, warnings}. "
@@ -3197,7 +3595,7 @@ def tool_analyze_whatif(params: Dict[str, Any]) -> Dict[str, Any]:
     "• throughput → maximize tokens/sec (batch processing, training) "
     "• latency → minimize TTFT (real-time inference, chatbots) "
     "• memory → reduce VRAM (fit larger models, longer sequences). "
-    "WORKFLOW: aisp_triage → aisp_recommend → aisp_optimize_roi → implement techniques → aisp_run_benchmarks.",
+    "WORKFLOW: triage → recommend → optimize_roi → implement techniques → run_benchmarks.",
     {"type": "object", "properties": with_context_params({
         "model_size": {
             "type": "number",
@@ -3231,13 +3629,13 @@ def tool_recommend(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_optimize_roi",
+    "optimize_roi",
     "Tags: ROI, prioritize, cost-benefit, effort, impact, ranking, efficiency. "
     "Calculate ROI (return on investment) for optimization techniques: expected gain vs implementation effort. "
     "Returns: {ranked_techniques: [{name, expected_speedup, effort_hours, roi_score}], quick_wins, high_impact}. "
     "USE when: Prioritizing optimization work, deciding what to implement first, limited engineering time. "
     "Example: \"Which optimizations give best ROI?\" or \"Rank techniques by cost vs gain\". "
-    "ALSO USE: aisp_optimize_techniques for full technique details, aisp_recommend for goal-specific recs. ⚡ FAST (~1s). WORKFLOW: aisp_recommend → aisp_optimize_roi → prioritize.",
+    "ALSO USE: optimize_techniques for full technique details, recommend for goal-specific recs. ⚡ FAST (~1s). WORKFLOW: recommend → optimize_roi → prioritize.",
     {"type": "object", "properties": with_context_params({})}
 )
 def tool_optimize_roi(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -3249,13 +3647,13 @@ def tool_optimize_roi(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_optimize_techniques",
+    "optimize_techniques",
     "Tags: techniques, list, options, catalog, encyclopedia, reference. "
     "Get catalog of all optimization techniques with details, requirements, and expected benefits. "
     "Returns: {techniques: [{name, category, description, requirements, expected_speedup, gotchas}], count}. "
     "USE when: Exploring what optimizations exist, learning about technique requirements, reference lookup. "
     "Example: \"List all optimization techniques\" or \"What techniques exist for attention?\". "
-    "ALSO USE: aisp_optimize_roi for prioritization, aisp_analyze_stacking for compatibility. ⚡ FAST (~1s). WORKFLOW: aisp_optimize_techniques → choose → aisp_optimize_roi.",
+    "ALSO USE: optimize_roi for prioritization, analyze_stacking for compatibility. ⚡ FAST (~1s). WORKFLOW: optimize_techniques → choose → optimize_roi.",
     {"type": "object", "properties": with_context_params({})}
 )
 def tool_optimize_techniques(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -3271,7 +3669,7 @@ def tool_optimize_techniques(params: Dict[str, Any]) -> Dict[str, Any]:
 # =============================================================================
 
 @register_tool(
-    "aisp_distributed_plan",
+    "distributed_plan",
     "Tags: distributed, dp, tp, pp, fsdp, parallelism, multi-gpu, multi-node, strategy, sharding. "
     "Plan parallelism strategy: recommend DP/TP/PP/FSDP layout for model size and GPU count. "
     "Returns: {recommended_layout: {tp, pp, dp}, memory_per_gpu_gb, communication_volume, rationale}. "
@@ -3282,7 +3680,7 @@ def tool_optimize_techniques(params: Dict[str, Any]) -> Dict[str, Any]:
     "• PP (Pipeline Parallel): Split model stages; good for multi-node "
     "• DP (Data Parallel): Replicate model; scale batch size "
     "• FSDP: Shard parameters + gradients; memory-efficient DP. "
-    "WORKFLOW: aisp_distributed_plan → aisp_distributed_nccl → aisp_launch_plan → training.",
+    "WORKFLOW: distributed_plan → distributed_nccl → launch_plan → training.",
     {"type": "object", "properties": with_context_params({
         "model_size": {
             "type": "number",
@@ -3314,13 +3712,13 @@ def tool_distributed_plan(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_distributed_nccl",
+    "distributed_nccl",
     "Tags: nccl, multi-node, collective, allreduce, environment, tuning, ib, rdma. "
     "Get NCCL tuning recommendations: environment variables, IB settings, collective algorithms. "
     "Returns: {env_vars: {NCCL_*: value}, algorithm_hints, ib_recommendations, debug_tips}. "
     "USE when: Tuning NCCL for multi-node training, debugging collective performance, IB/RDMA setup. "
     "Example: \"NCCL settings for 2-node 4xH100\" or \"Tune NCCL for InfiniBand\". "
-    "ALSO USE: aisp_hw_nccl for NCCL bandwidth testing, aisp_info_network for IB status. ⚡ FAST (~1s). WORKFLOW: aisp_distributed_plan → aisp_distributed_nccl → apply env vars.",
+    "ALSO USE: hw_nccl for NCCL bandwidth testing, system_network for IB status. ⚡ FAST (~1s). WORKFLOW: distributed_plan → distributed_nccl → apply env vars.",
     {"type": "object", "properties": with_context_params({
         "nodes": {"type": "integer", "description": "Number of nodes", "default": 1},
         "gpus": {"type": "integer", "description": "GPUs per node", "default": 8},
@@ -3342,45 +3740,210 @@ def tool_distributed_nccl(params: Dict[str, Any]) -> Dict[str, Any]:
 # =============================================================================
 
 @register_tool(
-    "aisp_inference_vllm",
+    "inference_vllm",
     "Tags: vllm, inference, serving, deployment, config, batching, kv-cache, production. "
-    "Generate optimized vLLM configuration for inference serving (throughput or latency mode). "
-    "Returns: {config: {tensor_parallel, gpu_memory_utilization, max_num_seqs, ...}, launch_cmd, tips}. "
+    "Generate optimized vLLM configuration for inference serving (explicit model size required). "
+    "Returns: {vllm_config|engine_comparison, launch_command, tips}. "
     "⚡ FAST (~1s). USE when: Deploying vLLM server, optimizing inference serving. "
     "Example: \"vLLM settings for 7B low latency on A100\" or \"High-throughput 70B vLLM config\". "
     "TARGETS explained: "
     "• throughput: Large batches, high gpu_memory_utilization (~0.9), best for batch inference "
-    "• latency: Small batches, lower memory util, continuous batching tuned for TTFT. "
-    "WORKFLOW: aisp_gpu_info → aisp_inference_quantization → aisp_inference_vllm → deploy. "
-    "ALSO USE: aisp_inference_quantization for precision recommendations.",
+    "• latency: Small batches, lower memory util, continuous batching tuned for TTFT "
+    "• memory: Maximize fit with conservative batching. "
+    "WORKFLOW: gpu_info → inference_quantization → inference_vllm → inference_deploy. "
+    "ALSO USE: inference_quantization for precision recommendations.",
     {"type": "object", "properties": with_context_params({
         "model": {
             "type": "string",
-            "description": "Model name or size (e.g., 'llama-7b', 'meta-llama/Llama-3.1-70B')",
-            "default": "7b"
+            "description": "Model name (e.g., 'meta-llama/Llama-3.1-70B')",
+            "default": "model"
+        },
+        "model_size": {
+            "type": "number",
+            "description": "Model size in billions of parameters (required).",
+        },
+        "gpus": {
+            "type": "integer",
+            "description": "Number of GPUs available",
+            "default": 1,
+        },
+        "gpu_memory_gb": {
+            "type": "number",
+            "description": "VRAM per GPU in GB",
+            "default": 80,
         },
         "target": {
             "type": "string",
-            "description": "Optimization target: throughput (max batch) or latency (min TTFT)",
-            "enum": ["throughput", "latency"],
+            "description": "Optimization target: throughput, latency, or memory",
+            "enum": ["throughput", "latency", "memory"],
             "default": "throughput"
         },
-    })}
+        "max_seq_length": {
+            "type": "integer",
+            "description": "Max sequence length for config sizing",
+            "default": 8192,
+        },
+        "quantization": {
+            "type": "string",
+            "description": "Optional quantization mode (awq/gptq/fp8/int8)",
+        },
+        "compare": {
+            "type": "boolean",
+            "description": "If true, return engine comparison instead of config",
+            "default": False,
+        },
+    }), "required": ["model_size"]}
 )
 def tool_inference_vllm(params: Dict[str, Any]) -> Dict[str, Any]:
     """Generate vLLM config."""
     from core.engine import get_engine
     include_context, context_level = extract_context_opts(params)
     target = normalize_param("target", params.get("target"), "throughput")
+    model_size = params.get("model_size")
     result = get_engine().inference.vllm_config(
-        model=params.get("model", "7b"),
-        target=target
+        model=params.get("model", "model"),
+        model_params_b=model_size,
+        num_gpus=params.get("gpus", 1),
+        gpu_memory_gb=params.get("gpu_memory_gb", 80),
+        target=target,
+        max_seq_length=params.get("max_seq_length", 8192),
+        quantization=params.get("quantization"),
+        compare=bool(params.get("compare", False)),
     )
     return attach_context_if_requested(result, include_context, context_level)
 
 
 @register_tool(
-    "aisp_inference_quantization",
+    "inference_deploy",
+    "Tags: inference, deploy, serving, config, launch, throughput, latency. "
+    "Generate inference deployment configuration (explicit model size required). "
+    "Returns: {model, hardware, goal, engine, launch_command, report}. "
+    "⚡ FAST (~1s). USE when: Planning inference deployments or generating launch commands. "
+    "Example: \"Deploy config for 70B on 4xA100\" or \"Get inference launch command\". "
+    "GOALS: throughput (batch), latency (TTFT), memory (fit). "
+    "WORKFLOW: gpu_info → inference_quantization → inference_deploy. "
+    "NOT FOR: vLLM-specific tuning (use inference_vllm).",
+    {"type": "object", "properties": with_context_params({
+        "model": {
+            "type": "string",
+            "description": "Model name (e.g., 'meta-llama/Llama-3.1-70B')",
+            "default": "model"
+        },
+        "model_size": {
+            "type": "number",
+            "description": "Model size in billions of parameters (required).",
+        },
+        "gpus": {
+            "type": "integer",
+            "description": "Number of GPUs available",
+            "default": 1,
+        },
+        "gpu_memory_gb": {
+            "type": "number",
+            "description": "VRAM per GPU in GB",
+            "default": 80,
+        },
+        "goal": {
+            "type": "string",
+            "description": "Optimization goal: throughput, latency, or memory",
+            "enum": ["throughput", "latency", "memory"],
+            "default": "throughput",
+        },
+        "target": {
+            "type": "string",
+            "description": "Alias for goal (throughput/latency/memory).",
+            "enum": ["throughput", "latency", "memory"],
+        },
+        "max_seq_length": {
+            "type": "integer",
+            "description": "Max sequence length for config sizing",
+            "default": 8192,
+        },
+    }), "required": ["model_size"]}
+)
+def tool_inference_deploy(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Generate inference deployment config."""
+    from core.engine import get_engine
+    include_context, context_level = extract_context_opts(params)
+    payload = {
+        "model": params.get("model", "model"),
+        "model_params_b": params.get("model_size"),
+        "model_size": params.get("model_size"),
+        "num_gpus": params.get("gpus", 1),
+        "gpu_memory_gb": params.get("gpu_memory_gb", 80),
+        "goal": params.get("goal") or params.get("target") or "throughput",
+        "max_seq_length": params.get("max_seq_length", 8192),
+    }
+    result = get_engine().inference.deploy(payload)
+    return attach_context_if_requested(result, include_context, context_level)
+
+
+@register_tool(
+    "inference_estimate",
+    "Tags: inference, estimate, throughput, latency, memory, sizing. "
+    "Estimate inference throughput/latency based on model + hardware (explicit model size required). "
+    "Returns: {model, hardware, goal, estimate: {throughput_tps, latency_ms, memory_gb}, engine}. "
+    "⚡ FAST (~1s). USE when: Quickly sizing deployments or comparing hardware options. "
+    "Example: \"Estimate latency for 13B on 1xH100\". "
+    "WORKFLOW: inference_deploy → inference_estimate. "
+    "NOT FOR: Exact benchmarking (use run_benchmarks).",
+    {"type": "object", "properties": with_context_params({
+        "model": {
+            "type": "string",
+            "description": "Model name (e.g., 'meta-llama/Llama-3.1-70B')",
+            "default": "model"
+        },
+        "model_size": {
+            "type": "number",
+            "description": "Model size in billions of parameters (required).",
+        },
+        "gpus": {
+            "type": "integer",
+            "description": "Number of GPUs available",
+            "default": 1,
+        },
+        "gpu_memory_gb": {
+            "type": "number",
+            "description": "VRAM per GPU in GB",
+            "default": 80,
+        },
+        "goal": {
+            "type": "string",
+            "description": "Optimization goal: throughput, latency, or memory",
+            "enum": ["throughput", "latency", "memory"],
+            "default": "throughput",
+        },
+        "target": {
+            "type": "string",
+            "description": "Alias for goal (throughput/latency/memory).",
+            "enum": ["throughput", "latency", "memory"],
+        },
+        "max_seq_length": {
+            "type": "integer",
+            "description": "Max sequence length for config sizing",
+            "default": 8192,
+        },
+    }), "required": ["model_size"]}
+)
+def tool_inference_estimate(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Estimate inference performance."""
+    from core.engine import get_engine
+    include_context, context_level = extract_context_opts(params)
+    payload = {
+        "model": params.get("model", "model"),
+        "model_params_b": params.get("model_size"),
+        "model_size": params.get("model_size"),
+        "num_gpus": params.get("gpus", 1),
+        "gpu_memory_gb": params.get("gpu_memory_gb", 80),
+        "goal": params.get("goal") or params.get("target") or "throughput",
+        "max_seq_length": params.get("max_seq_length", 8192),
+    }
+    result = get_engine().inference.estimate(payload)
+    return attach_context_if_requested(result, include_context, context_level)
+
+
+@register_tool(
+    "inference_quantization",
     "Tags: quantization, fp8, int8, int4, awq, gptq, precision, compression, memory, bnb. "
     "Get quantization recommendations: precision format, method, expected accuracy/speedup tradeoffs. "
     "Returns: {recommended_format, alternatives: [{format, memory_reduction, speedup, accuracy_loss}], tips}. "
@@ -3391,7 +3954,7 @@ def tool_inference_vllm(params: Dict[str, Any]) -> Dict[str, Any]:
     "• INT8: Good quality/speed; Ampere+ (A100/RTX30xx+); ~50% memory reduction "
     "• INT4 (AWQ/GPTQ): Max compression; ~75% memory reduction; slight quality loss "
     "• NF4 (bitsandbytes): Easy setup; ~75% reduction; QLoRA-friendly. "
-    "WORKFLOW: aisp_gpu_info (check arch) → aisp_inference_quantization → aisp_inference_vllm.",
+    "WORKFLOW: gpu_info (check arch) → inference_quantization → inference_vllm.",
     {"type": "object", "properties": with_context_params({
         "model_size": {
             "type": "number",
@@ -3403,7 +3966,7 @@ def tool_inference_quantization(params: Dict[str, Any]) -> Dict[str, Any]:
     """Quantization recommendations."""
     from core.engine import get_engine
     include_context, context_level = extract_context_opts(params)
-    result = get_engine().inference.quantization(params)
+    result = get_engine().inference.quantization(model_size=params.get("model_size"))
     return attach_context_if_requested(result, include_context, context_level)
 
 
@@ -3412,7 +3975,7 @@ def tool_inference_quantization(params: Dict[str, Any]) -> Dict[str, Any]:
 # =============================================================================
 
 @register_tool(
-    "aisp_ask",
+    "ask",
     "Tags: question, advice, why-slow, guidance, help, answer, book, citations, free-form. "
     "Ask a free-form performance question and get an answer with book citations. "
     "Returns: {answer, citations: [{chapter, section, relevance}], related_tools}. "
@@ -3422,9 +3985,9 @@ def tool_inference_quantization(params: Dict[str, Any]) -> Dict[str, Any]:
     "• 'Why is my attention kernel slow at seq_len=4k?' "
     "• 'Should I use torch.compile or CUDA graphs?' "
     "• 'What causes GPU memory fragmentation?'. "
-    "REQUIRES: AI backend available (check with aisp_ai_status). "
-    "VERSUS: aisp_explain (concept definitions), aisp_recommend (optimization playbooks), "
-    "aisp_suggest_tools (which tool to use). WORKFLOW: aisp_ask for advice → specific tools for action. NOT FOR: Raw data (use domain tools).",
+    "REQUIRES: AI backend available (check with ai_status). "
+    "VERSUS: explain (concept definitions), recommend (optimization playbooks), "
+    "suggest_tools (which tool to use). WORKFLOW: ask for advice → specific tools for action. NOT FOR: Raw data (use domain tools).",
     {"type": "object", "properties": with_context_params({
         "question": {
             "type": "string",
@@ -3442,14 +4005,14 @@ def tool_ask(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_explain",
+    "explain",
     "Tags: explain, concept, definition, learn, understand, what-is, glossary. "
     "Explain a GPU/AI performance concept with clear definition and book citations. "
     "Returns: {explanation, key_points: [...], citations: [...], related_concepts}. "
     "USE when: Learning what a technique/concept is, understanding terminology, comparing concepts. "
     "Example: \"Explain tensor parallelism vs pipeline parallelism\" or \"What is FlashAttention?\". "
     "Good for: flash-attention, tensor-parallelism, FSDP, KV-cache, torch.compile, CUDA graphs. "
-    "PREFER aisp_ask for 'why' or 'how' questions, aisp_optimize_techniques for technique catalog. ⚡ FAST (~3s). WORKFLOW: aisp_explain for concepts → aisp_ask for specific advice. NOT FOR: How-to questions (use aisp_ask).",
+    "PREFER ask for 'why' or 'how' questions, optimize_techniques for technique catalog. ⚡ FAST (~3s). WORKFLOW: explain for concepts → ask for specific advice. NOT FOR: How-to questions (use ask).",
     {"type": "object", "properties": with_context_params({
         "concept": {
             "type": "string",
@@ -3467,14 +4030,44 @@ def tool_explain(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_ai_status",
+    "ai_troubleshoot",
+    "Tags: troubleshoot, errors, distributed, nccl, oom, diagnosis, fixes. "
+    "Diagnose common training/distributed errors and suggest fixes. "
+    "Returns: {issues_found, issues: [{category, severity, title, description, symptoms, root_causes, solutions, code_fix, env_vars}]}. "
+    "⚡ FAST (~2s). USE when: You have an error message or symptoms and need actionable fixes. "
+    "Example: \"Diagnose NCCL timeout\" or \"Why am I OOMing on 24GB?\". "
+    "WORKFLOW: ai_troubleshoot → apply fixes → re-run. "
+    "NOT FOR: General performance advice (use ask).",
+    {"type": "object", "properties": with_context_params({
+        "issue": {"type": "string", "description": "Error message or issue description"},
+        "symptoms": {"type": "array", "items": {"type": "string"}, "description": "Optional list of symptoms"},
+        "config": {"type": "object", "description": "Optional configuration context (model/hardware/parallelism)"},
+    }), "required": ["issue"]}
+)
+def tool_ai_troubleshoot(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Diagnose common training/distributed errors."""
+    from core.engine import get_engine
+    include_context, context_level = extract_context_opts(params)
+    issue = params.get("issue")
+    if not issue:
+        return make_error("issue is required", include_context, context_level)
+    result = get_engine().ai.troubleshoot(
+        issue=str(issue),
+        symptoms=params.get("symptoms"),
+        config=params.get("config"),
+    )
+    return attach_context_if_requested(result, include_context, context_level)
+
+
+@register_tool(
+    "ai_status",
     "Tags: ai, llm, backend, connectivity, health, api-key. "
     "Check AI/LLM backend availability: connectivity, API key status, model availability. "
     "Returns: {available, backend_type, model, api_key_set, error_if_any}. "
-    "⚡ FAST (<1s). USE when: Verifying LLM connectivity before aisp_ask/aisp_explain. "
-    "Example: \"Is the LLM backend reachable?\" or \"Why is aisp_ask failing?\". "
-    "WORKFLOW: aisp_ai_status → if available → aisp_ask/aisp_explain. "
-    "NOT FOR: General system health (use aisp_status).",
+    "⚡ FAST (<1s). USE when: Verifying LLM connectivity before ask/explain. "
+    "Example: \"Is the LLM backend reachable?\" or \"Why is ask failing?\". "
+    "WORKFLOW: ai_status → if available → ask/explain. "
+    "NOT FOR: General system health (use status).",
     {"type": "object", "properties": with_context_params({})}
 )
 def tool_ai_status(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -3490,13 +4083,13 @@ def tool_ai_status(params: Dict[str, Any]) -> Dict[str, Any]:
 # =============================================================================
 
 @register_tool(
-    "aisp_profile_flame",
+    "profile_flame",
     "Tags: profile, flame, hotspots, time, breakdown, visualization, call-stack. "
     "Get flame graph data showing execution time breakdown by function/operation. "
     "Returns: {flame_data, top_hotspots: [{function, time_pct, time_ms}], call_tree}. "
     "USE when: Identifying time hotspots, understanding where time is spent, visualizing call stacks. "
     "Example: \"Show flame graph for my training loop\" or \"Where is time spent?\". "
-    "ALSO USE: aisp_profile_kernels for CUDA kernel breakdown, aisp_profile_nsys for full timeline. ⚡ FAST (~2s). WORKFLOW: aisp_profile_flame → hotspots → aisp_profile_kernels.",
+    "ALSO USE: profile_kernels for CUDA kernel breakdown, profile_nsys for full timeline. ⚡ FAST (~2s). WORKFLOW: profile_flame → hotspots → profile_kernels.",
     {"type": "object", "properties": with_context_params({})}
 )
 def tool_profile_flame(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -3508,7 +4101,7 @@ def tool_profile_flame(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_profile_memory",
+    "profile_memory",
     "Tags: memory, timeline, spikes, leaks, oom, fragmentation, allocation, vram, cuda-oom. "
     "Get memory allocation timeline: VRAM usage over time, allocation spikes, potential leaks. "
     "Returns: {timeline: [{timestamp, allocated_gb, reserved_gb}], peak_usage, spikes, leak_suspects}. "
@@ -3518,7 +4111,7 @@ def tool_profile_flame(params: Dict[str, Any]) -> Dict[str, Any]:
     "• Peak > VRAM: Reduce batch_size, use gradient checkpointing "
     "• Fragmentation: Use memory_efficient_attention, torch.cuda.empty_cache() "
     "• Leak: Check for growing tensor lists, unreleased intermediate tensors. "
-    "WORKFLOW: aisp_profile_memory → aisp_analyze_whatif(max_vram_gb=X) → aisp_inference_quantization.",
+    "WORKFLOW: profile_memory → analyze_whatif(max_vram_gb=X) → inference_quantization.",
     {"type": "object", "properties": with_context_params({})}
 )
 def tool_profile_memory(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -3530,13 +4123,13 @@ def tool_profile_memory(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_profile_kernels",
+    "profile_kernels",
     "Tags: kernel, cuda, hotspots, gpu-time, breakdown, slow-kernels. "
     "Get CUDA kernel execution breakdown: time per kernel, launch counts, occupancy hints. "
     "Returns: {kernels: [{name, total_time_ms, call_count, avg_time_us, occupancy}], total_gpu_time}. "
     "USE when: Identifying slow CUDA kernels, analyzing GPU time distribution, finding optimization targets. "
     "Example: \"Which CUDA kernels are slow?\" or \"Kernel breakdown for attention\". "
-    "ALSO USE: aisp_profile_ncu for detailed kernel metrics, aisp_profile_roofline for bound analysis. ⚡ FAST (~2s). WORKFLOW: aisp_profile_kernels → slow kernels → aisp_profile_ncu.",
+    "ALSO USE: profile_ncu for detailed kernel metrics, profile_roofline for bound analysis. ⚡ FAST (~2s). WORKFLOW: profile_kernels → slow kernels → profile_ncu.",
     {"type": "object", "properties": with_context_params({})}
 )
 def tool_profile_kernels(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -3548,13 +4141,13 @@ def tool_profile_kernels(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_profile_roofline",
+    "profile_roofline",
     "Tags: roofline, compute-bound, memory-bound, arithmetic-intensity, efficiency, bottleneck. "
     "Get roofline model analysis: compute vs memory bound positioning, arithmetic intensity, efficiency. "
     "Returns: {bound_type, arithmetic_intensity, achieved_flops, peak_flops, achieved_bandwidth, peak_bandwidth}. "
     "USE when: Determining if kernels are compute- or memory-bound, understanding optimization direction. "
     "Example: \"Are my kernels memory-bound?\" or \"What's the arithmetic intensity of my workload?\". "
-    "Memory-bound → optimize memory access; Compute-bound → optimize math operations. ⚡ FAST (~2s). WORKFLOW: aisp_profile_roofline → if memory-bound → aisp_analyze_memory_patterns. NOT FOR: Running benchmarks (use aisp_hw_roofline).",
+    "Memory-bound → optimize memory access; Compute-bound → optimize math operations. ⚡ FAST (~2s). WORKFLOW: profile_roofline → if memory-bound → analyze_memory_patterns. NOT FOR: Running benchmarks (use hw_roofline).",
     {"type": "object", "properties": with_context_params({})}
 )
 def tool_profile_roofline(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -3566,17 +4159,17 @@ def tool_profile_roofline(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_profile_compare",
+    "profile_compare",
     "Tags: compare, flamegraph, baseline, optimized, speedup, visualization, why-faster. "
     "Generate visual flame graph comparison showing WHY optimized code is faster. "
     "Returns: {speedup, cuda_api_comparison, kernel_breakdown, flame_diff, side_by_side_report, html_output (if requested)}. "
     "Also generates a side-by-side Nsight Systems + Nsight Compute JSON report + narrative by default. "
     "USE when: Understanding optimization impact visually, presenting before/after comparison. "
     "Example: \"Compare baseline vs optimized streams profiles\" or \"Why is the optimized code faster?\". "
-    "Provide chapter (e.g., 'ch11') OR profiles_dir path (for example, benchmarks[].profiles_dir from aisp_benchmark_deep_dive_compare). "
+    "Provide chapter (e.g., 'ch11') OR profiles_dir path (for example, benchmarks[].profiles_dir from benchmark_deep_dive_compare). "
     "If multiple pairs exist, provide pair to select one. Outputs interactive HTML if output_html set. "
     "Always returns nsys/ncu comparison metrics when profiles are captured; analyze metric deltas for regressions/improvements. "
-    "🕐 MEDIUM (~5s). WORKFLOW: profile baseline → optimize → aisp_profile_compare. NOT FOR: Raw comparison (use aisp_compare_nsys/ncu).",
+    "🕐 MEDIUM (~5s). WORKFLOW: profile baseline → optimize → profile_compare. NOT FOR: Raw comparison (use compare_nsys/ncu).",
     {"type": "object", "properties": with_context_params({
         "chapter": {
             "type": "string",
@@ -3619,7 +4212,7 @@ def tool_profile_compare(params: Dict[str, Any]) -> Dict[str, Any]:
         if not profiles_dir:
             return {
                 "error": f"Chapter not found: {chapter}",
-                "hint": "Use aisp_profile_compare with profiles_dir parameter, or run 'aisp profile compare' to list available chapters",
+                "hint": "Use profile_compare with profiles_dir parameter, or run 'aisp profile compare' to list available chapters",
             }
     else:
         # List available profile pairs
@@ -3627,7 +4220,7 @@ def tool_profile_compare(params: Dict[str, Any]) -> Dict[str, Any]:
         return {
             "available_chapters": [p.get("chapter") for p in pairs.get("pairs", [])],
             "count": pairs.get("count", 0),
-            "hint": "Provide chapter parameter to compare profiles. Example: aisp_profile_compare(chapter='ch11-streams-comparison')",
+            "hint": "Provide chapter parameter to compare profiles. Example: profile_compare(chapter='ch11-streams-comparison')",
         }
 
     if not profiles_dir or not profiles_dir.exists():
@@ -3713,7 +4306,7 @@ def tool_profile_compare(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_profile_nsys",
+    "profile_nsys",
     "Tags: nsys, nsight-systems, profile, timeline, trace, cuda-api, nvtx, deep-dive. "
     "Run Nsight Systems profiling to capture GPU timeline, CUDA API calls, kernel launches. "
     "Returns: {output_path, success, run_details, nsys_metrics} and writes .nsys-rep file. "
@@ -3722,9 +4315,9 @@ def tool_profile_compare(params: Dict[str, Any]) -> Dict[str, Any]:
     "⚠️ SLOW: 1-10+ minutes depending on workload. ALWAYS use dry_run=true first to preview command. "
     "PRESETS: preset='light' for quick/small traces, preset='full' (default) for comprehensive data. "
     "STREAM/OVERLAP STUDIES: set full_timeline=true and add NVTX ranges in the code so overlap is visible. "
-    "WORKFLOW: aisp_status → aisp_profile_nsys(dry_run=true) → aisp_profile_nsys → aisp_nsys_summary → aisp_compare_nsys. "
-    "COMPARE: aisp_compare_nsys auto-pairs baseline/optimized across subdirectories; pass pair if multiple pairs exist. "
-    "FOR QUICK CHECKS: Use aisp_hw_speed or aisp_profile_kernels instead. NOT FOR: Kernel metrics (use aisp_profile_ncu). "
+    "WORKFLOW: status → profile_nsys(dry_run=true) → profile_nsys → nsys_summary → compare_nsys. "
+    "COMPARE: compare_nsys auto-pairs baseline/optimized across subdirectories; pass pair if multiple pairs exist. "
+    "FOR QUICK CHECKS: Use hw_speed or profile_kernels instead. NOT FOR: Kernel metrics (use profile_ncu). "
     "Analyze the returned nsys_metrics to explain timeline shifts and driver/API overhead changes.",
     {"type": "object", "properties": with_context_params({
         "command": {
@@ -3774,7 +4367,7 @@ def tool_profile_compare(params: Dict[str, Any]) -> Dict[str, Any]:
         },
         "async": {
             "type": "boolean",
-            "description": "Return a job ticket and run capture in background; poll with aisp_job_status",
+            "description": "Return a job ticket and run capture in background; poll with job_status",
             "default": False
         },
         "timeout_seconds": {
@@ -3944,8 +4537,8 @@ def tool_profile_nsys(params: Dict[str, Any]) -> Dict[str, Any]:
             "profiles_dir": str(profile_dir),
             "progress_path": str(progress_path),
         }
-        queued = _queue_job("aisp_profile_nsys", _execute_capture, params, run_metadata=run_metadata)
-        queued["note"] = "Background capture started; poll with aisp_job_status using job_id."
+        queued = _queue_job("profile_nsys", _execute_capture, params, run_metadata=run_metadata)
+        queued["note"] = "Background capture started; poll with job_status using job_id."
         queued["preset"] = preset
         queued["run_id"] = run_id
         return queued
@@ -3954,7 +4547,7 @@ def tool_profile_nsys(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_profile_ncu",
+    "profile_ncu",
     "Tags: ncu, nsight-compute, profile, kernel-metrics, occupancy, memory-throughput. "
     "Run Nsight Compute profiling to capture detailed per-kernel metrics (occupancy, throughput, etc.). "
     "Returns: {output_path, success, run_details, ncu_metrics} and writes .ncu-rep file. "
@@ -3963,10 +4556,10 @@ def tool_profile_nsys(params: Dict[str, Any]) -> Dict[str, Any]:
     "⚠️ VERY SLOW: Replays kernels. Use kernel_filter to limit scope. Use dry_run=true first. "
     "metric_set selects the NCU --set; workload_type picks custom metrics (only when metric_set=full). "
     "workload_type: memory_bound (default, fast), compute_bound, tensor_core. "
-    "🕐 SLOW (varies). WORKFLOW: aisp_profile_kernels → aisp_profile_ncu. NOT FOR: Timeline (use aisp_profile_nsys). "
-    "DEFAULTS: use metric_set='minimal' (speed-of-light) for routine baseline/optimized compares; "
+    "🕐 SLOW (varies). WORKFLOW: profile_kernels → profile_ncu. NOT FOR: Timeline (use profile_nsys). "
+    "DEFAULTS: metric_set='full' by default; use metric_set='minimal' (speed-of-light) for routine baseline/optimized compares; "
     "use metric_set='roofline' for bound analysis; use metric_set='full' for deep dives. "
-    "COMPARE: aisp_compare_ncu auto-pairs baseline/optimized across subdirectories; pass pair if multiple pairs exist. "
+    "COMPARE: compare_ncu auto-pairs baseline/optimized across subdirectories; pass pair if multiple pairs exist. "
     "Use launch_skip/launch_count to limit captures on many-launch benchmarks (e.g., 4096 batches). "
     "Analyze ncu_metrics to explain occupancy, throughput, and kernel-time shifts.",
     {"type": "object", "properties": with_context_params({
@@ -4016,7 +4609,7 @@ def tool_profile_nsys(params: Dict[str, Any]) -> Dict[str, Any]:
         },
         "async": {
             "type": "boolean",
-            "description": "Return a job ticket and run capture in background; poll with aisp_job_status",
+            "description": "Return a job ticket and run capture in background; poll with job_status",
             "default": False
         },
         "timeout_seconds": {
@@ -4235,8 +4828,8 @@ def tool_profile_ncu(params: Dict[str, Any]) -> Dict[str, Any]:
             "profiles_dir": str(profile_dir),
             "progress_path": str(progress_path),
         }
-        queued = _queue_job("aisp_profile_ncu", _execute_capture, params, run_metadata=run_metadata)
-        queued["note"] = "Background capture started; poll with aisp_job_status using job_id."
+        queued = _queue_job("profile_ncu", _execute_capture, params, run_metadata=run_metadata)
+        queued["note"] = "Background capture started; poll with job_status using job_id."
         queued["workload_type"] = workload_type
         queued["run_id"] = run_id
         return queued
@@ -4245,13 +4838,13 @@ def tool_profile_ncu(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_profile_torch",
+    "profile_torch",
     "Tags: torch, profiler, pytorch, chrome-trace, autograd, cpu-gpu. "
     "Run PyTorch torch.profiler to capture CPU/GPU activity with Chrome trace output. "
     "Returns: {trace_path, summary, torch_metrics, success} and writes Chrome trace JSON + summary. "
     "USE when: Profiling PyTorch code specifically, understanding autograd overhead, CPU/GPU interplay. "
     "Example: \"Profile my training script with torch.profiler\" or \"Get PyTorch trace for train.py\". "
-    "Output viewable in chrome://tracing or Perfetto. Emits NVTX for nsys correlation. 🕐 SLOW (varies). WORKFLOW: aisp_profile_torch → analyze operators → optimize. NOT FOR: Timeline (use aisp_profile_nsys). "
+    "Output viewable in chrome://tracing or Perfetto. Emits NVTX for nsys correlation. 🕐 SLOW (varies). WORKFLOW: profile_torch → analyze operators → optimize. NOT FOR: Timeline (use profile_nsys). "
     "Analyze torch_metrics to identify CPU/GPU hotspots and autograd overhead.",
     {"type": "object", "properties": with_context_params({
         "script": {"type": "string", "description": "Path to Python script to profile"},
@@ -4260,12 +4853,12 @@ def tool_profile_ncu(params: Dict[str, Any]) -> Dict[str, Any]:
         "run_id": {"type": "string", "description": "Run ID for the artifact directory (default: <timestamp>__profile-torch__<label>)"},
         "output_dir": {"type": "string", "description": "Base directory for run artifacts (default: artifacts/runs)", "default": "artifacts/runs"},
         "mode": {"type": "string", "description": "Profiler preset", "enum": ["full", "memory", "flops", "modules", "blackwell"], "default": "full"},
-        "nvtx_label": {"type": "string", "description": "NVTX/record_function range label", "default": "aisp_torch_profile"},
+        "nvtx_label": {"type": "string", "description": "NVTX/record_function range label", "default": "torch_profile"},
         "use_nvtx": {"type": "boolean", "description": "Emit NVTX range around the profiled run", "default": True},
         "force_lineinfo": {"type": "boolean", "description": "Force -lineinfo in NVCC/TORCH_NVCC_FLAGS for better source mapping", "default": True},
         "precheck_only": {"type": "boolean", "description": "Return prereqs without running", "default": False},
         "dry_run": {"type": "boolean", "description": "Describe the capture without executing (alias: estimate_only)", "default": False},
-        "async": {"type": "boolean", "description": "Return a job ticket and run capture in background; poll with aisp_job_status", "default": False},
+        "async": {"type": "boolean", "description": "Return a job ticket and run capture in background; poll with job_status", "default": False},
         "timeout_seconds": {"type": "integer", "description": "Max runtime before returning partial output; set 0/null for no timeout", "default": 300},
     }), "required": ["script"]}
 )
@@ -4295,7 +4888,7 @@ def tool_profile_torch(params: Dict[str, Any]) -> Dict[str, Any]:
         script_args = _shlex.split(script_args)
     force_lineinfo = bool(params.get("force_lineinfo", True))
     use_nvtx = bool(params.get("use_nvtx", True))
-    nvtx_label = params.get("nvtx_label", "aisp_torch_profile")
+    nvtx_label = params.get("nvtx_label", "torch_profile")
     precheck_only = bool(params.get("precheck_only", False))
     dry_run = bool(params.get("dry_run") or params.get("estimate_only"))
     run_async = bool(params.get("async"))
@@ -4394,8 +4987,8 @@ def tool_profile_torch(params: Dict[str, Any]) -> Dict[str, Any]:
             "profiles_dir": str(profile_dir),
             "progress_path": str(progress_path),
         }
-        queued = _queue_job("aisp_profile_torch", _execute_capture, params, run_metadata=run_metadata)
-        queued["note"] = "Background torch.profiler capture started; poll with aisp_job_status using job_id."
+        queued = _queue_job("profile_torch", _execute_capture, params, run_metadata=run_metadata)
+        queued["note"] = "Background torch.profiler capture started; poll with job_status using job_id."
         queued["mode"] = mode
         queued["nvtx_label"] = nvtx_label
         queued["run_id"] = run_id
@@ -4405,13 +4998,13 @@ def tool_profile_torch(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_profile_hta",
+    "profile_hta",
     "Tags: hta, holistic-trace, nsys, analysis, gpu-idle, timeline. "
     "Run Nsight Systems capture with HTA (Holistic Trace Analysis) for automated bottleneck detection. "
     "Returns: {nsys_rep_path, trace_json_path, hta_report_path, analysis_summary, nsys_metrics}. "
     "USE when: Want automated analysis of trace data, finding GPU idle time, communication bottlenecks. "
     "Example: \"Profile and analyze with HTA\" or \"Get holistic trace analysis for my script\". "
-    "Produces .nsys-rep + trace.json + hta_report.json with actionable insights. 🕐 MEDIUM (~30s). WORKFLOW: aisp_profile_torch → operators → optimize. NOT FOR: CUDA-level (use aisp_profile_nsys). "
+    "Produces .nsys-rep + trace.json + hta_report.json with actionable insights. 🕐 MEDIUM (~30s). WORKFLOW: profile_torch → operators → optimize. NOT FOR: CUDA-level (use profile_nsys). "
     "Analyze nsys_metrics alongside analysis_summary to pinpoint idle gaps and API overhead.",
     {"type": "object", "properties": with_context_params({
         "command": {"type": "array", "items": {"type": "string"}, "description": "Command to profile (argv list)"},
@@ -4556,8 +5149,8 @@ def tool_profile_hta(params: Dict[str, Any]) -> Dict[str, Any]:
             "profiles_dir": str(profile_dir),
             "progress_path": str(progress_path),
         }
-        queued = _queue_job("aisp_profile_hta", _execute_capture, params, run_metadata=run_metadata)
-        queued["note"] = "Background HTA capture started; poll with aisp_job_status using job_id."
+        queued = _queue_job("profile_hta", _execute_capture, params, run_metadata=run_metadata)
+        queued["note"] = "Background HTA capture started; poll with job_status using job_id."
         queued["preset"] = preset
         queued["run_id"] = run_id
         return queued
@@ -4566,13 +5159,13 @@ def tool_profile_hta(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_export_csv",
+    "export_csv",
     "Tags: export, csv, spreadsheet, data, share. "
     "Export benchmarks to CSV format for spreadsheet analysis or sharing. "
     "Returns: {csv: <csv_string>, detailed: bool}. "
     "USE when: Importing benchmark data into Excel/Sheets, sharing raw numbers. "
     "Example: \"Export benchmarks to CSV\" or \"Get CSV of all results\". "
-    "detailed=true includes all metrics; false gives summary columns only. 🕐 SLOW (varies). WORKFLOW: aisp_run_benchmarks → aisp_benchmark_export or aisp_export_csv. NOT FOR: PDF/HTML reports (use aisp_benchmark_report).",
+    "detailed=true includes all metrics; false gives summary columns only. 🕐 SLOW (varies). WORKFLOW: run_benchmarks → benchmark_export or export_csv. NOT FOR: PDF/HTML reports (use benchmark_report).",
     {"type": "object", "properties": with_context_params({
         "detailed": {
             "type": "boolean",
@@ -4592,13 +5185,13 @@ def tool_export_csv(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_export_pdf",
+    "export_pdf",
     "Tags: export, pdf, report, document, share, print. "
     "Export benchmarks to PDF report format for printing or formal sharing. "
     "Returns: {pdf_base64: <base64_encoded_pdf>}. "
     "USE when: Creating printable reports, formal documentation, sharing with stakeholders. "
     "Example: \"Generate PDF report\" or \"Create printable benchmark summary\". "
-    "PREFER aisp_benchmark_report for more control over report options. 🕐 MEDIUM (~5s). WORKFLOW: aisp_run_benchmarks → aisp_benchmark_report or aisp_export_pdf. NOT FOR: Raw data (use aisp_export_csv).",
+    "PREFER benchmark_report for more control over report options. 🕐 MEDIUM (~5s). WORKFLOW: run_benchmarks → benchmark_report or export_pdf. NOT FOR: Raw data (use export_csv).",
     {"type": "object", "properties": with_context_params({})}
 )
 def tool_export_pdf(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -4611,13 +5204,13 @@ def tool_export_pdf(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_export_html",
+    "export_html",
     "Tags: export, html, interactive, web, share, visualization. "
     "Export benchmarks to interactive HTML report with charts and tables. "
     "Returns: {html: <html_string>}. "
     "USE when: Sharing interactive web-viewable reports, embedding in documentation. "
     "Example: \"Generate HTML report\" or \"Create interactive benchmark visualization\". "
-    "PREFER aisp_benchmark_report for more control over report options. ⚡ FAST (~2s). WORKFLOW: aisp_run_benchmarks → aisp_benchmark_report or aisp_export_html. NOT FOR: Raw data (use aisp_export_csv).",
+    "PREFER benchmark_report for more control over report options. ⚡ FAST (~2s). WORKFLOW: run_benchmarks → benchmark_report or export_html. NOT FOR: Raw data (use export_csv).",
     {"type": "object", "properties": with_context_params({})}
 )
 def tool_export_html(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -4634,14 +5227,14 @@ def tool_export_html(params: Dict[str, Any]) -> Dict[str, Any]:
 # =============================================================================
 
 @register_tool(
-    "aisp_hw_speed",
+    "hw_speed",
     "Tags: speed, benchmark, gemm, memory, attention, quick-test, sanity-check. "
     "Run quick GPU speed tests: GEMM throughput, memory bandwidth, attention kernel. "
     "Returns: {tests: [{name, latency_ms, throughput, result}]}. "
     "USE when: Quick sanity check of GPU performance, verifying hardware is working correctly. "
     "Example: \"Quick benchmark GPU speed\" or \"Run GEMM and memory tests\". "
     "type='all' runs everything; 'gemm'/'memory'/'attention' for specific tests. "
-    "⚠️ Stresses GPU briefly. Use dry_run=true to preview what will run. 🕐 MEDIUM (~15s). WORKFLOW: aisp_status → aisp_hw_speed → verify GPU health. NOT FOR: Deep profiling (use aisp_profile_*).",
+    "⚠️ Stresses GPU briefly. Use dry_run=true to preview what will run. 🕐 MEDIUM (~15s). WORKFLOW: status → hw_speed → verify GPU health. NOT FOR: Deep profiling (use profile_*).",
     {"type": "object", "properties": with_context_params({
         "type": {
             "type": "string",
@@ -4696,7 +5289,7 @@ def tool_hw_speed(params: Dict[str, Any]) -> Dict[str, Any]:
             "precheck_only": True,
             "cuda": cuda_check,
             "planned": planned,
-            "note": "Run aisp_status or aisp_triage first, then rerun without precheck_only.",
+            "note": "Run status or triage first, then rerun without precheck_only.",
         }
 
     if not cuda_check.get("ok", True):
@@ -4711,7 +5304,7 @@ def tool_hw_speed(params: Dict[str, Any]) -> Dict[str, Any]:
             "cuda": cuda_check,
             "planned": planned,
             "timeout_seconds": timeout_seconds if timeout_seconds and timeout_seconds > 0 else None,
-            "note": "Set dry_run=false to execute; run aisp_status first.",
+            "note": "Set dry_run=false to execute; run status first.",
         }
 
     results: List[Dict[str, Any]] = []
@@ -4757,13 +5350,13 @@ def tool_hw_speed(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_hw_roofline",
+    "hw_roofline",
     "Tags: roofline, stride, memory, bandwidth, sweep, cache. "
     "Run stride sweep to measure memory bandwidth at different access patterns (roofline data). "
     "Returns: {size_mb, rows: [(stride, bandwidth_gbps), ...]}. "
     "USE when: Understanding memory hierarchy performance, cache behavior, roofline positioning. "
     "Example: \"Run roofline stride sweep\" or \"Measure bandwidth at different strides\". "
-    "Sweeps strides from 32 to 4096 bytes by default. ⚠️ Stresses memory subsystem. 🕐 MEDIUM (~20s). WORKFLOW: aisp_hw_roofline → aisp_profile_roofline. NOT FOR: Quick tests (use aisp_hw_speed).",
+    "Sweeps strides from 32 to 4096 bytes by default. ⚠️ Stresses memory subsystem. 🕐 MEDIUM (~20s). WORKFLOW: hw_roofline → profile_roofline. NOT FOR: Quick tests (use hw_speed).",
     {"type": "object", "properties": with_context_params({
         "size_mb": {"type": "integer", "description": "Buffer size MB", "default": 32},
         "strides": {"type": "array", "items": {"type": "integer"}, "description": "Stride values"},
@@ -4803,7 +5396,7 @@ def tool_hw_roofline(params: Dict[str, Any]) -> Dict[str, Any]:
             "precheck_only": True,
             "cuda": cuda_check,
             "planned": planned,
-            "note": "Run aisp_status or aisp_triage first, then rerun without precheck_only.",
+            "note": "Run status or triage first, then rerun without precheck_only.",
         }
     if not cuda_check.get("ok", True):
         return {
@@ -4817,7 +5410,7 @@ def tool_hw_roofline(params: Dict[str, Any]) -> Dict[str, Any]:
             "cuda": cuda_check,
             "planned": planned,
             "timeout_seconds": timeout_seconds if timeout_seconds and timeout_seconds > 0 else None,
-            "note": "Set dry_run=false to execute; run aisp_status first.",
+            "note": "Set dry_run=false to execute; run status first.",
         }
 
     sweep_strides = strides or [32, 64, 128, 256, 512, 1024, 2048, 4096]
@@ -4835,13 +5428,13 @@ def tool_hw_roofline(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_hw_disk",
+    "hw_disk",
     "Tags: disk, io, storage, read, write, sequential, throughput. "
     "Run disk I/O benchmark measuring sequential read/write throughput. "
     "Returns: {read_mbps, write_mbps, file_size_mb, block_size_kb}. "
     "USE when: Checking if disk I/O is a bottleneck, verifying storage performance. "
     "Example: \"Benchmark disk I/O\" or \"Is my storage fast enough for checkpointing?\". "
-    "Writes temp file to tmp_dir (or /tmp). ⚠️ Writes to disk. 🕐 MEDIUM (~10s). WORKFLOW: aisp_analyze_dataloader → if IO-bound → aisp_hw_disk. NOT FOR: GPU tests (use aisp_hw_speed).",
+    "Writes temp file to tmp_dir (or /tmp). ⚠️ Writes to disk. 🕐 MEDIUM (~10s). WORKFLOW: analyze_dataloader → if IO-bound → hw_disk. NOT FOR: GPU tests (use hw_speed).",
     {"type": "object", "properties": with_context_params({
         "file_size_mb": {"type": "integer", "default": 256},
         "block_size_kb": {"type": "integer", "default": 1024},
@@ -4905,13 +5498,13 @@ def tool_test_disk(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_hw_pcie",
+    "hw_pcie",
     "Tags: pcie, h2d, d2h, host-to-device, bandwidth, transfer. "
     "Run PCIe bandwidth benchmark measuring Host-to-Device and Device-to-Host transfer speeds. "
     "Returns: {h2d_gbps, d2h_gbps, size_mb, iters}. "
     "USE when: Checking PCIe bandwidth, diagnosing data transfer bottlenecks. "
     "Example: \"Test PCIe bandwidth\" or \"How fast is H2D transfer?\". "
-    "NOT FOR: GPU memory bandwidth (use aisp_gpu_bandwidth), GPU-to-GPU (use aisp_hw_p2p). 🕐 MEDIUM (~10s). WORKFLOW: aisp_hw_pcie → if slow → check PCIe gen/width.",
+    "NOT FOR: GPU memory bandwidth (use gpu_bandwidth), GPU-to-GPU (use hw_p2p). 🕐 MEDIUM (~10s). WORKFLOW: hw_pcie → if slow → check PCIe gen/width.",
     {"type": "object", "properties": with_context_params({
         "size_mb": {"type": "integer", "default": 256},
         "iters": {"type": "integer", "default": 10},
@@ -4944,7 +5537,7 @@ def tool_test_pcie(params: Dict[str, Any]) -> Dict[str, Any]:
         return {
             "precheck_only": True,
             "cuda": cuda_check,
-            "note": "Run aisp_status or aisp_triage first, then rerun without precheck_only.",
+            "note": "Run status or triage first, then rerun without precheck_only.",
         }
     if not cuda_check.get("ok", True):
         return make_error(cuda_check.get("reason", "CUDA not available"), include_context, context_level, cuda=cuda_check)
@@ -4964,13 +5557,13 @@ def tool_test_pcie(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_hw_cache",
+    "hw_cache",
     "Tags: cache, memory, hierarchy, l2, hbm, stride, bandwidth. "
     "Run GPU memory hierarchy test measuring bandwidth at specific stride pattern. "
     "Returns: {bandwidth_gbps, size_mb, stride, achieved_vs_peak_pct}. "
     "USE when: Understanding cache/memory hierarchy effects, optimizing memory access patterns. "
     "Example: \"Test L2 cache effect\" or \"Measure bandwidth at 128-byte stride\". "
-    "ALSO USE: aisp_hw_roofline for full stride sweep. 🕐 MEDIUM (~15s). WORKFLOW: aisp_hw_cache → aisp_profile_roofline.",
+    "ALSO USE: hw_roofline for full stride sweep. 🕐 MEDIUM (~15s). WORKFLOW: hw_cache → profile_roofline.",
     {"type": "object", "properties": with_context_params({
         "size_mb": {"type": "integer", "default": 256},
         "stride": {"type": "integer", "default": 128},
@@ -5003,7 +5596,7 @@ def tool_test_mem_hierarchy(params: Dict[str, Any]) -> Dict[str, Any]:
         return {
             "precheck_only": True,
             "cuda": cuda_check,
-            "note": "Run aisp_status or aisp_triage first, then rerun without precheck_only.",
+            "note": "Run status or triage first, then rerun without precheck_only.",
         }
     if not cuda_check.get("ok", True):
         return make_error(cuda_check.get("reason", "CUDA not available"), include_context, context_level, cuda=cuda_check)
@@ -5023,13 +5616,13 @@ def tool_test_mem_hierarchy(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_hw_tc",
+    "hw_tc",
     "Tags: tensor-core, matmul, gemm, tflops, precision, fp16, bf16, tf32. "
     "Run Tensor Core throughput test measuring matmul performance at different precisions. "
     "Returns: {tflops, latency_ms, size, precision, efficiency_vs_peak_pct}. "
     "USE when: Verifying Tensor Core performance, comparing precision throughput. "
     "Example: \"Test Tensor Core TFLOPS\" or \"Compare FP16 vs BF16 matmul speed\". "
-    "precision: fp16, bf16, tf32, fp32, fp8 (H100+ only). 🕐 MEDIUM (~15s). WORKFLOW: aisp_hw_tc → compare vs expected TFLOPS. NOT FOR: Memory tests (use aisp_gpu_bandwidth).",
+    "precision: fp16, bf16, tf32, fp32, fp8 (H100+ only). 🕐 MEDIUM (~15s). WORKFLOW: hw_tc → compare vs expected TFLOPS. NOT FOR: Memory tests (use gpu_bandwidth).",
     {"type": "object", "properties": with_context_params({
         "size": {"type": "integer", "default": 4096},
         "precision": {"type": "string", "enum": ["fp16", "bf16", "tf32", "fp32", "fp8"], "default": "fp16"},
@@ -5063,7 +5656,7 @@ def tool_test_tensor_core(params: Dict[str, Any]) -> Dict[str, Any]:
         return {
             "precheck_only": True,
             "cuda": cuda_check,
-            "note": "Run aisp_status or aisp_triage first, then rerun without precheck_only.",
+            "note": "Run status or triage first, then rerun without precheck_only.",
         }
     if not cuda_check.get("ok", True):
         return make_error(cuda_check.get("reason", "CUDA not available"), include_context, context_level, cuda=cuda_check)
@@ -5083,13 +5676,13 @@ def tool_test_tensor_core(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_hw_network",
+    "hw_network",
     "Tags: network, throughput, interconnect, bandwidth, nic. "
     "Run network throughput tests to check NIC and interconnect performance. "
     "Returns: {throughput_gbps, latency_ms, interface_info}. "
     "USE when: Checking host network bandwidth, interconnect performance for distributed training. "
     "Example: \"Test network bandwidth\" or \"Check interconnect speed between nodes\". "
-    "ALSO USE: aisp_info_network for InfiniBand status, aisp_hw_nccl for NCCL collectives. 🕐 MEDIUM (~15s). WORKFLOW: aisp_hw_network → if slow → check NIC config.",
+    "ALSO USE: system_network for InfiniBand status, hw_nccl for NCCL collectives. 🕐 MEDIUM (~15s). WORKFLOW: hw_network → if slow → check NIC config.",
     {"type": "object", "properties": with_context_params({})}
 )
 def tool_test_network(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -5100,7 +5693,7 @@ def tool_test_network(params: Dict[str, Any]) -> Dict[str, Any]:
     return attach_context_if_requested(result, include_context, context_level)
 
 
-# NOTE: aisp_benchmark_targets is defined earlier in this file with bench CLI integration
+# NOTE: benchmark_targets is defined earlier in this file with bench CLI integration
 # This duplicate registration was removed to avoid conflicts.
 
 # =============================================================================
@@ -5108,14 +5701,14 @@ def tool_test_network(params: Dict[str, Any]) -> Dict[str, Any]:
 # =============================================================================
 
 @register_tool(
-    "aisp_system_full",
+    "system_full",
     "Tags: system, full, audit, cpu, memory, container, kernel, comprehensive. "
     "Full system analysis: CPU/memory hierarchy, kernel params, container limits, tuning recommendations. "
     "Returns: {cpu_info, memory_hierarchy, system_params, container_limits, recommendations}. "
     "🕐 MEDIUM (~3s). USE when: Deep environment auditing, diagnosing host-side bottlenecks. "
     "Example: \"Full system audit\" or \"Check host-side performance issues\". "
-    "WORKFLOW: aisp_triage → aisp_system_full → apply recommendations. "
-    "NOT FOR: Quick checks (use aisp_status), GPU-specific (use aisp_gpu_info).",
+    "WORKFLOW: triage → system_full → apply recommendations. "
+    "NOT FOR: Quick checks (use status), GPU-specific (use gpu_info).",
     {"type": "object", "properties": with_context_params({})}
 )
 def tool_system_full(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -5131,15 +5724,15 @@ def tool_system_full(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_analyze_memory_patterns",
+    "analyze_memory_patterns",
     "Tags: analyze, memory, warp, bank, coalescing, access, patterns, divergence, conflicts. "
     "Memory access pattern analysis: warp divergence, bank conflicts, memory coalescing. "
     "Returns: {warp_divergence, bank_conflicts, memory_access, recommendations}. "
     "⚡ FAST (~2s). USE when: Debugging memory-bound kernels, optimizing memory access. "
     "Params: analysis_type='all'|'warp'|'bank'|'access' for specific analysis. "
     "Example: \"Check for warp divergence\" or \"Analyze bank conflicts\". "
-    "WORKFLOW: aisp_profile_roofline (check if memory-bound) → aisp_analyze_memory_patterns → optimize. "
-    "NOT FOR: High-level bottlenecks (use aisp_analyze_bottlenecks first).",
+    "WORKFLOW: profile_roofline (check if memory-bound) → analyze_memory_patterns → optimize. "
+    "NOT FOR: High-level bottlenecks (use analyze_bottlenecks first).",
     {"type": "object", "properties": with_context_params({
         "analysis_type": {
             "type": "string",
@@ -5175,13 +5768,13 @@ def tool_analyze_memory_patterns(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_analyze_dataloader",
+    "analyze_dataloader",
     "Tags: analyze, dataloader, data, loading, io, bottleneck, workers, prefetch. "
     "DataLoader bottleneck analysis: worker efficiency, prefetch, throughput. "
     "Returns: {throughput, worker_efficiency, recommendations}. "
     "⚡ FAST (~2s). USE when: Diagnosing data loading bottlenecks in training. "
     "Example: \"Is data loading the bottleneck?\" or \"Check DataLoader efficiency\". "
-    "WORKFLOW: aisp_analyze_bottlenecks → if host-bound → aisp_analyze_dataloader → tune num_workers/prefetch. "
+    "WORKFLOW: analyze_bottlenecks → if host-bound → analyze_dataloader → tune num_workers/prefetch. "
     "COMMON FIXES: Increase num_workers, enable pin_memory, use persistent_workers.",
     {"type": "object", "properties": with_context_params({})}
 )
@@ -5198,13 +5791,13 @@ def tool_analyze_dataloader(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_analyze_comm_overlap",
+    "analyze_comm_overlap",
     "Tags: analyze, communication, compute, overlap, distributed, efficiency, allreduce. "
     "Communication/compute overlap analysis for distributed training. "
     "Returns: {overlap_efficiency, compute_time, comm_time, recommendations}. "
     "⚡ FAST (~2s). USE when: Optimizing distributed training efficiency. "
     "Example: \"Is communication overlapping compute?\" or \"Check allreduce overlap\". "
-    "WORKFLOW: aisp_distributed_plan → aisp_analyze_comm_overlap → aisp_distributed_nccl. "
+    "WORKFLOW: distributed_plan → analyze_comm_overlap → distributed_nccl. "
     "NOT FOR: Single-GPU training (no communication to overlap).",
     {"type": "object", "properties": with_context_params({
         "model": {"type": "string", "default": "llama-3.1-70b", "description": "Model name for analysis"},
@@ -5224,14 +5817,14 @@ def tool_analyze_comm_overlap(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_cost_estimate",
+    "cost_estimate",
     "Tags: cost, cloud, estimate, pricing, aws, gcp, azure, budget, billing. "
-    "Cloud cost estimation for training/inference workloads. "
-    "Returns: {hourly_cost, monthly_cost, cloud_comparison, recommendations}. "
+    "Cloud cost estimation for GPU fleets. "
+    "Returns: {selection, cloud_comparison, recommendation, warnings}. "
     "⚡ FAST (~1s). USE when: Planning cloud deployments, comparing providers. "
     "Example: \"Estimate 4xH100 monthly cost\" or \"Compare AWS vs GCP pricing\". "
-    "WORKFLOW: aisp_distributed_plan → aisp_cost_estimate → choose provider. "
-    "ALSO USE: aisp_analyze_energy for power/efficiency considerations.",
+    "WORKFLOW: distributed_plan → cost_estimate → choose provider. "
+    "ALSO USE: analyze_energy for power/efficiency considerations.",
     {"type": "object", "properties": with_context_params({
         "gpu_type": {"type": "string", "default": "h100", "description": "GPU type (h100, a100, etc.)"},
         "num_gpus": {"type": "integer", "default": 8, "description": "Number of GPUs"},
@@ -5251,14 +5844,14 @@ def tool_cost_estimate(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_analyze_energy",
+    "analyze_energy",
     "Tags: analyze, energy, power, efficiency, green, carbon, sustainability. "
     "Energy efficiency analysis: power consumption, efficiency metrics, green recommendations. "
     "Returns: {power_draw, efficiency_score, carbon_estimate, recommendations}. "
     "⚡ FAST (~2s). USE when: Optimizing for energy efficiency, reducing carbon footprint. "
     "Example: \"What's my energy efficiency?\" or \"Estimate carbon footprint\". "
-    "WORKFLOW: aisp_gpu_power → aisp_analyze_energy → apply power-saving recommendations. "
-    "ALSO USE: aisp_cost_estimate for cloud cost implications.",
+    "WORKFLOW: gpu_power → analyze_energy → apply power-saving recommendations. "
+    "ALSO USE: cost_estimate for cloud cost implications.",
     {"type": "object", "properties": with_context_params({})}
 )
 def tool_analyze_energy(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -5274,14 +5867,14 @@ def tool_analyze_energy(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_launch_plan",
+    "launch_plan",
     "Tags: launch, torchrun, srun, distributed, command, script, multi-node. "
     "Generate launch commands for distributed training (torchrun, srun, etc.). "
     "Returns: {torchrun_cmd, srun_cmd, env_vars, tips}. "
     "⚡ FAST (~1s). USE when: Setting up distributed training launch. "
     "Example: \"Generate torchrun command for 2 nodes\" or \"Slurm launch script\". "
-    "WORKFLOW: aisp_distributed_plan → aisp_launch_plan → run training. "
-    "ALSO USE: aisp_cluster_slurm for full SLURM job scripts.",
+    "WORKFLOW: distributed_plan → launch_plan → run training. "
+    "ALSO USE: cluster_slurm for full SLURM job scripts.",
     {"type": "object", "properties": with_context_params({
         "nodes": {"type": "integer", "default": 1, "description": "Number of nodes"},
         "gpus_per_node": {"type": "integer", "default": 8, "description": "GPUs per node"},
@@ -5301,11 +5894,11 @@ def tool_launch_plan(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_info_features",
+    "info_features",
     "Tags: info, features, capabilities, tma, clusters, hopper. "
     "GPU feature detection: TMA, thread block clusters, async copy, etc. "
     "Returns: {features: {tma, clusters, async_copy, ...}, compute_capability}. "
-    "⚡ FAST (~1s). USE when: Checking advanced GPU feature support. WORKFLOW: aisp_info_features → choose optimizations. NOT FOR: Basic GPU info (use aisp_gpu_info).",
+    "⚡ FAST (~1s). USE when: Checking advanced GPU feature support. WORKFLOW: info_features → choose optimizations. NOT FOR: Basic GPU info (use gpu_info).",
     {"type": "object", "properties": with_context_params({})}
 )
 def tool_info_features(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -5321,11 +5914,11 @@ def tool_info_features(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_nsys_summary",
+    "nsys_summary",
     "Tags: nsys, nsight, summary, quick, stats. "
     "Quick Nsight Systems summary stats without full profile capture. "
     "Returns: {metrics: [...], count, report_path}. "
-    "⚡ FAST (~3s). USE when: Quick nsys stats without full profiling. WORKFLOW: aisp_profile_nsys → aisp_nsys_summary. NOT FOR: Full profiling (use aisp_profile_nsys).",
+    "⚡ FAST (~3s). USE when: Quick nsys stats without full profiling. WORKFLOW: profile_nsys → nsys_summary. NOT FOR: Full profiling (use profile_nsys).",
     {"type": "object", "properties": with_context_params({
         "report_path": {"type": "string", "description": "Path to existing .nsys-rep file to summarize"},
     })}
@@ -5344,13 +5937,13 @@ def tool_nsys_summary(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_predict_scaling",
+    "predict_scaling",
     "Tags: predict, scaling, multi-gpu, efficiency, projection, planning. "
     "Predict performance scaling to more GPUs/larger batches. "
     "Returns: {current_perf, predicted_perf, scaling_efficiency, bottleneck_at_scale}. "
     "⚡ FAST (~2s). USE when: Planning scale-up, predicting multi-GPU performance. "
     "Example: \"Predict 4-GPU scaling\" or \"How will throughput scale from 1 to 4 GPUs?\". "
-    "WORKFLOW: aisp_gpu_topology → aisp_predict_scaling → aisp_distributed_plan. "
+    "WORKFLOW: gpu_topology → predict_scaling → distributed_plan. "
     "NOTE: Scaling efficiency typically 80-90% for well-optimized workloads.",
     {"type": "object", "properties": with_context_params({
         "target_gpus": {"type": "integer", "default": 8, "description": "Target GPU count"},
@@ -5378,14 +5971,14 @@ def tool_predict_scaling(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_gpu_topology_matrix",
+    "gpu_topology_matrix",
     "Tags: topology, nvlink, pcie, numa, raw, nvidia-smi, matrix. "
     "Get raw GPU/NUMA topology matrix directly from nvidia-smi topo -m. "
     "Returns: {stdout: <nvidia-smi topo -m output>, returncode}. "
     "⚡ FAST (~1s). USE when: Need exact nvidia-smi topology output format. "
     "Example: \"Show raw nvidia-smi topo output\" or \"Get NVLink matrix raw\". "
-    "WORKFLOW: aisp_gpu_topology_matrix → parse manually if needed. "
-    "NOT FOR: Parsed topology (use aisp_gpu_topology).",
+    "WORKFLOW: gpu_topology_matrix → parse manually if needed. "
+    "NOT FOR: Parsed topology (use gpu_topology).",
     {"type": "object", "properties": with_context_params({})}
 )
 def tool_gpu_topology_matrix(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -5400,16 +5993,16 @@ def tool_gpu_topology_matrix(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_compare_nsys",
+    "compare_nsys",
     "Tags: compare, nsys, nsight-systems, baseline, optimized, diff. "
     "Compare baseline vs optimized Nsight Systems reports. "
     "Returns: {metrics, baseline_file, optimized_file, ncu_comparison?, side_by_side_report}. "
     "If paired NCU profiles are present, also emits a side-by-side JSON report + narrative. "
     "🕐 MEDIUM (~5s). USE when: Comparing before/after nsys profiles. "
-    "Tip: if you used aisp_benchmark_deep_dive_compare, pass benchmarks[].profiles_dir here. "
+    "Tip: if you used benchmark_deep_dive_compare, pass benchmarks[].profiles_dir here. "
     "Auto-pairs baseline/optimized across subdirectories; if multiple pairs exist, provide pair to select one. "
     "Always returns ncu/nsys comparison metrics when profiles are captured; analyze metric deltas to explain speedups/regressions. "
-    "WORKFLOW: aisp_profile_nsys → optimize → aisp_compare_nsys. NOT FOR: Kernel metrics (use aisp_compare_ncu).",
+    "WORKFLOW: profile_nsys → optimize → compare_nsys. NOT FOR: Kernel metrics (use compare_ncu).",
     {"type": "object", "properties": with_context_params({
         "profiles_dir": {"type": "string", "description": "Directory with baseline/optimized .nsys-rep files (pair dir or a parent dir; use pair to select a sub-pair)"},
         "pair": {"type": "string", "description": "Profile pair key to select when multiple exist"},
@@ -5445,16 +6038,16 @@ def tool_compare_nsys(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_compare_ncu",
+    "compare_ncu",
     "Tags: compare, ncu, nsight-compute, baseline, optimized, kernel-metrics. "
     "Compare baseline vs optimized Nsight Compute kernel metrics. "
     "Returns: {kernel_comparison | metrics, baseline_file, optimized_file, nsys_comparison?, side_by_side_report}. "
     "If paired NSYS profiles are present, also emits a side-by-side JSON report + narrative. "
     "🕐 MEDIUM (~5s). USE when: Deep-diving into kernel-level improvements. "
-    "Tip: if you used aisp_benchmark_deep_dive_compare, pass benchmarks[].profiles_dir here. "
+    "Tip: if you used benchmark_deep_dive_compare, pass benchmarks[].profiles_dir here. "
     "Auto-pairs baseline/optimized across subdirectories; if multiple pairs exist, provide pair to select one. "
     "Always returns nsys/ncu comparison metrics when profiles are captured; analyze metric deltas to explain speedups/regressions. "
-    "WORKFLOW: aisp_profile_ncu → optimize → aisp_compare_ncu. NOT FOR: Timeline comparison (use aisp_compare_nsys).",
+    "WORKFLOW: profile_ncu → optimize → compare_ncu. NOT FOR: Timeline comparison (use compare_nsys).",
     {"type": "object", "properties": with_context_params({
         "profiles_dir": {"type": "string", "description": "Directory with baseline/optimized .ncu-rep files (pair dir or a parent dir; use pair to select a sub-pair)"},
         "pair": {"type": "string", "description": "Profile pair key to select when multiple exist"},
@@ -5490,11 +6083,11 @@ def tool_compare_ncu(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_list_chapters",
+    "list_chapters",
     "Tags: chapters, labs, list, discovery, book, curriculum. "
     "List all discoverable chapters and labs from the book curriculum. "
     "Returns: {chapters: [{name, path, description}], labs: [...]}. "
-    "⚡ FAST (~1s). USE when: Exploring what content is available. WORKFLOW: aisp_list_chapters → aisp_benchmark_targets → aisp_run_benchmarks. NOT FOR: Running benchmarks (use aisp_run_benchmarks).",
+    "⚡ FAST (~1s). USE when: Exploring what content is available. WORKFLOW: list_chapters → benchmark_targets → run_benchmarks. NOT FOR: Running benchmarks (use run_benchmarks).",
     {"type": "object", "properties": with_context_params({})}
 )
 def tool_list_chapters(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -5505,13 +6098,13 @@ def tool_list_chapters(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_context_summary",
+    "context_summary",
     "Tags: context, summary, quick, environment, snapshot. "
     "Get quick context summary: GPU + software snapshot. "
     "Returns: {gpu, software, dependencies}. "
     "⚡ FAST (~1s). USE when: Need lightweight context attachment. "
     "Example: \"Quick system snapshot\" or \"Get context for LLM analysis\". "
-    "NOT FOR: Full details (use aisp_context_full or aisp_system_full).",
+    "NOT FOR: Full details (use context_full or system_full).",
     {"type": "object", "properties": with_context_params({})}
 )
 def tool_context_summary(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -5522,13 +6115,13 @@ def tool_context_summary(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_context_full",
+    "context_full",
     "Tags: context, full, comprehensive, environment, dump. "
     "Get full comprehensive context: complete system state. "
     "Returns: {gpu, software, dependencies, capabilities, system_params}. "
     "🕐 MEDIUM (~3s). USE when: Need complete environment dump. "
     "Example: \"Full context for debugging\" or \"Complete system state\". "
-    "NOT FOR: Quick checks (use aisp_context_summary or aisp_status).",
+    "NOT FOR: Quick checks (use context_summary or status).",
     {"type": "object", "properties": with_context_params({})}
 )
 def tool_context_full(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -5543,13 +6136,13 @@ def tool_context_full(params: Dict[str, Any]) -> Dict[str, Any]:
 # =============================================================================
 
 @register_tool(
-    "aisp_hw_ib",
+    "hw_ib",
     "Tags: infiniband, ib, bandwidth, rdma, multi-node, interconnect. "
     "Get InfiniBand bandwidth test instructions and check if ib_write_bw is available. "
     "Returns: {ib_write_bw_available, instructions: {server_cmd, client_cmd}, alternative}. "
     "USE when: Testing InfiniBand bandwidth, verifying multi-node interconnect performance. "
     "Example: \"How do I test InfiniBand bandwidth?\" or \"Is IB working correctly?\". "
-    "Provides ib_write_bw commands; alternative is NCCL tests if perftest not installed. ⚡ FAST (~1s). WORKFLOW: aisp_hw_ib → aisp_hw_nccl. NOT FOR: Single-node (use aisp_hw_p2p).",
+    "Provides ib_write_bw commands; alternative is NCCL tests if perftest not installed. ⚡ FAST (~1s). WORKFLOW: hw_ib → hw_nccl. NOT FOR: Single-node (use hw_p2p).",
     {"type": "object", "properties": with_context_params({
         "size_mb": {"type": "integer", "description": "Transfer size in MB for test guidance", "default": 64},
     })}
@@ -5574,13 +6167,13 @@ def tool_hw_ib(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_hw_nccl",
+    "hw_nccl",
     "Tags: nccl, collective, allreduce, bandwidth, multi-gpu, communication. "
     "Get NCCL collective bandwidth test command and check if nccl-tests is available. "
     "Returns: {tool_available, command, install_instructions, collectives_list}. "
     "USE when: Measuring collective communication bandwidth, benchmarking NCCL performance. "
     "Example: \"Test NCCL all_reduce bandwidth\" or \"Benchmark 4-GPU allreduce\". "
-    "Collectives: all_reduce, all_gather, reduce_scatter, broadcast, reduce, alltoall. ⚡ FAST (~1s). WORKFLOW: aisp_hw_nccl → tune NCCL env vars. NOT FOR: IB hardware (use aisp_hw_ib).",
+    "Collectives: all_reduce, all_gather, reduce_scatter, broadcast, reduce, alltoall. ⚡ FAST (~1s). WORKFLOW: hw_nccl → tune NCCL env vars. NOT FOR: IB hardware (use hw_ib).",
     {"type": "object", "properties": with_context_params({
         "collective": {"type": "string", "description": "Collective type: all_reduce, all_gather, reduce_scatter, broadcast, reduce, alltoall", "enum": ["all_reduce", "all_gather", "reduce_scatter", "broadcast", "reduce", "alltoall"], "default": "all_reduce"},
         "min_bytes": {"type": "string", "description": "Minimum message size (e.g., '8M')", "default": "8M"},
@@ -5608,13 +6201,13 @@ def tool_hw_nccl(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_hw_p2p",
+    "hw_p2p",
     "Tags: p2p, nvlink, gpu-to-gpu, bandwidth, peer-to-peer, transfer. "
     "Run GPU-to-GPU P2P bandwidth test measuring NVLink or PCIe peer access speed. "
     "Returns: {results: [{src, dst, p2p_enabled, bandwidth_gbps}], gpu_count}. "
     "USE when: Verifying NVLink bandwidth, checking P2P connectivity, debugging tensor parallelism. "
     "Example: \"Test GPU P2P bandwidth\" or \"Is NVLink working at full speed?\". "
-    "REQUIRES: At least 2 GPUs. Tests first GPU pair by default. 🕐 MEDIUM (~20s). WORKFLOW: aisp_gpu_topology → aisp_hw_p2p. NOT FOR: Host-device (use aisp_hw_pcie).",
+    "REQUIRES: At least 2 GPUs. Tests first GPU pair by default. 🕐 MEDIUM (~20s). WORKFLOW: gpu_topology → hw_p2p. NOT FOR: Host-device (use hw_pcie).",
     {"type": "object", "properties": with_context_params({
         "size_mb": {"type": "integer", "description": "Transfer size in MB", "default": 256},
     })}
@@ -5683,13 +6276,13 @@ def tool_hw_p2p(params: Dict[str, Any]) -> Dict[str, Any]:
 # =============================================================================
 
 @register_tool(
-    "aisp_cluster_slurm",
+    "cluster_slurm",
     "Tags: slurm, batch, cluster, hpc, job-script, sbatch, multi-node. "
     "Generate SLURM job script for cluster submission with optimal settings. "
     "Returns: {script: <slurm_script_content>, filename_suggestion, notes}. "
     "USE when: Submitting training jobs to SLURM clusters, setting up multi-node runs. "
     "Example: \"Create SLURM script for 2 nodes x 4 GPUs\" or \"Generate sbatch for 70B training\". "
-    "Includes: resource requests, NCCL env vars, torchrun launch command. ⚡ FAST (~1s). WORKFLOW: aisp_distributed_plan → aisp_cluster_slurm → submit. NOT FOR: torchrun only (use aisp_launch_plan).",
+    "Includes: resource requests, NCCL env vars, torchrun launch command. ⚡ FAST (~1s). WORKFLOW: distributed_plan → cluster_slurm → submit. NOT FOR: torchrun only (use launch_plan).",
     {"type": "object", "properties": with_context_params({
         "model": {
             "type": "string",
@@ -5721,14 +6314,14 @@ def tool_cluster_slurm(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_status",
+    "status",
     "Tags: status, health, quick-check, sanity, ready, first-call, prerequisite. "
     "🚀 QUICK STATUS CHECK: Fast snapshot of GPU, software, and AI backend health. "
     "Returns: {gpu_ok, software_ok, ai_backend_ok, warnings, summary, gpu_count, cuda_version}. "
     "⚡ VERY FAST (<1s). USE FIRST when: Starting any session, before slow operations. "
     "Example: \"Quick status check\" or \"Is everything healthy?\" or \"Ready for profiling?\". "
-    "WORKFLOW: aisp_status → if issues → aisp_system_dependencies or aisp_gpu_info. "
-    "NOT FOR: Full context (use aisp_triage), deep audit (use aisp_system_full).",
+    "WORKFLOW: status → if issues → system_dependencies or gpu_info. "
+    "NOT FOR: Full context (use triage), deep audit (use system_full).",
     {"type": "object", "properties": with_context_params({})}
 )
 def tool_status(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -5741,18 +6334,18 @@ def tool_status(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_triage",
+    "triage",
     "Tags: triage, start, first, status, context, health, entry-point, begin, overview. "
     "🎯 START HERE: Quick triage = status check + context summary in one call. "
     "Returns: {status: {gpu_ok, software_ok, ai_backend_ok}, context: {gpu, software, dependencies}}. "
     "⚡ FAST (~1-2s). THE BEST FIRST CALL for any new performance investigation. "
     "Example: \"Start with triage\" or \"Quick overview\" or \"What's my system like?\". "
     "PROVIDES: GPU model/count/VRAM, CUDA/PyTorch versions, dependency health, warnings. "
-    "WORKFLOW: aisp_triage → aisp_recommend OR aisp_analyze_bottlenecks → specific tools. "
+    "WORKFLOW: triage → recommend OR analyze_bottlenecks → specific tools. "
     "VERSUS OTHER ENTRY POINTS: "
-    "• aisp_triage: status + context (recommended) "
-    "• aisp_status: status only (faster, less info) "
-    "• aisp_suggest_tools: tool recommendations based on intent. NOT FOR: Deep system audit (use aisp_system_full).",
+    "• triage: status + context (recommended) "
+    "• status: status only (faster, less info) "
+    "• suggest_tools: tool recommendations based on intent. NOT FOR: Deep system audit (use system_full).",
     {"type": "object", "properties": with_context_params({})}
 )
 def tool_triage(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -5769,7 +6362,7 @@ def tool_triage(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_job_status",
+    "job_status",
     "Tags: job, status, poll, async, background, queue, progress. "
     "Check status of a background job started with async=true. "
     "Returns: {job_id, status: running|completed|error, result (if completed), duration_ms, progress?}. "
@@ -5779,8 +6372,8 @@ def tool_triage(params: Dict[str, Any]) -> Dict[str, Any]:
     "• 'running' → Job in progress, poll again in 10-30s "
     "• 'completed' → Done! Result in 'result' field "
     "• 'error' → Failed, check 'error' field for details. "
-    "TOOLS SUPPORTING async=true: aisp_run_benchmarks, aisp_profile_nsys, aisp_profile_ncu, aisp_profile_torch, aisp_profile_hta. "
-    "WORKFLOW: tool(async=true) → poll aisp_job_status(job_id) → [completed] aisp_benchmark_triage or aisp_nsys_summary.",
+    "TOOLS SUPPORTING async=true: run_benchmarks, profile_nsys, profile_ncu, profile_torch, profile_hta. "
+    "WORKFLOW: tool(async=true) → poll job_status(job_id) → [completed] benchmark_triage or nsys_summary.",
     {"type": "object", "properties": with_context_params({
         "job_id": {
             "type": "string",
@@ -5833,13 +6426,13 @@ def tool_job_status(params: Dict[str, Any]) -> Dict[str, Any]:
 # =============================================================================
 
 @register_tool(
-    "aisp_hf",
+    "hf",
     "Tags: huggingface, hf, models, download, search, trending, hub. "
     "HuggingFace Hub operations: search models, get trending, download models. "
     "⚡ FAST (~2s). USE when: Finding models, downloading from HF Hub. "
     "Example: action='search', query='llama 2 7b' or action='trending', limit=5. "
-    "WORKFLOW: aisp_hf(action='search') → aisp_hf(action='download'). "
-    "NOT FOR: Model performance recommendations (use aisp_recommend).",
+    "WORKFLOW: hf(action='search') → hf(action='download'). "
+    "NOT FOR: Model performance recommendations (use recommend).",
     {"type": "object", "properties": with_context_params({
         "action": {
             "type": "string",
@@ -5918,7 +6511,7 @@ def _extract_tools_cli_args(
 
 
 @register_tool(
-    "aisp_tools_kv_cache",
+    "tools_kv_cache",
     "Tags: tools, kv-cache, memory, sizing, utility. "
     "Run the KV-cache size calculator (non-benchmark utility). "
     "Forwards args to `aisp tools kv-cache -- <args...>`.",
@@ -5942,7 +6535,7 @@ def tool_tools_kv_cache(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_tools_cost_per_token",
+    "tools_cost_per_token",
     "Tags: tools, cost, power, throughput, utility. "
     "Run the cost-per-token calculator (non-benchmark utility). "
     "Forwards args to `aisp tools cost-per-token -- <args...>`.",
@@ -5966,7 +6559,7 @@ def tool_tools_cost_per_token(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_tools_compare_precision",
+    "tools_compare_precision",
     "Tags: tools, precision, accuracy, fp16, bf16, fp8, utility. "
     "Run the precision/accuracy comparison tool (non-benchmark utility). "
     "Forwards args to `aisp tools compare-precision -- <args...>`.",
@@ -5990,7 +6583,7 @@ def tool_tools_compare_precision(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_tools_detect_cutlass",
+    "tools_detect_cutlass",
     "Tags: tools, cutlass, environment, discovery, utility. "
     "Run CUTLASS environment detection (non-benchmark utility). "
     "Forwards args to `aisp tools detect-cutlass -- <args...>`.",
@@ -6014,7 +6607,7 @@ def tool_tools_detect_cutlass(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_tools_dump_hw",
+    "tools_dump_hw",
     "Tags: tools, hardware, capabilities, report, utility. "
     "Dump comprehensive hardware capability report (non-benchmark utility). "
     "Forwards args to `aisp tools dump-hw -- <args...>`.",
@@ -6038,7 +6631,7 @@ def tool_tools_dump_hw(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @register_tool(
-    "aisp_tools_probe_hw",
+    "tools_probe_hw",
     "Tags: tools, hardware, capabilities, probe, cache, utility. "
     "Probe GPU capabilities dynamically and cache results (non-benchmark utility). "
     "Forwards args to `aisp tools probe-hw -- <args...>`.",
@@ -6066,20 +6659,20 @@ def tool_tools_probe_hw(params: Dict[str, Any]) -> Dict[str, Any]:
 # =============================================================================
 
 @register_tool(
-    "aisp_suggest_tools",
+    "suggest_tools",
     "Tags: suggest, recommend, navigation, intent, which-tool, discovery, help, lost. "
     "🧭 TOOL NAVIGATOR: Get ranked tool suggestions based on your intent or problem. "
     "Returns: {suggestions: [{tool, reason, score}], count}. "
     "⚡ FAST (<1s). USE when: Unsure which tool to use, have a problem description. "
     "EXAMPLE INTENTS → SUGGESTED TOOLS: "
-    "• 'OOMing on 24GB' → aisp_profile_memory, aisp_analyze_whatif, aisp_inference_quantization "
-    "• 'slow training' → aisp_analyze_bottlenecks, aisp_profile_nsys, aisp_recommend "
-    "• 'multi-GPU setup' → aisp_distributed_plan, aisp_gpu_topology, aisp_launch_plan "
-    "• 'vLLM latency' → aisp_inference_vllm, aisp_inference_quantization "
-    "• 'deep dive baseline vs optimized (nsys+ncu)' → aisp_benchmark_deep_dive_compare "
-    "• 'compare profiles' → aisp_compare_nsys, aisp_profile_compare. "
-    "WORKFLOW: aisp_suggest_tools → use suggested tools. "
-    "NOT FOR: Direct answers (use aisp_ask), getting started (use aisp_triage).",
+    "• 'OOMing on 24GB' → profile_memory, analyze_whatif, inference_quantization "
+    "• 'slow training' → analyze_bottlenecks, profile_nsys, recommend "
+    "• 'multi-GPU setup' → distributed_plan, gpu_topology, launch_plan "
+    "• 'vLLM latency' → inference_vllm, inference_quantization "
+    "• 'deep dive baseline vs optimized (nsys+ncu)' → benchmark_deep_dive_compare "
+    "• 'compare profiles' → compare_nsys, profile_compare. "
+    "WORKFLOW: suggest_tools → use suggested tools. "
+    "NOT FOR: Direct answers (use ask), getting started (use triage).",
     {"type": "object", "properties": with_context_params({
         "query": {
             "type": "string",
@@ -6094,12 +6687,14 @@ def tool_suggest_tools(params: Dict[str, Any]) -> Dict[str, Any]:
 
     rules = [
         {
-            "tool": "aisp_benchmark_deep_dive_compare",
+            "tool": "benchmark_deep_dive_compare",
             "keywords": [
                 "deep_dive",
                 "deep dive",
                 "deep-dive",
                 "baseline vs optimized",
+                "compare baseline",
+                "compare optimized",
                 "nsys+ncu",
                 "nsys and ncu",
                 "nsight systems and compute",
@@ -6108,186 +6703,575 @@ def tool_suggest_tools(params: Dict[str, Any]) -> Dict[str, Any]:
             "reason": "One-shot: run benchmark with deep_dive profiling and return baseline-vs-optimized diffs (nsys+ncu+torch)",
         },
         {
-            "tool": "aisp_analyze_bottlenecks",
-            "keywords": ["slow", "latency", "bottleneck", "utilization", "stall", "idle", "regression", "throughput drop"],
+            "tool": "profile_compare",
+            "keywords": ["compare profiles", "profile compare", "flamegraph compare", "flame graph compare"],
+            "reason": "Compare profiles with flame graph narrative + metrics",
+        },
+        {
+            "tool": "compare_nsys",
+            "keywords": ["compare nsys", "nsys diff", "nsight systems compare", "timeline compare"],
+            "reason": "Compare Nsight Systems reports",
+        },
+        {
+            "tool": "compare_ncu",
+            "keywords": ["compare ncu", "ncu diff", "nsight compute compare", "kernel compare"],
+            "reason": "Compare Nsight Compute reports",
+        },
+        {
+            "tool": "benchmark_compare_runs",
+            "keywords": [
+                "compare runs",
+                "compare benchmark runs",
+                "compare benchmarks",
+                "benchmark runs",
+                "bench runs",
+                "benchmark diff",
+                "diff results",
+                "regressions",
+                "improvements",
+            ],
+            "reason": "Diff two benchmark JSON runs",
+        },
+        {
+            "tool": "benchmark_compare",
+            "keywords": ["compare benchmark results", "benchmark compare", "compare results table"],
+            "reason": "Compare benchmark results (dashboard-style diff)",
+        },
+        {
+            "tool": "benchmark_triage",
+            "keywords": ["benchmark analysis", "analyze results", "triage benchmarks", "triage results"],
+            "reason": "Post-benchmark analysis and recommendations",
+        },
+        {
+            "tool": "analyze_bottlenecks",
+            "keywords": [
+                "slow",
+                "latency",
+                "bottleneck",
+                "utilization",
+                "stall",
+                "idle",
+                "regression",
+                "throughput drop",
+                "analyze",
+                "analysis",
+                "diagnose",
+                "why slow",
+            ],
             "reason": "Diagnose bottlenecks for slow workload/latency issues",
         },
         {
-            "tool": "aisp_hw_disk",
+            "tool": "analyze_comm_overlap",
+            "keywords": ["comm overlap", "communication overlap", "allreduce overlap", "overlap compute"],
+            "reason": "Analyze communication/compute overlap",
+        },
+        {
+            "tool": "analyze_dataloader",
+            "keywords": ["dataloader", "data loading", "input pipeline", "prefetch", "data loader"],
+            "reason": "Find input pipeline and DataLoader bottlenecks",
+        },
+        {
+            "tool": "analyze_energy",
+            "keywords": ["energy", "power efficiency", "watts", "energy efficiency"],
+            "reason": "Analyze power draw and energy efficiency",
+        },
+        {
+            "tool": "analyze_memory_patterns",
+            "keywords": ["memory pattern", "memory coalescing", "coalescing", "bank conflict", "warp divergence"],
+            "reason": "Analyze memory access patterns and coalescing",
+        },
+        {
+            "tool": "predict_scaling",
+            "keywords": ["scaling", "scale up", "scale to", "multi-gpu scaling", "more gpus"],
+            "reason": "Predict scaling to more GPUs or larger workloads",
+        },
+        {
+            "tool": "hw_disk",
             "keywords": ["disk", "io", "storage"],
             "reason": "Disk I/O benchmark (sequential)",
         },
         {
-            "tool": "aisp_hw_pcie",
+            "tool": "hw_pcie",
             "keywords": ["pcie", "h2d", "d2h", "pci-e"],
             "reason": "PCIe H2D/D2H bandwidth benchmark",
         },
         {
-            "tool": "aisp_hw_cache",
+            "tool": "hw_cache",
             "keywords": ["memory stride", "cache", "l2", "hbm"],
             "reason": "Stride/bandwidth test for memory hierarchy",
         },
         {
-            "tool": "aisp_hw_tc",
+            "tool": "hw_tc",
             "keywords": ["tensor core", "tflops", "matmul"],
             "reason": "Tensor core throughput test",
-        }, {
-            "tool": "aisp_profile_flame",
-            "keywords": ["profile", "flame", "time", "hotspot", "trace", "timeline", "slow step"],
-            "reason": "Inspect time hotspots with flame graph",
         },
         {
-            "tool": "aisp_profile_flame",
-            "keywords": ["profile", "flame", "time", "hotspot", "trace"],
+            "tool": "hw_speed",
+            "keywords": ["speed test", "quick speed", "gemm speed", "attention speed"],
+            "reason": "Quick GPU speed tests (GEMM/memory/attention)",
+        },
+        {
+            "tool": "hw_ib",
+            "keywords": ["infiniband", "ib bandwidth", "rdma bandwidth"],
+            "reason": "InfiniBand bandwidth test",
+        },
+        {
+            "tool": "hw_nccl",
+            "keywords": ["nccl bandwidth", "allreduce bandwidth", "collective bandwidth"],
+            "reason": "NCCL collective bandwidth test",
+        },
+        {
+            "tool": "hw_p2p",
+            "keywords": ["p2p bandwidth", "nvlink bandwidth", "gpu p2p"],
+            "reason": "GPU-to-GPU P2P bandwidth test",
+        },
+        {
+            "tool": "hw_network",
+            "keywords": ["network bandwidth", "nic throughput", "network test"],
+            "reason": "Network throughput test",
+        },
+        {
+            "tool": "profile_flame",
+            "keywords": ["flame", "flame graph", "flamegraph", "hotspot", "hot spot", "call stack", "stack trace"],
             "reason": "Inspect time hotspots with flame graph",
         },
         # Profile kernels is reserved for perf hotspots; avoid matching install/import issues.
         {
-            "tool": "aisp_profile_kernels",
-            "keywords": ["kernel hotspot", "cuda hotspot", "ptx hotspot", "nsight", "kernel profiling"],
+            "tool": "profile_kernels",
+            "keywords": [
+                "kernel hotspot",
+                "cuda hotspot",
+                "ptx hotspot",
+                "kernel time",
+                "kernel breakdown",
+                "kernel list",
+                "top kernels",
+                "kernel stats",
+                "launch count",
+                "kernel profiling",
+            ],
             "reason": "Check CUDA kernel hotspots",
         },
         {
-            "tool": "aisp_profile_roofline",
+            "tool": "profile_roofline",
             "keywords": ["roofline", "compute bound", "memory bound", "arithmetic intensity"],
             "reason": "See compute vs memory bound positioning",
         },
         {
-            "tool": "aisp_profile_nsys",
-            "keywords": ["nsys", "nsight systems", "systems trace"],
+            "tool": "profile_torch",
+            "keywords": [
+                "torch profiler",
+                "pytorch profiler",
+                "operator breakdown",
+                "op breakdown",
+                "autograd",
+                "torch.compile",
+                "torch compile",
+                "inductor",
+                "dynamo",
+                "graph break",
+                "graph breaks",
+            ],
+            "reason": "Profile PyTorch operator breakdown",
+        },
+        {
+            "tool": "profile_nsys",
+            "keywords": ["profile", "profiling", "trace", "timeline", "nsys", "nsight systems", "systems trace", "cuda api", "overlap"],
             "reason": "Capture timeline with Nsight Systems",
         },
         {
-            "tool": "aisp_profile_ncu",
-            "keywords": ["ncu", "nsight compute", "compute profile", "kernel metrics", "ncu profile"],
+            "tool": "profile_ncu",
+            "keywords": [
+                "ncu",
+                "nsight compute",
+                "compute profile",
+                "kernel metrics",
+                "kernel profile",
+                "occupancy",
+                "register",
+                "register pressure",
+                "smem",
+                "shared memory",
+                "warp",
+                "ipc",
+                "sm efficiency",
+                "kernel tuning",
+                "tune kernel",
+                "kernel optimize",
+                "ptx",
+                "sass",
+            ],
             "reason": "Capture kernel metrics with Nsight Compute",
-        }, {
-            "tool": "aisp_profile_memory",
-            "keywords": ["memory", "vram", "oom", "leak", "fragmentation", "spike"],
+        },
+        {
+            "tool": "profile_memory",
+            "keywords": ["memory", "vram", "oom", "out of memory", "memory leak", "fragmentation", "allocation", "spike"],
             "reason": "See memory timeline and spikes",
         },
         {
-            "tool": "aisp_gpu_bandwidth",
+            "tool": "profile_hta",
+            "keywords": ["hta", "holistic trace", "trace analysis", "bottleneck trace"],
+            "reason": "Run HTA analysis for timeline bottlenecks",
+        },
+        {
+            "tool": "nsys_summary",
+            "keywords": ["nsys summary", "summarize nsys", "nsys report summary"],
+            "reason": "Summarize an existing Nsight Systems report",
+        },
+        {
+            "tool": "gpu_bandwidth",
             "keywords": ["bandwidth", "p2p", "nvlink", "pci-e", "pci express"],
             "reason": "Check GPU memory/P2P bandwidth",
         },
         {
-            "tool": "aisp_gpu_power",
+            "tool": "gpu_power",
             "keywords": ["power", "thermal", "throttle", "temperature", "temp"],
             "reason": "Check power/thermal headroom and throttling",
         },
         {
-            "tool": "aisp_gpu_info",
-            "keywords": ["gpu info", "name", "memory", "compute capability"],
+            "tool": "gpu_info",
+            "keywords": ["gpu info", "name", "memory", "vram", "utilization", "compute capability"],
             "reason": "Get GPU inventory and basic telemetry",
         },
         {
-            "tool": "aisp_system_software",
-            "keywords": ["pytorch", "cuda version", "driver", "software version"],
+            "tool": "gpu_topology_matrix",
+            "keywords": ["topology matrix", "topo -m", "nvidia-smi topo", "topo matrix"],
+            "reason": "Get raw GPU/NUMA topology matrix",
+        },
+        {
+            "tool": "system_software",
+            "keywords": ["pytorch", "cuda version", "driver", "software version", "cuDNN", "python version"],
             "reason": "Check software stack versions",
         },
         {
-            "tool": "aisp_system_dependencies",
-            "keywords": ["import error", "torch.cuda", "dependency", "missing library"],
+            "tool": "system_dependencies",
+            "keywords": ["import error", "torch.cuda", "dependency", "missing library", "package check", "install issue"],
             "reason": "Check dependency health for install/import issues",
         },
         {
-            "tool": "aisp_analyze_whatif",
+            "tool": "system_env",
+            "keywords": ["env vars", "environment variables", "env", "paths", "cuda_home"],
+            "reason": "Snapshot key environment variables and paths",
+        },
+        {
+            "tool": "system_network",
+            "keywords": ["network status", "ib status", "rdma status", "gpudirect", "infiniband status"],
+            "reason": "Inspect network interfaces and InfiniBand status",
+        },
+        {
+            "tool": "system_parameters",
+            "keywords": ["sysctl", "kernel parameters", "swappiness", "dirty ratio", "numa balancing"],
+            "reason": "Inspect kernel/system parameters",
+        },
+        {
+            "tool": "system_container",
+            "keywords": ["container", "cgroup", "limits", "quota"],
+            "reason": "Inspect container/cgroup limits",
+        },
+        {
+            "tool": "system_cpu_memory",
+            "keywords": ["numa", "cpu memory", "cache size", "memory hierarchy", "hugepages"],
+            "reason": "Analyze CPU/NUMA/memory hierarchy",
+        },
+        {
+            "tool": "system_capabilities",
+            "keywords": ["capabilities", "features", "tensor cores", "fp8", "tma", "bf16"],
+            "reason": "Inspect hardware capabilities",
+        },
+        {
+            "tool": "system_full",
+            "keywords": ["full system", "system audit", "system analysis", "full inventory"],
+            "reason": "Full system analysis with tuning recommendations",
+        },
+        {
+            "tool": "context_summary",
+            "keywords": ["context summary", "summary context", "system snapshot"],
+            "reason": "Get a quick system context summary",
+        },
+        {
+            "tool": "context_full",
+            "keywords": ["full context", "full system context", "system dump"],
+            "reason": "Get full system context",
+        },
+        {
+            "tool": "tools_kv_cache",
+            "keywords": ["kv cache", "kv-cache size", "kv cache size"],
+            "reason": "Calculate KV-cache size",
+        },
+        {
+            "tool": "tools_cost_per_token",
+            "keywords": ["cost per token", "token cost", "cost estimate"],
+            "reason": "Estimate cost per token",
+        },
+        {
+            "tool": "tools_compare_precision",
+            "keywords": ["compare precision", "precision comparison", "fp16 vs bf16", "accuracy comparison"],
+            "reason": "Compare precision/accuracy tradeoffs",
+        },
+        {
+            "tool": "tools_detect_cutlass",
+            "keywords": ["detect cutlass", "cutlass setup", "cutlass environment"],
+            "reason": "Detect CUTLASS environment",
+        },
+        {
+            "tool": "tools_dump_hw",
+            "keywords": ["dump hardware", "hardware report", "capability report"],
+            "reason": "Dump hardware capability report",
+        },
+        {
+            "tool": "tools_probe_hw",
+            "keywords": ["probe hardware", "hardware probe", "capabilities probe"],
+            "reason": "Probe GPU capabilities and cache results",
+        },
+        {
+            "tool": "hf",
+            "keywords": ["huggingface", "hf search", "trending models", "download model", "hugging face"],
+            "reason": "HuggingFace Hub operations (search/trending/download)",
+        },
+        {
+            "tool": "cost_estimate",
+            "keywords": ["cost estimate", "cloud cost", "training cost", "inference cost", "pricing"],
+            "reason": "Estimate cloud cost for workloads",
+        },
+        {
+            "tool": "analyze_whatif",
             "keywords": ["vram", "memory", "limit", "constraint", "cap"],
             "reason": "What-if recommendations under VRAM/latency constraints",
         },
         {
-            "tool": "aisp_recommend",
-            "keywords": ["throughput", "latency target", "goal", "optimize", "recommend", "playbook"],
+            "tool": "optimize",
+            "keywords": [
+                "optimize file",
+                "optimize path",
+                "optimize benchmark",
+                "optimize target",
+                "optimize this file",
+                "benchmark file",
+                "benchmark target",
+                "baseline_",
+                "optimized_",
+            ],
+            "reason": "Run quick LLM variants for a benchmark file or target",
+        },
+        {
+            "tool": "recommend",
+            "keywords": [
+                "optimize",
+                "optimization",
+                "tune",
+                "tuning",
+                "speed up",
+                "speedup",
+                "faster",
+                "improve performance",
+                "increase throughput",
+                "reduce latency",
+                "throughput",
+                "latency target",
+                "goal",
+                "recommend",
+                "playbook",
+            ],
             "reason": "Get an optimization playbook for your goal",
         },
         {
-            "tool": "aisp_analyze_pareto",
+            "tool": "benchmark_variants",
+            "keywords": [
+                "autotune",
+                "auto-tune",
+                "auto tune",
+                "parameter sweep",
+                "grid search",
+                "sweep",
+                "tile size",
+                "block size",
+                "kernel tuning",
+            ],
+            "reason": "Generate and benchmark optimized variants (LLM-assisted)",
+        },
+        {
+            "tool": "benchmark_llm_patch_loop",
+            "keywords": ["llm patch loop", "full patch loop", "auto optimize", "one shot optimize", "end-to-end optimize"],
+            "reason": "Run the full LLM patch loop with deep-dive comparison",
+        },
+        {
+            "tool": "optimize_roi",
+            "keywords": ["roi", "cost benefit", "impact vs effort", "prioritize", "quick wins"],
+            "reason": "Rank optimizations by ROI and effort",
+        },
+        {
+            "tool": "optimize_techniques",
+            "keywords": ["optimization techniques", "list optimizations", "techniques", "methods", "options"],
+            "reason": "List available optimization techniques",
+        },
+        {
+            "tool": "analyze_pareto",
             "keywords": ["compare", "tradeoff", "pareto"],
             "reason": "Compare throughput/latency/memory tradeoffs",
         },
         {
-            "tool": "aisp_cluster_slurm",
-            "keywords": ["slurm", "batch", "sbatch", "job script"],
+            "tool": "analyze_scaling",
+            "keywords": ["scale", "scaling", "scale out", "scale up", "multi-gpu scaling", "strong scaling", "weak scaling"],
+            "reason": "Analyze scaling behavior",
+        },
+        {
+            "tool": "analyze_stacking",
+            "keywords": ["stack optimizations", "combine optimizations", "optimization stacking", "compatibility"],
+            "reason": "Check optimization compatibility and stacking order",
+        },
+        {
+            "tool": "cluster_slurm",
+            "keywords": ["slurm", "batch", "sbatch", "job script", "slurm script", "srun"],
             "reason": "Generate SLURM script for cluster runs",
         }, {
-            "tool": "aisp_distributed_plan",
+            "tool": "distributed_plan",
             "keywords": ["distributed", "multi node", "tp", "pp", "dp", "fsdp"],
             "reason": "Plan DP/TP/PP strategy",
         },
         {
-            "tool": "aisp_distributed_nccl",
-            "keywords": ["nccl", "collective", "allreduce", "all-gather"],
+            "tool": "distributed_nccl",
+            "keywords": ["nccl", "tune nccl", "collective", "allreduce", "all-gather", "rdma", "infiniband", "ib"],
             "reason": "Tune NCCL for multi-node",
         },
         {
-            "tool": "aisp_run_benchmarks",
-            "keywords": ["benchmark", "benchmarks", "perf run"],
+            "tool": "launch_plan",
+            "keywords": ["torchrun", "srun", "launch plan", "launch command", "run command"],
+            "reason": "Generate torchrun/srun launch commands",
+        },
+        {
+            "tool": "run_benchmarks",
+            "keywords": ["benchmark", "benchmarks", "bench run", "run benchmark", "perf run"],
             "reason": "Run standard benchmarks with optional profiling",
         },
         {
-            "tool": "aisp_inference_vllm",
+            "tool": "inference_vllm",
             "keywords": ["vllm", "inference", "serving", "throughput", "latency"],
             "reason": "Generate vLLM config for throughput/latency",
         },
         {
-            "tool": "aisp_inference_quantization",
+            "tool": "inference_deploy",
+            "keywords": ["deploy", "deployment", "serving config", "serve model"],
+            "reason": "Generate inference deployment configuration",
+        },
+        {
+            "tool": "inference_estimate",
+            "keywords": ["estimate throughput", "estimate latency", "throughput estimate", "latency estimate"],
+            "reason": "Estimate inference throughput/latency",
+        },
+        {
+            "tool": "inference_quantization",
             "keywords": ["quant", "int8", "fp8", "fp4", "kv cache"],
             "reason": "Quantization guidance for inference",
         }, {
-            "tool": "aisp_benchmark_targets",
+            "tool": "benchmark_targets",
             "keywords": ["benchmark targets", "bench targets", "list benchmarks", "what can I run"],
             "reason": "List benchmark targets",
-        }, {
-            "tool": "aisp_triage",
+        },
+        {
+            "tool": "list_chapters",
+            "keywords": ["list chapters", "chapters list", "chapters"],
+            "reason": "List all benchmark chapters and labs",
+        },
+        {
+            "tool": "benchmark_overview",
+            "keywords": ["overview", "summary", "latest results", "latest benchmarks"],
+            "reason": "Summarize latest benchmark results",
+        },
+        {
+            "tool": "benchmark_history",
+            "keywords": ["history", "past runs", "previous runs"],
+            "reason": "List historical benchmark runs",
+        },
+        {
+            "tool": "benchmark_trends",
+            "keywords": ["trend", "trends", "over time", "performance trend"],
+            "reason": "Compute performance trends over time",
+        },
+        {
+            "tool": "benchmark_data",
+            "keywords": ["benchmark data", "raw results", "results data", "table view"],
+            "reason": "Fetch benchmark results with filtering/pagination",
+        },
+        {
+            "tool": "triage",
             "keywords": ["triage", "start", "first", "status", "health", "quick check"],
             "reason": "Get status + summary context",
         },
         {
-            "tool": "aisp_status",
+            "tool": "status",
             "keywords": ["status", "health", "ready", "check", "sanity"],
             "reason": "Quick status: GPU, software, AI backend",
         },
         {
-            "tool": "aisp_ask",
+            "tool": "job_status",
+            "keywords": ["job status", "async status", "check job", "poll job"],
+            "reason": "Check status of a background job",
+        },
+        {
+            "tool": "ai_status",
+            "keywords": ["ai status", "llm status", "api key", "model availability"],
+            "reason": "Check AI/LLM backend availability",
+        },
+        {
+            "tool": "ask",
             "keywords": ["question", "why", "how"],
             "reason": "Free-form performance question with citations",
         },
         {
-            "tool": "aisp_explain",
+            "tool": "explain",
             "keywords": ["what is", "explain", "concept"],
             "reason": "Explain a performance concept with citations",
         },
         {
-            "tool": "aisp_ask",
+            "tool": "ai_troubleshoot",
+            "keywords": ["troubleshoot", "error", "failure", "stack trace", "timeout", "nccl timeout"],
+            "reason": "Diagnose common training/distributed errors",
+        },
+        {
+            "tool": "ask",
             "keywords": ["flash attention", "torch.compile", "compile", "cuda graphs", "why slow"],
             "reason": "Ask targeted performance questions (FlashAttn, torch.compile, CUDA Graphs, etc.)",
         },
         {
-            "tool": "aisp_benchmark_targets",
+            "tool": "benchmark_targets",
             "keywords": ["list targets", "what benchmarks", "examples", "chapters"],
             "reason": "List available benchmark targets (chapter:example)",
         }, {
-            "tool": "aisp_benchmark_report",
+            "tool": "benchmark_report",
             "keywords": ["report", "pdf", "html", "export report"],
             "reason": "Generate PDF/HTML benchmark report",
         },
         {
-            "tool": "aisp_benchmark_export",
+            "tool": "benchmark_export",
             "keywords": ["export", "csv", "markdown", "json"],
             "reason": "Export benchmark results",
         },
         {
-            "tool": "aisp_benchmark_compare_runs",
+            "tool": "export_csv",
+            "keywords": ["export csv", "inline csv", "csv data", "return csv"],
+            "reason": "Inline CSV export of benchmark data",
+        },
+        {
+            "tool": "export_html",
+            "keywords": ["export html", "inline html", "html data"],
+            "reason": "Inline HTML export of benchmark data",
+        },
+        {
+            "tool": "export_pdf",
+            "keywords": ["export pdf", "inline pdf", "pdf data"],
+            "reason": "Inline PDF export of benchmark data",
+        },
+        {
+            "tool": "benchmark_compare_runs",
             "keywords": ["compare runs", "diff results", "regressions", "improvements"],
             "reason": "Diff two benchmark JSON runs",
         },
         {
-            "tool": "aisp_hw_roofline",
+            "tool": "hw_roofline",
             "keywords": ["stride", "roofline", "memory sweep"],
             "reason": "Quick stride sweep roofline for memory hierarchy",
         }, {
-            "tool": "aisp_gpu_topology",
+            "tool": "gpu_topology",
             "keywords": ["topology", "nvlink", "pcie", "multi gpu"],
             "reason": "Inspect multi-GPU topology",
         },
@@ -6309,9 +7293,9 @@ def tool_suggest_tools(params: Dict[str, Any]) -> Dict[str, Any]:
     # If nothing matched, fall back to triage + core suggestions
     if not scored:
         suggestions = [
-            {"tool": "aisp_triage", "reason": "Start with triage to gather context"},
-            {"tool": "aisp_analyze_bottlenecks", "reason": "Check for bottlenecks"},
-            {"tool": "aisp_recommend", "reason": "Get optimization recommendations"},
+            {"tool": "triage", "reason": "Start with triage to gather context"},
+            {"tool": "analyze_bottlenecks", "reason": "Check for bottlenecks"},
+            {"tool": "recommend", "reason": "Get optimization recommendations"},
         ]
         return {"suggestions": suggestions, "count": len(suggestions)}
 

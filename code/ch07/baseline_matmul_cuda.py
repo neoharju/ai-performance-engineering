@@ -25,7 +25,7 @@ class BaselineMatmulCudaBenchmark(CudaBinaryBenchmark):
         super().__init__(
             chapter_dir=chapter_dir,
             binary_name="baseline_matmul",
-            friendly_name="Ch7 Baseline Matmul CUDA",
+            friendly_name="Baseline Matmul",
             iterations=3,
             warmup=5,
             timeout_seconds=180,

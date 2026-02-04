@@ -79,7 +79,6 @@ class OptimizedTorchAOQuantizationBenchmark(VerificationPayloadMixin, BaseBenchm
         for _ in range(3):
             with torch.no_grad():
                 _ = self.compiled_model(self.data)
-        self._synchronize()
 
     def benchmark_fn(self) -> None:
         if self.compiled_model is None or self.data is None:
@@ -87,7 +86,6 @@ class OptimizedTorchAOQuantizationBenchmark(VerificationPayloadMixin, BaseBenchm
         with self._nvtx_range("optimized_torchao_quantization"):
             with torch.no_grad():
                 self.output = self.compiled_model(self.data)
-        self._synchronize()
         if self._verify_input is None or self.output is None:
             raise RuntimeError("benchmark_fn() must produce output for verification")
 

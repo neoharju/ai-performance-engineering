@@ -21,7 +21,7 @@ class BaselineDSMEMReductionBenchmark(CudaBinaryBenchmark):
         super().__init__(
             chapter_dir=chapter_dir,
             binary_name="baseline_dsmem_reduction",
-            friendly_name="Two-Pass Reduction (Baseline)",
+            friendly_name="Baseline Dsmem Reduction",
             iterations=3,
             warmup=5,
             timeout_seconds=120,

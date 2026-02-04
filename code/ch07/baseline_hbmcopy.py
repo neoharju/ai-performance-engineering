@@ -23,7 +23,7 @@ class BaselineHBMCopyBenchmark(CudaBinaryBenchmark):
         super().__init__(
             chapter_dir=chapter_dir,
             binary_name="baseline_hbm_copy",
-            friendly_name="Baseline HBM Copy",
+            friendly_name="Baseline Hbm Copy",
             iterations=3,
             warmup=5,
             timeout_seconds=90,

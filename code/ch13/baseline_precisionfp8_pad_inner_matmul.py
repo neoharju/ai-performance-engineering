@@ -54,7 +54,6 @@ class BaselinePrecisionFP8PadInnerMatmulBenchmark(VerificationPayloadMixin, Base
         self.a = torch.randn(self.m, self.k, device=self.device, dtype=torch.float32) * self.input_scale
         self.b = torch.randn(self.k, self.n, device=self.device, dtype=torch.float32) * self.input_scale
         self.parameter_count = self.k * self.n
-        self._synchronize()
         self.register_workload_metadata(
             requests_per_iteration=self._workload.requests_per_iteration,
             tokens_per_iteration=self._workload.tokens_per_iteration,
@@ -67,7 +66,6 @@ class BaselinePrecisionFP8PadInnerMatmulBenchmark(VerificationPayloadMixin, Base
             with torch.no_grad():
                 out = torch.matmul(self.a, self.b)
                 self.output = out.detach().float().clone()
-        self._synchronize()
         if self.output is None:
             raise RuntimeError("benchmark_fn() must produce output for verification")
 

@@ -28,7 +28,7 @@ class OptimizedFP4HardwareKernelBenchmark(CudaBinaryBenchmark):
         super().__init__(
             chapter_dir=chapter_dir,
             binary_name="optimized_fp4_hardware_kernel",
-            friendly_name="Optimized FP4 Hardware Kernel (cuBLASLt NVFP4)",
+            friendly_name="Optimized Fp4 Hardware Kernel",
             iterations=1,
             warmup=1,
             timeout_seconds=300,

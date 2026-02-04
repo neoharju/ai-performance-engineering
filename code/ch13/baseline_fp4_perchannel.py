@@ -125,14 +125,12 @@ class BaselineFP4PerChannelBenchmark(VerificationPayloadMixin, BaseBenchmark):
         for _ in range(3):
             with torch.no_grad():
                 _ = self.model(self.inputs)
-        self._synchronize()
 
     def benchmark_fn(self) -> None:
         if self.model is None or self.inputs is None:
             raise RuntimeError("Benchmark not initialized")
         with torch.no_grad():
             self.output = self.model(self.inputs)
-        self._synchronize()
         if self._verify_input is None or self.output is None:
             raise RuntimeError("Verification input/output not initialized")
 

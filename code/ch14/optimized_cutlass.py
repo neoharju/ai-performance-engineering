@@ -22,20 +22,11 @@ from core.harness.benchmark_harness import (  # noqa: E402
     WorkloadMetadata,
 )
 
-def _try_cutlass_gemm(a: torch.Tensor, b: torch.Tensor):
-    """Try CUTLASS GEMM, fallback to torch.matmul if unavailable."""
-    try:
-        from core.benchmark.cutlass_binding import cutlass_gemm_fp16
-        return cutlass_gemm_fp16(a, b), True
-    except Exception:
-        return torch.matmul(a, b), False
-
-
 class OptimizedCutlassBenchmark(VerificationPayloadMixin, BaseBenchmark):
-    """Optimized: Single GEMM call using PyTorch's optimized kernels.
+    """Optimized: Single GEMM call using CUTLASS.
     
     Contrast with baseline's naive blocked matmul (many small GEMM calls).
-    Uses FP16 + single torch.matmul for maximum tensor core utilization.
+    Uses FP16 + CUTLASS GEMM for maximum tensor core utilization.
     
     Chapter 14 Learning Goal: Show how compiler/library optimizations 
     (single optimized GEMM vs naive blocked matmul) improve performance.
@@ -50,7 +41,7 @@ class OptimizedCutlassBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.m = 4096
         self.n = 4096
         self.k = 4096
-        self._use_cutlass = False
+        self._cutlass_gemm = None
         self._workload = WorkloadMetadata(
             requests_per_iteration=1.0,
             tokens_per_iteration=float(self.m * self.n),
@@ -70,9 +61,11 @@ class OptimizedCutlassBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.B = torch.randn(self.k, self.n, device=self.device, dtype=torch.float16)
         self.C = torch.zeros(self.m, self.n, device=self.device, dtype=torch.float16)
         
-        # Try CUTLASS, fallback to torch.matmul
-        _, self._use_cutlass = _try_cutlass_gemm(self.A, self.B)
-        torch.cuda.synchronize()
+        try:
+            from core.benchmark.cutlass_binding import cutlass_gemm_fp16
+        except Exception as exc:
+            raise RuntimeError("CUTLASS GEMM extension unavailable for optimized_cutlass benchmark.") from exc
+        self._cutlass_gemm = cutlass_gemm_fp16
     
     def benchmark_fn(self) -> None:
         """Benchmark: Single optimized GEMM (vs baseline's many small GEMMs)."""
@@ -85,16 +78,9 @@ class OptimizedCutlassBenchmark(VerificationPayloadMixin, BaseBenchmark):
             # KEY OPTIMIZATION: Single GEMM call
             # Baseline does many small blocked matmuls = poor locality
             # This does one large GEMM = optimal tensor core utilization
-            if self.A is None or self.B is None:
+            if self.A is None or self.B is None or self._cutlass_gemm is None:
                 raise RuntimeError("Benchmark not initialized")
-            
-            if self._use_cutlass:
-                from core.benchmark.cutlass_binding import cutlass_gemm_fp16
-                self.C = cutlass_gemm_fp16(self.A, self.B)
-            else:
-                # Fallback: Still faster than baseline's blocked matmul
-                torch.matmul(self.A, self.B, out=self.C)
-            self._synchronize()
+            self.C = self._cutlass_gemm(self.A, self.B)
         if self.A is None or self.B is None or self.C is None:
             raise RuntimeError("Benchmark not initialized")
 

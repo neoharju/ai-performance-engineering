@@ -26,7 +26,7 @@ class BaselineLookupBenchmark(CudaBinaryBenchmark):
         super().__init__(
             chapter_dir=chapter_dir,
             binary_name="baseline_lookup",
-            friendly_name="Ch7 Baseline Lookup",
+            friendly_name="Baseline Lookup",
             iterations=3,
             warmup=5,
             timeout_seconds=90,

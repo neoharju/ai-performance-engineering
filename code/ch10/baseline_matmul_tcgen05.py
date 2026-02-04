@@ -54,7 +54,6 @@ class BaselineMatmulTCGen05Benchmark(VerificationPayloadMixin, BaseBenchmark):
         dtype = torch.float16
         self.A = torch.randn(self.size, self.size, device=self.device, dtype=dtype)
         self.B = torch.randn(self.size, self.size, device=self.device, dtype=dtype)
-        self._synchronize()
 
     def benchmark_fn(self) -> None:
         if not self._tcgen05_available:
@@ -63,7 +62,6 @@ class BaselineMatmulTCGen05Benchmark(VerificationPayloadMixin, BaseBenchmark):
         with self._nvtx_range("baseline_matmul_tcgen05_custom"):
             with torch.no_grad():
                 self.output = self.module.matmul_tcgen05(self.A, self.B)
-        self._synchronize()
         if self.output is None:
             raise RuntimeError("benchmark_fn() must produce output for verification")
 

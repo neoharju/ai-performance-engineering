@@ -21,7 +21,7 @@ class OptimizedFloat8VectorBenchmark(CudaBinaryBenchmark):
         super().__init__(
             chapter_dir=chapter_dir,
             binary_name="optimized_float8_vector",
-            friendly_name="32-byte Vectorized Loads",
+            friendly_name="Optimized Float8 Vector",
             iterations=3,
             warmup=5,
             timeout_seconds=120,

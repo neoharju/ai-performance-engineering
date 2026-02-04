@@ -59,7 +59,7 @@ Usage:
     engine.distributed.nccl()
     
     # Inference
-    engine.inference.vllm_config(model="70b")
+    engine.inference.vllm_config(model="meta-llama/Llama-3.1-70B", model_params_b=70)
     engine.inference.quantization()
     
     # Benchmarks
@@ -255,6 +255,8 @@ class SystemDomain:
         context()       - Full system context for AI analysis
         parameters()    - Kernel parameters affecting performance
         container()     - Container/cgroup limits
+        env()           - Environment snapshot (CUDA/torch/NCCL vars)
+        network()       - Network + InfiniBand status
     """
     
     def __init__(self, parent: 'PerformanceEngine'):
@@ -283,6 +285,14 @@ class SystemDomain:
     def container(self) -> Dict[str, Any]:
         """Get container/cgroup limits."""
         return _get_handler().get_container_limits()
+
+    def env(self) -> Dict[str, Any]:
+        """Get environment variables relevant to performance."""
+        return _get_handler().get_system_env()
+
+    def network(self) -> Dict[str, Any]:
+        """Get network/InfiniBand status and NCCL env snapshot."""
+        return _get_handler().get_network_status()
     
     def cpu_memory(self) -> Dict[str, Any]:
         """Analyze CPU/memory hierarchy: NUMA, caches, TLB."""
@@ -601,7 +611,7 @@ class DistributedDomain:
         tensor_parallel(model)         - Tensor parallelism config
         pipeline(model)                - Pipeline parallelism config
         slurm(model, nodes, gpus)      - Generate SLURM script
-        cost_estimate(params)          - Estimate cloud costs
+        cost_estimate(gpu_type, num_gpus, hours_per_day) - Estimate cloud costs
     """
     
     def __init__(self, parent: 'PerformanceEngine'):
@@ -666,23 +676,23 @@ class DistributedDomain:
     
     def cost_estimate(
         self,
-        model_size: Optional[float] = None,
-        training_tokens: Optional[float] = None,
-        provider: str = "aws"
+        gpu_type: str = "h100",
+        num_gpus: int = 8,
+        hours_per_day: float = 8,
     ) -> Dict[str, Any]:
         """
-        Estimate cloud costs for training.
-        
+        Estimate cloud GPU costs for a fixed GPU fleet.
+
         Args:
-            model_size: Model size in billions
-            training_tokens: Training tokens in billions
-            provider: Cloud provider (aws, gcp, azure)
+            gpu_type: GPU type (e.g., "h100", "a100-80")
+            num_gpus: Number of GPUs
+            hours_per_day: Usage hours per day
         """
-        params = {"provider": provider}
-        if model_size is not None:
-            params["model_size"] = model_size
-        if training_tokens is not None:
-            params["training_tokens"] = training_tokens
+        params = {
+            "gpu_type": gpu_type,
+            "num_gpus": num_gpus,
+            "hours_per_day": hours_per_day,
+        }
         return _get_handler().get_cloud_cost_estimate(params)
     
     def topology(self) -> Dict[str, Any]:
@@ -709,20 +719,39 @@ class InferenceDomain:
         self._parent = parent
     
     def vllm_config(
-        self, 
-        model: str = "7b", 
+        self,
+        model: str,
+        model_params_b: Optional[float],
+        num_gpus: int = 1,
+        gpu_memory_gb: float = 80,
         target: str = "throughput",
-        compare: bool = False
+        max_seq_length: int = 8192,
+        quantization: Optional[str] = None,
+        compare: bool = False,
     ) -> Dict[str, Any]:
         """
-        Generate vLLM configuration.
+        Generate vLLM configuration (explicit model size required).
         
         Args:
-            model: Model name or size (e.g., "llama-7b", "70b")
+            model: Model name (e.g., "meta-llama/Llama-3.1-70B")
+            model_params_b: Model size in billions (required)
+            num_gpus: Number of GPUs available
+            gpu_memory_gb: VRAM per GPU in GB
             target: Optimization target: "throughput" or "latency"
-            compare: If True, compare inference engines
+            max_seq_length: Max sequence length
+            quantization: Optional quantization mode (awq/gptq/fp8/int8)
+            compare: If True, compare inference engines instead of config
         """
-        return _get_handler().get_vllm_config(model, target, compare)
+        return _get_handler().get_vllm_config(
+            model=model,
+            model_params_b=model_params_b,
+            num_gpus=num_gpus,
+            gpu_memory_gb=gpu_memory_gb,
+            target=target,
+            max_seq_length=max_seq_length,
+            quantization=quantization,
+            compare=compare,
+        )
     
     def quantization(self, model_size: Optional[float] = None) -> Dict[str, Any]:
         """
@@ -862,6 +891,7 @@ class AIDomain:
         analyze_kernel(code)    - Analyze CUDA kernel code
         suggest_tools(query)    - Suggest tools for a task
         status()                - Check AI/LLM availability
+        troubleshoot(issue)     - Diagnose common performance issues
     """
     
     def __init__(self, parent: 'PerformanceEngine'):
@@ -1003,31 +1033,31 @@ class AIDomain:
         
         if "oom" in query_lower or "memory" in query_lower or "vram" in query_lower:
             suggestions.extend([
-                {"tool": "gpu.info", "reason": "Check current VRAM usage"},
-                {"tool": "analyze.memory", "reason": "Analyze memory access patterns"},
-                {"tool": "inference.quantization", "reason": "Reduce memory with quantization"},
-                {"tool": "optimize.recommend", "reason": "Get memory optimization tips"},
+                {"tool": "gpu_info", "reason": "Check current VRAM usage"},
+                {"tool": "analyze_memory_patterns", "reason": "Analyze memory access patterns"},
+                {"tool": "inference_quantization", "reason": "Reduce memory with quantization"},
+                {"tool": "recommend", "reason": "Get memory optimization tips"},
             ])
         
         if "slow" in query_lower or "latency" in query_lower:
             suggestions.extend([
-                {"tool": "analyze.bottlenecks", "reason": "Identify bottlenecks"},
-                {"tool": "profile.flame_graph", "reason": "Visualize time breakdown"},
-                {"tool": "optimize.recommend", "reason": "Get optimization recommendations"},
+                {"tool": "analyze_bottlenecks", "reason": "Identify bottlenecks"},
+                {"tool": "profile_flame", "reason": "Visualize time breakdown"},
+                {"tool": "recommend", "reason": "Get optimization recommendations"},
             ])
         
         if "distributed" in query_lower or "multi-gpu" in query_lower or "parallel" in query_lower:
             suggestions.extend([
-                {"tool": "gpu.topology", "reason": "Check GPU interconnects"},
-                {"tool": "distributed.plan", "reason": "Plan parallelism strategy"},
-                {"tool": "distributed.nccl", "reason": "NCCL tuning recommendations"},
+                {"tool": "gpu_topology", "reason": "Check GPU interconnects"},
+                {"tool": "distributed_plan", "reason": "Plan parallelism strategy"},
+                {"tool": "distributed_nccl", "reason": "NCCL tuning recommendations"},
             ])
         
         if not suggestions:
             suggestions = [
-                {"tool": "system.context", "reason": "Get full system overview"},
-                {"tool": "analyze.bottlenecks", "reason": "Start with bottleneck analysis"},
-                {"tool": "ai.ask", "reason": "Ask your specific question"},
+                {"tool": "system_context", "reason": "Get full system overview"},
+                {"tool": "analyze_bottlenecks", "reason": "Start with bottleneck analysis"},
+                {"tool": "ask", "reason": "Ask your specific question"},
             ]
         
         return {
@@ -1035,6 +1065,20 @@ class AIDomain:
             "suggestions": suggestions[:5],
             "note": "Call suggested tools in order for best results",
         }
+
+    def troubleshoot(
+        self,
+        issue: str,
+        symptoms: Optional[List[str]] = None,
+        config: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Diagnose common performance/distributed errors."""
+        try:
+            from core.optimization.parallelism_planner.troubleshooting import diagnose_error
+
+            return diagnose_error(error_message=issue, symptoms=symptoms, config=config)
+        except Exception as exc:
+            return {"success": False, "error": str(exc), "issue": issue}
     
     def status(self) -> Dict[str, Any]:
         """Check AI/LLM backend availability."""
@@ -1325,4 +1369,3 @@ def reset_engine() -> None:
     _engine_instance = None
     _handler_instance = None
     _analyzer_instance = None
-

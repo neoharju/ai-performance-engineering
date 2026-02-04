@@ -75,13 +75,11 @@ class OptimizedTritonPersistentBenchmark(VerificationPayloadMixin, BaseBenchmark
         # Warmup
         for _ in range(3):
             _ = matmul_batched_fused(self.a, self.b)
-        torch.cuda.synchronize(self.device)
 
     def benchmark_fn(self) -> None:
         """Benchmark: Single fused kernel."""
         self.output = matmul_batched_fused(self.a, self.b)
         self._last = float(self.output.sum())
-        self._synchronize()
         if self.output is None or self.a is None or self.b is None:
             raise RuntimeError("benchmark_fn() must produce output")
 

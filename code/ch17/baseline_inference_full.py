@@ -71,7 +71,6 @@ class BaselineInferenceFullBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
         input_dtype = next(self.model.parameters()).dtype
         self.inputs = torch.randn(self.batch_size, self.hidden_dim, device=self.device, dtype=input_dtype)
-        self._synchronize()
 
     def benchmark_fn(self) -> None:
         assert self.model is not None and self.inputs is not None
@@ -79,7 +78,6 @@ class BaselineInferenceFullBenchmark(VerificationPayloadMixin, BaseBenchmark):
         with self._nvtx_range("inference_full"):
             with torch.no_grad():
                 self.output = self.model(self.inputs)
-        self._synchronize()
         if self.output is None or self.inputs is None:
             raise RuntimeError("benchmark_fn() must produce output")
         dtype = self.output.dtype

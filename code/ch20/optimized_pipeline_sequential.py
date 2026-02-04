@@ -73,7 +73,6 @@ class OptimizedPipelineOverlapBenchmark(VerificationPayloadMixin, BaseBenchmark)
         self.inputs = torch.randn(
             self.batch_size, self.hidden_dim, device=self.device, dtype=torch.float16
         )
-        self._synchronize()
     
     def benchmark_fn(self) -> None:
         assert self.inputs is not None and self.stages is not None
@@ -87,7 +86,6 @@ class OptimizedPipelineOverlapBenchmark(VerificationPayloadMixin, BaseBenchmark)
                     # Single sync at end - no per-stage CPU round-trips
                 # Capture output for verification
                 self.output = x.detach()
-            self._synchronize()
 
     def capture_verification_payload(self) -> None:
         if self.inputs is None or self.output is None or self.stages is None:

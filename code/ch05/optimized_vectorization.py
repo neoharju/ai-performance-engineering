@@ -30,7 +30,6 @@ class OptimizedVectorizationBenchmark(VerificationPayloadMixin, BaseBenchmark):
         # Enable cuDNN benchmarking for optimal kernel selection
         torch.manual_seed(42)
         self.data = torch.randn(self.N, device=self.device)
-        self._synchronize()
     
     def benchmark_fn(self) -> None:
         """Benchmark: Fully vectorized reduction over the full tensor."""
@@ -38,7 +37,6 @@ class OptimizedVectorizationBenchmark(VerificationPayloadMixin, BaseBenchmark):
         with self._nvtx_range("optimized_vectorization"):
             # Vectorized sum over the full tensor (single kernel)
             result = self.data.sum().unsqueeze(0)
-            self._synchronize()
         self.output = result
 
     def capture_verification_payload(self) -> None:

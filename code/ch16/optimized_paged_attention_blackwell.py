@@ -93,7 +93,6 @@ class PagedAttentionBlackwellBenchmark(VerificationPayloadMixin, BaseBenchmark):
         for _ in range(5):
             with torch.no_grad():
                 self._forward_flash()
-        torch.cuda.synchronize()
     
     def _forward_flash(self):
         """Flash Attention via SDPA."""
@@ -119,7 +118,6 @@ class PagedAttentionBlackwellBenchmark(VerificationPayloadMixin, BaseBenchmark):
         """Benchmark: Flash Attention with FP8 KV cache benefits."""
         with torch.no_grad():
             self.output = self._forward_flash()
-        torch.cuda.synchronize()
         if self._verify_input is None:
             raise RuntimeError("Verification input missing")
         parameter_count = 0

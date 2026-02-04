@@ -54,7 +54,6 @@ class BaselineMatmulTCGen05PipelinedBenchmark(VerificationPayloadMixin, BaseBenc
         torch.cuda.manual_seed_all(42)
         self.A = torch.randn(self.size, self.size, device=self.device, dtype=self.dtype)
         self.B = torch.randn(self.size, self.size, device=self.device, dtype=self.dtype)
-        self._synchronize()
 
     def benchmark_fn(self) -> None:
         if not self._tcgen05_available:
@@ -63,7 +62,6 @@ class BaselineMatmulTCGen05PipelinedBenchmark(VerificationPayloadMixin, BaseBenc
         with self._nvtx_range("baseline_matmul_tcgen05_single_stage"):
             with torch.no_grad():
                 self.output = self.module.matmul_tcgen05(self.A, self.B)
-        self._synchronize()
         if self.output is None:
             raise RuntimeError("benchmark_fn() must produce output for verification")
 

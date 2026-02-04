@@ -23,7 +23,7 @@ class OptimizedClusterGroupSingleCtaBenchmark(CudaBinaryBenchmark):
         super().__init__(
             chapter_dir=chapter_dir,
             binary_name="optimized_cluster_group_single_cta",
-            friendly_name="Optimized Cluster Group (Single CTA)",
+            friendly_name="Optimized Cluster Group Single Cta",
             iterations=3,
             warmup=5,
             timeout_seconds=60,

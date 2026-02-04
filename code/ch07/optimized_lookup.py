@@ -26,7 +26,7 @@ class OptimizedLookupBenchmark(CudaBinaryBenchmark):
         super().__init__(
             chapter_dir=chapter_dir,
             binary_name="optimized_lookup",
-            friendly_name="Ch7 Optimized Lookup",
+            friendly_name="Optimized Lookup",
             iterations=3,
             warmup=5,
             timeout_seconds=90,

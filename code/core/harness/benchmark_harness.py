@@ -583,6 +583,9 @@ class BenchmarkConfig:
     """Use torch.cuda.synchronize() instead of event.synchronize() for stream-safe timing.
     Critical for protecting against multi-stream timing exploits (see Locus/KernelBench 2025)."""
 
+    force_synchronize: bool = field(default_factory=lambda: _get_default_value("force_synchronize", False))
+    """Force a device-wide synchronize immediately after benchmark_fn() (opt-in safeguard)."""
+
     timing_method: str = field(default_factory=lambda: _get_default_value("timing_method", "cuda_event"))
     """Timing method for CUDA benchmarks.
 
@@ -4072,6 +4075,9 @@ class BenchmarkHarness:
                     # Execute function under test with NVTX
                     with self._nvtx_range(range_name):
                         result = fn()
+
+                if is_cuda and getattr(config, "force_synchronize", False):
+                    torch.cuda.synchronize(self.device)
                 
                 # Record end event (non-blocking)
                 if end_event is not None:
@@ -4461,6 +4467,8 @@ class BenchmarkHarness:
         for _ in range(warmup_iterations):
             with self._nvtx_range(f"{range_name}_warmup"):
                 fn()
+            if is_cuda and config and getattr(config, "force_synchronize", False):
+                torch.cuda.synchronize(self.device)
         if is_cuda:
             torch.cuda.synchronize(self.device)
             

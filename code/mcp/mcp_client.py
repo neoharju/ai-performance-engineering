@@ -480,9 +480,8 @@ if __name__ == "__main__":
         print(f"Found {len(tools)} tools")
         
         # Call a tool
-        result = client.call_tool("aisp_status", {})
+        result = client.call_tool("status", {})
         print(f"Status: {result.get('status')}")
         
     finally:
         client.stop()
-

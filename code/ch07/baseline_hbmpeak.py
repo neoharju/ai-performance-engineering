@@ -23,7 +23,7 @@ class BaselineHBMPeakBenchmark(CudaBinaryBenchmark):
         super().__init__(
             chapter_dir=chapter_dir,
             binary_name="baseline_hbm_peak",
-            friendly_name="Baseline HBM Peak Bandwidth",
+            friendly_name="Baseline Hbm Peak",
             iterations=3,
             warmup=5,
             timeout_seconds=90,

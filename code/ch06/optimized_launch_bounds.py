@@ -34,20 +34,16 @@ class OptimizedLaunchBoundsBenchmark(VerificationPayloadMixin, BaseBenchmark):
         torch.manual_seed(42)
         self.input_data = torch.linspace(0.0, 1.0, self.N, dtype=torch.float32, device=self.device)
         self.output_data = torch.zeros(self.N, dtype=torch.float32, device=self.device)
-        self._synchronize()
         self._extension.launch_bounds_optimized(self.input_data, self.output_data, 1)
-        self._synchronize()
         torch.manual_seed(42)
         self.input_data = torch.linspace(0.0, 1.0, self.N, dtype=torch.float32, device=self.device)
         self.output_data = torch.zeros(self.N, dtype=torch.float32, device=self.device)
-        self._synchronize()
     
     def benchmark_fn(self) -> None:
         """Benchmark: kernel with launch bounds."""
         assert self._extension is not None and self.input_data is not None and self.output_data is not None
         with self._nvtx_range("optimized_launch_bounds"):
             self._extension.launch_bounds_optimized(self.input_data, self.output_data, self.iterations)
-            self._synchronize()
 
     def capture_verification_payload(self) -> None:
         self._set_verification_payload(

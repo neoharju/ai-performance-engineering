@@ -72,7 +72,6 @@ class BaselineMultipleUnoptimizedBenchmark(VerificationPayloadMixin, BaseBenchma
         for _ in range(5):
             with torch.no_grad():
                 _ = self.model(self.x)
-        self._synchronize()
     
     def benchmark_fn(self) -> None:
         assert self.model is not None and self.x is not None
@@ -83,7 +82,6 @@ class BaselineMultipleUnoptimizedBenchmark(VerificationPayloadMixin, BaseBenchma
                     out = self.model(self.x)
                     _ = out.sum()  # Force materialization
                 self.output = out.detach()
-            self._synchronize()
 
     def capture_verification_payload(self) -> None:
         assert self.model is not None and self.x is not None and self.output is not None

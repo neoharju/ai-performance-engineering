@@ -26,7 +26,7 @@ class BaselineTMACopyBenchmark(CudaBinaryBenchmark):
         super().__init__(
             chapter_dir=chapter_dir,
             binary_name="baseline_tma_copy",
-            friendly_name="Baseline TMA Copy",
+            friendly_name="Baseline Tma Copy",
             iterations=3,
             warmup=5,
             timeout_seconds=120,

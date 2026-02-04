@@ -47,7 +47,6 @@ class BaselineCublasBenchmark(VerificationPayloadMixin, BaseBenchmark):
         assert self.A is not None and self.B is not None
         with self._nvtx_range("baseline_cublas_fp32"):
             self.C = torch.matmul(self.A, self.B)
-        self._synchronize()
 
         if self.C is None:
             raise RuntimeError("benchmark_fn() must produce output for verification")

@@ -18,7 +18,7 @@ class OptimizedFlashAttnTmaMicroPipelineBenchmark(CudaBinaryBenchmark):
         super().__init__(
             chapter_dir=chapter_dir,
             binary_name="optimized_flash_attn_tma_micro_pipeline",
-            friendly_name="FlashAttn Micro-Pipeline Optimized (cuda::pipeline / TMA)",
+            friendly_name="Optimized Flash Attn Tma Micro Pipeline",
             iterations=1,
             warmup=5,
             timeout_seconds=120,

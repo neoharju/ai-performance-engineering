@@ -218,33 +218,33 @@ def _file_uses_torchrun(path: Path) -> bool:
 def _collect_multi_gpu_examples(chapter_dir: Path) -> Dict[str, bool]:
     multi_gpu: Dict[str, bool] = {}
     pairs = discover_benchmarks(chapter_dir, validate=False, warn_missing=False)
-    for baseline_path, optimized_paths, example_name in pairs:
-        try:
-            uses_torchrun = _file_uses_torchrun(baseline_path)
-        except Exception as exc:
-            raise RuntimeError(f"Failed to read {baseline_path}: {exc}") from exc
-        for opt_path in optimized_paths:
-            try:
-                uses_torchrun = uses_torchrun or _file_uses_torchrun(opt_path)
-            except Exception as exc:
-                raise RuntimeError(f"Failed to read {opt_path}: {exc}") from exc
-        example_key = _expectation_example_key(example_name, "python")
-        if example_key in multi_gpu:
-            multi_gpu[example_key] = multi_gpu[example_key] or uses_torchrun
-        else:
-            multi_gpu[example_key] = uses_torchrun
 
     try:
-        from core.harness.run_benchmarks import discover_cuda_benchmarks, cuda_binary_requires_multi_gpu
+        from core.harness.run_benchmarks import cuda_binary_requires_multi_gpu
+        from core.discovery import is_cuda_binary_benchmark_file
     except Exception as exc:
-        raise RuntimeError(f"Failed to import CUDA benchmark discovery: {exc}") from exc
+        raise RuntimeError(f"Failed to import benchmark helpers: {exc}") from exc
 
-    cuda_pairs = discover_cuda_benchmarks(chapter_dir)
-    for baseline_path, optimized_paths, example_name in cuda_pairs:
-        uses_multi_gpu = cuda_binary_requires_multi_gpu(baseline_path)
-        for opt_path in optimized_paths:
-            uses_multi_gpu = uses_multi_gpu or cuda_binary_requires_multi_gpu(opt_path)
-        example_key = _expectation_example_key(example_name, "cuda")
+    for baseline_path, optimized_paths, example_name in pairs:
+        is_cuda_wrapper = is_cuda_binary_benchmark_file(baseline_path)
+        if is_cuda_wrapper:
+            uses_multi_gpu = cuda_binary_requires_multi_gpu(baseline_path)
+            for opt_path in optimized_paths:
+                uses_multi_gpu = uses_multi_gpu or cuda_binary_requires_multi_gpu(opt_path)
+            example_key = _expectation_example_key(example_name, "cuda")
+        else:
+            try:
+                uses_torchrun = _file_uses_torchrun(baseline_path)
+            except Exception as exc:
+                raise RuntimeError(f"Failed to read {baseline_path}: {exc}") from exc
+            for opt_path in optimized_paths:
+                try:
+                    uses_torchrun = uses_torchrun or _file_uses_torchrun(opt_path)
+                except Exception as exc:
+                    raise RuntimeError(f"Failed to read {opt_path}: {exc}") from exc
+            uses_multi_gpu = uses_torchrun
+            example_key = _expectation_example_key(example_name, "python")
+
         if example_key in multi_gpu:
             multi_gpu[example_key] = multi_gpu[example_key] or uses_multi_gpu
         else:
@@ -313,6 +313,7 @@ def _execute_benchmarks(
     allow_virtualization: bool = True,
     reproducible: bool = False,
     cold_start: bool = False,
+    force_synchronize: bool = False,
     iterations: Optional[int] = None,
     warmup: Optional[int] = None,
     force_pipeline: bool = False,
@@ -508,6 +509,7 @@ def _execute_benchmarks(
             timeout_multiplier=timeout_multiplier,
             reproducible=reproducible,
             cold_start=cold_start,
+            force_synchronize=force_synchronize,
             iterations=iterations,
             warmup=warmup,
             single_gpu=single_gpu,
@@ -636,6 +638,7 @@ if TYPER_AVAILABLE:
         ),
         reproducible: bool = Option(False, "--reproducible", help="Enable reproducible mode: set all seeds to 42 and force deterministic algorithms (uses slower fallbacks; ops without deterministic support may error)."),
         cold_start: bool = Option(False, "--cold-start", help="Reset GPU state between benchmarks for cold start measurements"),
+        force_sync: bool = Option(False, "--force-sync", help="Force a device-wide synchronize immediately after benchmark_fn() (opt-in safeguard)."),
         iterations: Optional[int] = Option(None, "--iterations", help="Number of benchmark iterations (default: chapter-specific)"),
         warmup: Optional[int] = Option(None, "--warmup", help="Number of warmup iterations (default: chapter-specific)"),
         force_pipeline: bool = Option(False, "--force-pipeline", help="Force enable CUDA Pipeline API even on compute capability 12.0+ (may cause instability on Blackwell GPUs)"),
@@ -680,8 +683,8 @@ if TYPER_AVAILABLE:
             "--pm-sampling-interval",
             help="Nsight Compute pm-sampling-interval (cycles between samples). Optional: set to reduce overhead; defaults to unset.",
         ),
-        only_cuda: bool = Option(False, "--only-cuda", help="Run only CUDA benchmarks (skip Python)."),
-        only_python: bool = Option(False, "--only-python", help="Run only Python benchmarks (skip CUDA)."),
+        only_cuda: bool = Option(False, "--only-cuda", help="Run only CUDA binary benchmarks (Python wrappers)."),
+        only_python: bool = Option(False, "--only-python", help="Run only Python benchmarks (skip CUDA binary wrappers)."),
         accept_regressions: bool = Option(False, "--accept-regressions", help="Update expectation files when improvements are detected instead of flagging regressions.", is_flag=True),
         update_expectations: bool = Option(False, "--update-expectations", help="Force-write observed metrics into expectation files (overrides regressions). Useful for refreshing baselines on new hardware.", is_flag=True),
         allow_mixed_provenance: bool = Option(False, "--allow-mixed-provenance", help="Allow expectation updates when provenance differs (commit/hardware/profile mismatch) without forcing updates. Does NOT accept regressions (use --accept-regressions or --update-expectations).", is_flag=True),
@@ -750,6 +753,7 @@ if TYPER_AVAILABLE:
                 "allow_invalid_environment": allow_invalid_environment,
                 "allow_virtualization": allow_virtualization,
                 "allow_mixed_provenance": allow_mixed_provenance,
+                "force_sync": force_sync,
                 "nsys_timeout_seconds": nsys_timeout_seconds,
                 "ncu_timeout_seconds": ncu_timeout_seconds,
             }
@@ -766,6 +770,7 @@ if TYPER_AVAILABLE:
             allow_virtualization=allow_virtualization,
             reproducible=reproducible,
             cold_start=cold_start,
+            force_synchronize=force_sync,
             iterations=iterations,
             warmup=warmup,
             force_pipeline=force_pipeline,

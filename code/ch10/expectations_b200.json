@@ -1544,6 +1544,60 @@
       },
       "type": "python"
     },
+    "tcgen05_warp_specialization_cutlass": {
+      "example": "tcgen05_warp_specialization_cutlass",
+      "metadata": {
+        "best_memory_savings_pct": 0.0,
+        "best_memory_savings_ratio": 1.0,
+        "best_optimization": "optimized_tcgen05_warp_specialization_cutlass",
+        "best_optimization_file": "optimized_tcgen05_warp_specialization_cutlass.py",
+        "best_optimization_memory_mb": 3347.275390625,
+        "best_optimization_speedup": 1.0169618650129146,
+        "best_optimization_technique": "optimized_tcgen05_warp_specialization_cutlass",
+        "best_optimization_time_ms": 1.7471452606351752,
+        "optimization_goal": "speed"
+      },
+      "metrics": {
+        "baseline_memory_mb": 3347.275390625,
+        "baseline_p75_ms": 1.6611839532852173,
+        "baseline_throughput.bytes_per_s": 377699321924.3577,
+        "baseline_throughput.custom_unit_name": null,
+        "baseline_throughput.custom_unit_per_s": null,
+        "baseline_throughput.goodput": null,
+        "baseline_throughput.latency_ms": 1.7767801027040224,
+        "baseline_throughput.requests_per_s": 562.8158478801813,
+        "baseline_throughput.samples_per_s": null,
+        "baseline_throughput.schemaVersion": "1.0",
+        "baseline_throughput.tokens_per_s": null,
+        "baseline_time_ms": 1.7767801027040224,
+        "best_memory_savings_pct": 0.0,
+        "best_memory_savings_ratio": 1.0,
+        "best_optimized_memory_mb": 3347.275390625,
+        "best_optimized_p75_ms": 1.6172159910202026,
+        "best_optimized_speedup": 1.0169618650129146,
+        "best_optimized_throughput.bytes_per_s": 384105806838.30804,
+        "best_optimized_throughput.custom_unit_name": null,
+        "best_optimized_throughput.custom_unit_per_s": null,
+        "best_optimized_throughput.goodput": null,
+        "best_optimized_throughput.latency_ms": 1.7471452606351752,
+        "best_optimized_throughput.requests_per_s": 572.3622543190539,
+        "best_optimized_throughput.samples_per_s": null,
+        "best_optimized_throughput.schemaVersion": "1.0",
+        "best_optimized_throughput.tokens_per_s": null,
+        "best_optimized_time_ms": 1.7471452606351752,
+        "best_speedup": 1.0169618650129146,
+        "is_regression": false
+      },
+      "provenance": {
+        "git_commit": "a9c47a06b67b0e6f220ea2432b5770f48da49fd9",
+        "hardware_key": "b200",
+        "iterations": 20,
+        "profile_name": "minimal",
+        "timestamp": "2026-02-04T03:52:18.394396",
+        "warmup_iterations": 5
+      },
+      "type": "python"
+    },
     "tma_2d_pipeline": {
       "example": "tma_2d_pipeline",
       "metadata": {
@@ -1598,16 +1652,16 @@
       },
       "type": "python"
     },
-    "tmem_cutlass": {
-      "example": "tmem_cutlass",
+    "tmem_tcgen05": {
+      "example": "tmem_tcgen05",
       "metadata": {
         "best_memory_savings_pct": 43.68134797909779,
         "best_memory_savings_ratio": 1.7756106797954934,
-        "best_optimization": "optimized_tmem_cutlass",
-        "best_optimization_file": "optimized_tmem_cutlass.py",
+        "best_optimization": "optimized_tmem_tcgen05",
+        "best_optimization_file": "optimized_tmem_tcgen05.py",
         "best_optimization_memory_mb": 660.125,
         "best_optimization_speedup": 4.420335545418554,
-        "best_optimization_technique": "optimized_tmem_cutlass",
+        "best_optimization_technique": "optimized_tmem_tcgen05",
         "best_optimization_time_ms": 1.0007533884566764,
         "optimization_goal": "speed"
       },

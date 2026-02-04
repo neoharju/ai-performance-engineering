@@ -24,7 +24,7 @@ class BaselineCopyUncoalescedBenchmark(CudaBinaryBenchmark):
         super().__init__(
             chapter_dir=chapter_dir,
             binary_name="baseline_copy_uncoalesced",
-            friendly_name="Ch7 Uncoalesced Copy",
+            friendly_name="Baseline Copy Uncoalesced",
             iterations=3,
             warmup=5,
             timeout_seconds=90,

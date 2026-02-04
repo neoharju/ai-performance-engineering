@@ -53,7 +53,6 @@ class BaselineGuidedDecodingBenchmark(VerificationPayloadMixin, BaseBenchmark):
         # Keep token IDs on CPU to force a CPU-side mask build + upload in the baseline.
         self.allowed_token_ids = torch.randperm(self.vocab_size, device="cpu", dtype=torch.int64)[: self.allowed_count]
         self.output = None
-        self._synchronize()
 
     def benchmark_fn(self) -> None:
         if self.logits is None or self.allowed_token_ids is None:
@@ -72,7 +71,6 @@ class BaselineGuidedDecodingBenchmark(VerificationPayloadMixin, BaseBenchmark):
                 slice_ids = allowed[: self.output_slice].to(self.device)
                 self.output = masked.index_select(1, slice_ids)
 
-        self._synchronize()
         if self.output is None:
             raise RuntimeError("benchmark_fn() must produce output for verification")
 

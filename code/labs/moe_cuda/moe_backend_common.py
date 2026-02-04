@@ -1,0 +1,86 @@
+"""Shared helpers for MoE backend selection benchmark (FlashInfer-style)."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Callable, Dict, Tuple
+import time
+
+import torch
+
+
+@dataclass(frozen=True)
+class MoEBackendConfig:
+    batch_size: int = 8
+    seq_len: int = 32
+    hidden_size: int = 128
+    intermediate_size: int = 256
+    num_experts: int = 8
+    top_k: int = 2
+    dtype: torch.dtype = torch.bfloat16
+
+    @property
+    def tokens(self) -> int:
+        return self.batch_size * self.seq_len
+
+    @property
+    def tokens_per_iter(self) -> int:
+        return self.tokens
+
+
+def _topk_gating(x: torch.Tensor, gate_weight: torch.Tensor, top_k: int) -> Tuple[torch.Tensor, torch.Tensor]:
+    logits = x @ gate_weight
+    vals, idx = torch.topk(logits, k=top_k, dim=-1)
+    weights = torch.softmax(vals, dim=-1)
+    return idx, weights
+
+
+class MoEBackendWorkload:
+    def __init__(self, cfg: MoEBackendConfig, device: torch.device) -> None:
+        self.cfg = cfg
+        self.device = device
+        self.x = torch.randn(cfg.tokens, cfg.hidden_size, device=device, dtype=cfg.dtype)
+        self.gate_weight = torch.randn(cfg.hidden_size, cfg.num_experts, device=device, dtype=cfg.dtype)
+        self.w1 = torch.randn(cfg.num_experts, cfg.hidden_size, cfg.intermediate_size, device=device, dtype=cfg.dtype)
+        self.w2 = torch.randn(cfg.num_experts, cfg.intermediate_size, cfg.hidden_size, device=device, dtype=cfg.dtype)
+
+    def forward_naive(self, x: torch.Tensor) -> torch.Tensor:
+        idx, weights = _topk_gating(x, self.gate_weight, self.cfg.top_k)
+        out = torch.zeros_like(x)
+        for expert in range(self.cfg.num_experts):
+            mask = idx == expert
+            if not torch.any(mask):
+                continue
+            token_ids, slot_ids = mask.nonzero(as_tuple=True)
+            x_e = x[token_ids]
+            h = x_e @ self.w1[expert]
+            h = torch.relu(h)
+            y = h @ self.w2[expert]
+            out[token_ids] += y * weights[token_ids, slot_ids].unsqueeze(-1)
+        return out
+
+    def forward_vectorized(self, x: torch.Tensor) -> torch.Tensor:
+        idx, weights = _topk_gating(x, self.gate_weight, self.cfg.top_k)
+        w1_sel = self.w1[idx]
+        w2_sel = self.w2[idx]
+        x_exp = x.unsqueeze(1).expand(-1, self.cfg.top_k, -1)
+        h = torch.einsum("tki,tkij->tkj", x_exp, w1_sel)
+        h = torch.relu(h)
+        y = torch.einsum("tkj,tkjh->tkh", h, w2_sel)
+        return (y * weights.unsqueeze(-1)).sum(dim=1)
+
+
+@torch.no_grad()
+def select_best_backend(
+    candidates: Dict[str, Callable[[torch.Tensor], torch.Tensor]],
+    x: torch.Tensor,
+) -> Tuple[str, Callable[[torch.Tensor], torch.Tensor]]:
+    timings: Dict[str, float] = {}
+    for name, fn in candidates.items():
+        torch.cuda.synchronize()
+        start = time.perf_counter()
+        _ = fn(x)
+        torch.cuda.synchronize()
+        timings[name] = time.perf_counter() - start
+    best = min(timings, key=timings.get)
+    return best, candidates[best]

@@ -38,7 +38,7 @@ class OptimizedDSMEMClusterAtomicBenchmark(CudaBinaryBenchmark):
         super().__init__(
             chapter_dir=chapter_dir,
             binary_name="optimized_dsmem_reduction_cluster_atomic",
-            friendly_name="DSMEM Cluster Reduction (Atomic Aggregation)",
+            friendly_name="Optimized Dsmem Reduction Cluster Atomic",
             iterations=3,
             warmup=5,
             timeout_seconds=120,

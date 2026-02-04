@@ -119,7 +119,6 @@ class BaselineTEFP8Benchmark(VerificationPayloadMixin, BaseBenchmark):
 
         for _ in range(5):
             self._train_step()
-        self._synchronize()
         self.optimizer.zero_grad(set_to_none=True)
         self.register_workload_metadata(
             requests_per_iteration=self._workload.requests_per_iteration,
@@ -141,7 +140,6 @@ class BaselineTEFP8Benchmark(VerificationPayloadMixin, BaseBenchmark):
             # Store output for verification
             with torch.no_grad():
                 self.output = self.model(self.inputs).detach().clone()
-        self._synchronize()
         if self._verify_input is None or self.output is None:
             raise RuntimeError("Verification input/output not initialized")
 

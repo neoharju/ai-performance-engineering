@@ -24,7 +24,7 @@ class OptimizedTransposePaddedBenchmark(CudaBinaryBenchmark):
         super().__init__(
             chapter_dir=chapter_dir,
             binary_name="optimized_transpose_padded",
-            friendly_name="Ch7 Optimized Transpose",
+            friendly_name="Optimized Transpose Padded",
             iterations=3,
             warmup=5,
             timeout_seconds=90,

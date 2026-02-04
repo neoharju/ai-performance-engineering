@@ -93,13 +93,11 @@ class BaselineGraphBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self._compute_ops()
         self.data.copy_(initial_state)
 
-        self._synchronize()
     
     def benchmark_fn(self) -> None:
         """Benchmark fresh kernel launches."""
         with self._nvtx_range("fresh_kernel_launches"):
             self._compute_ops()
-        self._synchronize()
     
     def teardown(self) -> None:
         """Clean up."""

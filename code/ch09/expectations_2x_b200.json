@@ -85,16 +85,16 @@
       },
       "type": "cuda"
     },
-    "cutlass_gemm": {
-      "example": "cutlass_gemm",
+    "cublaslt_gemm": {
+      "example": "cublaslt_gemm",
       "metadata": {
         "best_memory_savings_pct": 0.0,
         "best_memory_savings_ratio": 1.0,
-        "best_optimization": "optimized_cutlass_gemm",
-        "best_optimization_file": "optimized_cutlass_gemm.py",
+        "best_optimization": "optimized_cublaslt_gemm",
+        "best_optimization_file": "optimized_cublaslt_gemm.py",
         "best_optimization_memory_mb": 148.125,
         "best_optimization_speedup": 167.05719237435008,
-        "best_optimization_technique": "optimized_cutlass_gemm",
+        "best_optimization_technique": "optimized_cublaslt_gemm",
         "best_optimization_time_ms": 0.0033466,
         "optimization_goal": "speed"
       },
@@ -139,13 +139,13 @@
       },
       "type": "python"
     },
-    "cutlass_gemm_cuda": {
-      "example": "cutlass_gemm",
+    "cublaslt_gemm_cuda": {
+      "example": "cublaslt_gemm_cuda",
       "metadata": {
-        "best_optimization": "optimized_cutlass_gemm",
-        "best_optimization_file": "optimized_cutlass_gemm.cu",
+        "best_optimization": "optimized_cublaslt_gemm",
+        "best_optimization_file": "optimized_cublaslt_gemm.cu",
         "best_optimization_speedup": 157.97388887778158,
-        "best_optimization_technique": "optimized_cutlass_gemm",
+        "best_optimization_technique": "optimized_cublaslt_gemm",
         "best_optimization_time_ms": 0.0033344666666666667,
         "optimization_goal": "speed"
       },
@@ -170,13 +170,13 @@
       },
       "type": "cuda"
     },
-    "cutlass_gemm_fp16_cuda": {
-      "example": "cutlass_gemm_fp16",
+    "cublaslt_gemm_fp16_cuda": {
+      "example": "cublaslt_gemm_fp16_cuda",
       "metadata": {
-        "best_optimization": "optimized_cutlass_gemm_fp16",
-        "best_optimization_file": "optimized_cutlass_gemm_fp16.cu",
+        "best_optimization": "optimized_cublaslt_gemm_fp16",
+        "best_optimization_file": "optimized_cublaslt_gemm_fp16.cu",
         "best_optimization_speedup": 145.35882724022952,
-        "best_optimization_technique": "optimized_cutlass_gemm_fp16",
+        "best_optimization_technique": "optimized_cublaslt_gemm_fp16",
         "best_optimization_time_ms": 0.011096333333333333,
         "optimization_goal": "speed"
       },
@@ -201,13 +201,13 @@
       },
       "type": "cuda"
     },
-    "cutlass_gemm_fp4_cuda": {
-      "example": "cutlass_gemm_fp4",
+    "cublaslt_gemm_fp4_cuda": {
+      "example": "cublaslt_gemm_fp4_cuda",
       "metadata": {
-        "best_optimization": "optimized_cutlass_gemm_fp4",
-        "best_optimization_file": "optimized_cutlass_gemm_fp4.cu",
+        "best_optimization": "optimized_cublaslt_gemm_fp4",
+        "best_optimization_file": "optimized_cublaslt_gemm_fp4.cu",
         "best_optimization_speedup": 528.9741303254817,
-        "best_optimization_technique": "optimized_cutlass_gemm_fp4",
+        "best_optimization_technique": "optimized_cublaslt_gemm_fp4",
         "best_optimization_time_ms": 0.028110133333333332,
         "optimization_goal": "speed"
       },
@@ -263,13 +263,13 @@
       },
       "type": "cuda"
     },
-    "cutlass_gemm_fp8_cuda": {
-      "example": "cutlass_gemm_fp8",
+    "cublaslt_gemm_fp8_cuda": {
+      "example": "cublaslt_gemm_fp8_cuda",
       "metadata": {
-        "best_optimization": "optimized_cutlass_gemm_fp8",
-        "best_optimization_file": "optimized_cutlass_gemm_fp8.cu",
+        "best_optimization": "optimized_cublaslt_gemm_fp8",
+        "best_optimization_file": "optimized_cublaslt_gemm_fp8.cu",
         "best_optimization_speedup": 276.75242197742324,
-        "best_optimization_technique": "optimized_cutlass_gemm_fp8",
+        "best_optimization_technique": "optimized_cublaslt_gemm_fp8",
         "best_optimization_time_ms": 0.046986400000000005,
         "optimization_goal": "speed"
       },

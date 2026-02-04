@@ -21,7 +21,7 @@ class BaselineDynamicParallelismDeviceBenchmark(CudaBinaryBenchmark):
         super().__init__(
             chapter_dir=chapter_dir,
             binary_name="baseline_dynamic_parallelism_device",
-            friendly_name="Dynamic Parallelism (device launches, baseline)",
+            friendly_name="Baseline Dynamic Parallelism Device",
             iterations=3,
             warmup=5,
             timeout_seconds=120,

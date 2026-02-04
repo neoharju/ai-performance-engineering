@@ -25,7 +25,7 @@ class OptimizedClusterGroupNoDSMEMBenchmark(CudaBinaryBenchmark):
         super().__init__(
             chapter_dir=chapter_dir,
             binary_name="optimized_cluster_group_no_dsmem",
-            friendly_name="Optimized Cluster Group (no DSMEM)",
+            friendly_name="Optimized Cluster Group No Dsmem",
             iterations=3,
             warmup=5,
             timeout_seconds=180,

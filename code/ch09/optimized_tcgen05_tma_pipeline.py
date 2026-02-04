@@ -42,7 +42,6 @@ class OptimizedTcgen05TmaPipelineBenchmark(Tcgen05MatmulBenchmarkBase):
         with self._nvtx_range(self.nvtx_label):
             with torch.no_grad():
                 self.output = self.extension.matmul_tcgen05_pipelined(self.matrix_a, self.matrix_b)
-        self._synchronize()
 
 
 def get_benchmark() -> BaseBenchmark:

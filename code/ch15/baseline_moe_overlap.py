@@ -114,7 +114,6 @@ class BaselineMoeOverlapBenchmark(VerificationPayloadMixin, BaseBenchmark):
             with torch.no_grad():
                 _ = self.shared_expert(self.inputs.view(-1, self.hidden_size))
                 _ = self.routed_expert(self.inputs.view(-1, self.hidden_size))
-        self._synchronize()
 
     def benchmark_fn(self) -> None:
         if (
@@ -150,7 +149,6 @@ class BaselineMoeOverlapBenchmark(VerificationPayloadMixin, BaseBenchmark):
                 )
                 combined = self._routed_out_flat + shared_out
                 self.output = combined.view(self.batch, self.seq, self.hidden_size)
-        self._synchronize()
 
     def capture_verification_payload(self) -> None:
         if self.output is None or self._verify_probe is None or self._verify_meta is None:

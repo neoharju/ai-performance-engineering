@@ -56,7 +56,6 @@ class BaselineEndToEndBandwidthBenchmark(VerificationPayloadMixin, BaseBenchmark
         self.output = None
         for inp in self.inputs[:3]:
             _ = self.model(inp)
-        self._synchronize()
     
     def benchmark_fn(self) -> None:
         assert self.model is not None and self.inputs is not None
@@ -70,7 +69,6 @@ class BaselineEndToEndBandwidthBenchmark(VerificationPayloadMixin, BaseBenchmark
                 self.output = torch.stack(self.outputs)
             else:
                 self.output = None
-            self._synchronize()
 
     def capture_verification_payload(self) -> None:
         if self.model is None or self.inputs is None or self.output is None:

@@ -45,7 +45,7 @@ def test_job_status_includes_progress(tmp_path: Path) -> None:
         return {"ok": True}
 
     ticket = store.queue_job(
-        "aisp_run_benchmarks",
+        "run_benchmarks",
         runner,
         run_metadata={
             "run_id": "run_002",

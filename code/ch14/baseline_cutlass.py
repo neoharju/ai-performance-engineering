@@ -61,7 +61,6 @@ class BaselineCutlassBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.A = torch.randn(self.m, self.k, device=self.device, dtype=torch.float16)
         self.B = torch.randn(self.k, self.n, device=self.device, dtype=torch.float16)
         self.C = torch.zeros(self.m, self.n, device=self.device, dtype=torch.float16)
-        torch.cuda.synchronize()
 
     def _naive_matmul(self) -> torch.Tensor:
         """Compute C = A @ B using many small GEMMs (poor locality)."""
@@ -86,7 +85,6 @@ class BaselineCutlassBenchmark(VerificationPayloadMixin, BaseBenchmark):
                 raise RuntimeError("Benchmark not initialized")
             # Baseline: naive blocked matmul built from many GEMM calls.
             _ = self._naive_matmul()
-            self._synchronize()
         if self.A is None or self.B is None or self.C is None:
             raise RuntimeError("Benchmark not initialized")
 

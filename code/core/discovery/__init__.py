@@ -51,6 +51,37 @@ def _has_get_benchmark(file_path: Path) -> bool:
     return False
 
 
+def is_cuda_binary_benchmark_file(file_path: Path) -> bool:
+    """Return True if a Python benchmark subclasses CudaBinaryBenchmark.
+
+    This is used to treat CUDA binaries as Python-wrapped benchmarks when
+    enforcing wrapper-only execution (no direct .cu discovery).
+    """
+    if file_path.suffix != ".py":
+        return False
+
+    import ast
+
+    try:
+        source = file_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise RuntimeError(f"Failed to read benchmark file {file_path}: {exc}") from exc
+    try:
+        tree = ast.parse(source, filename=str(file_path))
+    except SyntaxError as exc:
+        raise SyntaxError(f"Syntax error in benchmark file {file_path}: {exc}") from exc
+
+    for node in tree.body:
+        if not isinstance(node, ast.ClassDef):
+            continue
+        for base in node.bases:
+            if isinstance(base, ast.Name) and base.id == "CudaBinaryBenchmark":
+                return True
+            if isinstance(base, ast.Attribute) and base.attr == "CudaBinaryBenchmark":
+                return True
+    return False
+
+
 def validate_benchmark_file(file_path: Path, warn: bool = True) -> bool:
     """Validate that a benchmark file has get_benchmark().
     

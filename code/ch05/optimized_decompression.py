@@ -44,7 +44,6 @@ class GPUDecompressionBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.counts = counts.to(self.device)
         self.counts_i64 = self.counts.to(torch.int64)
         self.values = values.to(self.device)
-        torch.cuda.synchronize(self.device)
 
     def benchmark_fn(self) -> Optional[dict]:
         if self.counts_i64 is None or self.values is None:
@@ -54,7 +53,6 @@ class GPUDecompressionBenchmark(VerificationPayloadMixin, BaseBenchmark):
         start = self._record_start()
         with nvtx_range("gpu_decompress_rle", enable=enable_nvtx):
             out = torch.repeat_interleave(self.values, self.counts_i64)
-        torch.cuda.synchronize(self.device)
         latency_ms = self._record_stop(start)
         self.output = out.detach().clone()
         self._payload_counts = self.counts

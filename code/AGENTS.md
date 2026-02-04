@@ -49,6 +49,13 @@
 ## Defaults Consistency (CRITICAL)
 - CLI, MCP tools, dashboard, and any other entrypoints must stay in sync on defaults (flags, behaviors, and help text). If a default changes, update all entrypoints together in the same change.
 
+## Interface Parity & Documentation Consistency (CRITICAL)
+- Keep CLI, MCP, dashboard API, and docs in sync. If you add or change a capability, update all surfaces in the same change.
+- The dashboard API should expose **only** what the dashboard UI currently uses; do not expand API scope without explicit request.
+- Prefer a single source of truth for tool metadata (descriptions, args, defaults). Regenerate `docs/mcp_tools.md` via `scripts/generate_mcp_docs.py` and update `docs/api-reference.md` in the same change to avoid drift.
+- Tool descriptions and argument docs must be precise and agent-friendly: include *when to use*, *not for*, units, defaults, enum choices, and short examples to enable accurate tool selection in chat loops.
+- Postmortem (parity drift): CLI/MCP/docs/dashboard evolved independently, defaults diverged, and no enforced single-source catalog or regeneration step existed. Prevention: keep a single catalog, regenerate docs, and run parity tests whenever tool surfaces change.
+
 ## Test Realism (CRITICAL)
 - Tests MUST NOT use `precheck_only`, `dry_run`, `estimate_only`, or any other short-circuit/preview mode.
 - Tests MUST NOT use mocks, stubs, `monkeypatch`, or similar; tests must execute real code paths end-to-end.
@@ -105,7 +112,7 @@
 - Avoid duplicating a chapter pair verbatim in `labs/`; labs should add integration value (multi-optimization, multi-GPU, end-to-end workflow) rather than rehosting identical comparisons.
 
 ### Hardware Diagnostics (microbench)
-- Hardware microbenchmarks (e.g., `aisp_hw_*` tools / `core/diagnostics/microbench.py`) are **diagnostic-only** and intentionally bypass the benchmark harness and its 95 validity protections.
+- Hardware microbenchmarks (e.g., `hw_*` tools / `core/diagnostics/microbench.py`) are **diagnostic-only** and intentionally bypass the benchmark harness and its 95 validity protections.
 - Do not use microbench results to claim baseline-vs-optimized speedups; use harness benchmarks via `aisp bench run --targets ...` for comparable results.
 
 ## When to Move Code into `core/` (Reuse Rule)
@@ -626,7 +633,7 @@ These benchmarks don't produce GPU tensors but MUST still verify their results:
 
 | Category | Solution | Example |
 |----------|----------|---------|
-| **CUDA Binary** | Use `CudaBinaryBenchmark` base class - builds with `-DVERIFY=1` and parses checksum | ch09/cutlass_gemm |
+| **CUDA Binary** | Use `CudaBinaryBenchmark` base class - builds with `-DVERIFY=1` and parses checksum | ch09/cublaslt_gemm |
 | **Simulations** | Convert metrics to tensor (e.g., `torch.tensor([p50, p95, tokens_s])`) | ch15/placement |
 | **CPU-only** | Convert output to tensor (e.g., decompressed bytes → tensor) | ch05/cpu_decompression |
 | **Nested Harness** | Surface output from inner benchmark to outer wrapper | ch18/speculative_decoding |

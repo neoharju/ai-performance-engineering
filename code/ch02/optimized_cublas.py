@@ -56,7 +56,6 @@ class OptimizedCublasBenchmark(VerificationPayloadMixin, BaseBenchmark):
         # Warmup a handful of GEMMs so cuBLAS Lt heuristics settle before measurement.
         for _ in range(10):
             _ = torch.matmul(self.A, self.B)
-        torch.cuda.synchronize(self.device)
 
     def benchmark_fn(self) -> None:
         """cuBLAS TF32 GEMM."""
@@ -66,7 +65,6 @@ class OptimizedCublasBenchmark(VerificationPayloadMixin, BaseBenchmark):
         enable_nvtx = get_nvtx_enabled(config) if config else False
         with nvtx_range("cublas", enable=enable_nvtx):
             self.C = torch.matmul(self.A, self.B)
-        self._synchronize()
 
         if self.C is None:
             raise RuntimeError("benchmark_fn() must produce output for verification")

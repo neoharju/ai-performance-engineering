@@ -2,6 +2,11 @@
 
 A comprehensive lab demonstrating **7 levels** of MoE optimizations with real compound speedups, achieving **~35x** on NVIDIA B200.
 
+## New Benchmark Pair: Pad + Quant & Finalize + Slice
+- `baseline_moe_pad_quant.py`: unfused pad + quant + finalize + slice path
+- `optimized_moe_pad_quant.py`: torch.compile fusion passes (Pad+Quant, Finalize+Slice)
+- `moe_pad_quant_common.py`: shared MoE workload helper
+
 ## Results Summary
 
 ### Final Results: Llama-7B Dimensions (H=4096, I=11008)

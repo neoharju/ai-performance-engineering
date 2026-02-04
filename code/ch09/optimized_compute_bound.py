@@ -54,7 +54,6 @@ class OptimizedComputeBoundBenchmark(VerificationPayloadMixin, BaseBenchmark):
             nn.Linear(self.N * 2, self.N),
         ).to(self.device, dtype=torch.float16).eval()
         self.input = torch.randn(self.N, device=self.device, dtype=torch.float16)
-        self._synchronize()
 
         if not torch.cuda.is_available():
             raise RuntimeError("CUDA required for compute-bound CUDA graph capture")
@@ -64,18 +63,15 @@ class OptimizedComputeBoundBenchmark(VerificationPayloadMixin, BaseBenchmark):
             out = self.input
             for _ in range(2):
                 out = self.model(out)
-        self._synchronize()
 
         # Capture the full repeated chain into a CUDA graph.
         graph = torch.cuda.CUDAGraph()
         static_output: Optional[torch.Tensor] = None
-        torch.cuda.synchronize(self.device)
         with torch.cuda.graph(graph):
             out = self.input
             for _ in range(self.repeats):
                 out = self.model(out)
             static_output = out
-        torch.cuda.synchronize(self.device)
 
         if static_output is None:
             raise RuntimeError("CUDA graph capture failed to produce output")
@@ -89,7 +85,6 @@ class OptimizedComputeBoundBenchmark(VerificationPayloadMixin, BaseBenchmark):
         with self._nvtx_range("optimized_compute_bound"):
             self._graph.replay()
             self.output = self._static_output
-        self._synchronize()
         if self.output is None:
             raise RuntimeError("benchmark_fn() must produce output for verification")
 

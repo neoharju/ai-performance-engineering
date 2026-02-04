@@ -23,19 +23,19 @@ def test_job_store_queue_and_complete():
         return {"ok": True}
 
     ticket = store.queue_job(
-        "aisp_test",
+        "test",
         runner,
         run_metadata={"artifact": Path("artifacts/test.json")},
     )
     assert ticket["status"] == "started"
-    assert ticket["tool"] == "aisp_test"
+    assert ticket["tool"] == "test"
     assert ticket["artifact"] == "artifacts/test.json"
 
     record = _wait_for_job(store, ticket["job_id"])
     assert record is not None
     assert record["status"] == "completed"
     assert record["result"] == {"ok": True}
-    assert record["tool"] == "aisp_test"
+    assert record["tool"] == "test"
 
 
 def test_job_store_list_jobs_filter():

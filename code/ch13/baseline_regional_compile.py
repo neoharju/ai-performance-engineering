@@ -133,7 +133,6 @@ class BaselineFullGraphCompileBenchmark(VerificationPayloadMixin, BaseBenchmark)
         with torch.no_grad():
             for seq in self.sequence_schedule:
                 _ = self.model(self.inputs[seq])
-        self._synchronize()
 
         self.register_workload_metadata(
             requests_per_iteration=self._workload.requests_per_iteration,
@@ -155,7 +154,6 @@ class BaselineFullGraphCompileBenchmark(VerificationPayloadMixin, BaseBenchmark)
         # Baseline: FP32 eager execution (no tensor core acceleration)
         with torch.no_grad(), self._nvtx_range("baseline_fp32_eager"):
             self.output = self.model(x).detach().clone()
-        self._synchronize()
         if self.output is None:
             raise RuntimeError("benchmark_fn() must produce output for verification")
         if self._verify_x is None:

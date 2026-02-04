@@ -13,9 +13,12 @@ import math
 import os
 import re
 import subprocess
+import shutil
 import time
 from collections import Counter
 from datetime import datetime
+from importlib import metadata as importlib_metadata
+from importlib import util as importlib_util
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 
@@ -29,6 +32,27 @@ from core.discovery import get_bench_roots, discover_all_chapters
 
 CODE_ROOT = Path(__file__).resolve().parents[1]
 _HISTORY_CACHE: Dict[str, Any] = {"key": None, "runs": None, "trends": None}
+
+
+def _safe_package_version(name: str) -> Optional[str]:
+    try:
+        return importlib_metadata.version(name)
+    except Exception:
+        return None
+
+
+def _package_root(name: str) -> Optional[Path]:
+    try:
+        spec = importlib_util.find_spec(name)
+    except Exception:
+        return None
+    if spec is None:
+        return None
+    if spec.submodule_search_locations:
+        return Path(list(spec.submodule_search_locations)[0]).resolve()
+    if spec.origin:
+        return Path(spec.origin).resolve().parent
+    return None
 
 
 class PerformanceCoreBase:
@@ -734,17 +758,8 @@ class PerformanceCoreBase:
         except Exception:
             pass
 
-        try:
-            import importlib
-
-            for pkg in ["triton", "transformer_engine", "flash_attn", "xformers"]:
-                try:
-                    module = importlib.import_module(pkg)
-                    info[pkg] = getattr(module, "__version__", None)
-                except Exception:
-                    continue
-        except Exception:
-            pass
+        for pkg in ["triton", "transformer_engine", "flash_attn", "xformers"]:
+            info[pkg] = _safe_package_version(pkg)
 
         try:
             import sys
@@ -790,22 +805,22 @@ class PerformanceCoreBase:
             result["cutlass"]["sm100_headers"] = sm100_header.exists()
 
         # Transformer Engine
-        try:
-            import transformer_engine
-
-            te_path = Path(transformer_engine.__file__).resolve().parent
-            result["transformer_engine"]["version"] = getattr(transformer_engine, "__version__", None)
-            cutlass_link = te_path / "csrc" / "cutlass"
-            if cutlass_link.exists():
-                result["transformer_engine"]["cutlass_symlink"] = cutlass_link.is_symlink()
-                try:
-                    result["transformer_engine"]["cutlass_symlink_target"] = str(cutlass_link.resolve())
-                except Exception:
-                    pass
-                sm100_header_te = cutlass_link / "include" / "cutlass" / "arch" / "sm100_smem_selector.h"
-                result["transformer_engine"]["cutlass_sm100_headers"] = sm100_header_te.exists()
-        except Exception:
+        te_root = _package_root("transformer_engine")
+        te_version = _safe_package_version("transformer_engine")
+        if te_root is None and te_version is None:
             result["warnings"].append("transformer_engine not installed")
+        else:
+            result["transformer_engine"]["version"] = te_version
+            if te_root is not None:
+                cutlass_link = te_root / "csrc" / "cutlass"
+                if cutlass_link.exists():
+                    result["transformer_engine"]["cutlass_symlink"] = cutlass_link.is_symlink()
+                    try:
+                        result["transformer_engine"]["cutlass_symlink_target"] = str(cutlass_link.resolve())
+                    except Exception:
+                        pass
+                    sm100_header_te = cutlass_link / "include" / "cutlass" / "arch" / "sm100_smem_selector.h"
+                    result["transformer_engine"]["cutlass_sm100_headers"] = sm100_header_te.exists()
 
         # NVIDIA Cutlass DSL (optional)
         cutlass_dsl = third_party / "nvidia-cutlass-dsl"
@@ -1040,6 +1055,116 @@ class PerformanceCoreBase:
             "memory_limit_gb": mem_limit_gb,
             "errors": errors,
             "recommendations": recommendations,
+        }
+
+    def get_system_env(self) -> dict:
+        """Return a snapshot of environment variables relevant to performance."""
+        try:
+            from core.env import snapshot_environment, REPORTED_ENV_KEYS
+        except Exception as exc:
+            return {"success": False, "error": f"env snapshot failed: {exc}"}
+
+        env_snapshot = snapshot_environment()
+        return {
+            "success": True,
+            "cwd": os.getcwd(),
+            "reported_keys": list(REPORTED_ENV_KEYS),
+            "environment": env_snapshot,
+        }
+
+    def get_network_status(self) -> dict:
+        """Inspect network interfaces, InfiniBand status, and GPUDirect RDMA hints."""
+        interfaces = []
+        errors: List[str] = []
+
+        try:
+            net_root = Path("/sys/class/net")
+            if net_root.exists():
+                for iface in sorted(net_root.iterdir()):
+                    try:
+                        name = iface.name
+                        operstate = (iface / "operstate").read_text().strip()
+                        mtu = (iface / "mtu").read_text().strip()
+                        mac = (iface / "address").read_text().strip()
+                        speed = None
+                        speed_path = iface / "speed"
+                        if speed_path.exists():
+                            speed_raw = speed_path.read_text().strip()
+                            if speed_raw.isdigit():
+                                speed = int(speed_raw)
+                        interfaces.append(
+                            {
+                                "name": name,
+                                "state": operstate,
+                                "mtu": int(mtu) if mtu.isdigit() else mtu,
+                                "mac": mac,
+                                "speed_mbps": speed,
+                            }
+                        )
+                    except Exception:
+                        continue
+        except Exception as exc:
+            errors.append(f"interfaces: {exc}")
+
+        ib_devices: List[dict] = []
+        ib_raw = None
+        try:
+            ibstat = shutil.which("ibstat")
+            if ibstat:
+                result = subprocess.run([ibstat], capture_output=True, text=True, timeout=5)
+                if result.returncode == 0:
+                    ib_raw = result.stdout.strip()
+                    current = None
+                    for line in ib_raw.splitlines():
+                        line = line.strip()
+                        if line.startswith("CA '"):
+                            name = line.split("CA '", 1)[1].rstrip("'")
+                            current = {"name": name, "state": None, "rate": None}
+                            ib_devices.append(current)
+                        elif current and line.lower().startswith("state:"):
+                            current["state"] = line.split(":", 1)[1].strip()
+                        elif current and line.lower().startswith("rate:"):
+                            current["rate"] = line.split(":", 1)[1].strip()
+        except Exception as exc:
+            errors.append(f"ibstat: {exc}")
+
+        rdma_modules = []
+        try:
+            for module_name in ("nv_peer_mem", "nvidia_peermem"):
+                if Path(f"/sys/module/{module_name}").exists():
+                    rdma_modules.append(module_name)
+            if not rdma_modules:
+                result = subprocess.run(["lsmod"], capture_output=True, text=True, timeout=5)
+                if result.returncode == 0:
+                    for module_name in ("nv_peer_mem", "nvidia_peermem"):
+                        if module_name in result.stdout:
+                            rdma_modules.append(module_name)
+        except Exception as exc:
+            errors.append(f"gpudirect_rdma: {exc}")
+
+        nccl_vars = [
+            "NCCL_IB_DISABLE",
+            "NCCL_NET_GDR_LEVEL",
+            "NCCL_P2P_LEVEL",
+            "NCCL_IB_GID_INDEX",
+            "NCCL_SOCKET_IFNAME",
+        ]
+        nccl_env = {var: os.environ.get(var, "") for var in nccl_vars}
+
+        return {
+            "success": True,
+            "interfaces": interfaces,
+            "infiniband": {
+                "ibstat_available": bool(shutil.which("ibstat")),
+                "devices": ib_devices,
+                "raw": ib_raw,
+            },
+            "gpudirect_rdma": {
+                "modules_loaded": rdma_modules,
+                "enabled": bool(rdma_modules),
+            },
+            "nccl_env": nccl_env,
+            "errors": errors,
         }
 
     def get_cpu_memory_analysis(self) -> dict:
@@ -1307,65 +1432,69 @@ class PerformanceCoreBase:
             return {"success": False, "error": str(exc)}
 
     def get_cloud_cost_estimate(self, params: dict) -> dict:
-        """Estimate cloud GPU costs for running models."""
-        model_params = params.get("params", 7e9)
-        batch_size = params.get("batch_size", 32)
-        tokens_per_request = params.get("tokens", 512)
-        requests_per_day = params.get("requests_per_day", 10000)
-        precision = params.get("precision", "fp16")
-
-        bytes_per_param = {"fp32": 4, "fp16": 2, "bf16": 2, "int8": 1, "int4": 0.5}.get(precision, 2)
-        model_mem_gb = (model_params * bytes_per_param) / (1024 ** 3)
+        """Estimate cloud GPU costs for running workloads."""
+        gpu_type = str(params.get("gpu_type", "h100")).lower()
+        num_gpus = int(params.get("num_gpus", 8))
+        hours_per_day = float(params.get("hours_per_day", 8))
 
         gpu_pricing = [
-            {"name": "NVIDIA T4", "vram": 16, "price": 0.35, "tflops": 65},
-            {"name": "NVIDIA A10G", "vram": 24, "price": 1.00, "tflops": 125},
-            {"name": "NVIDIA L4", "vram": 24, "price": 0.80, "tflops": 121},
-            {"name": "NVIDIA A100 40GB", "vram": 40, "price": 3.50, "tflops": 312},
-            {"name": "NVIDIA A100 80GB", "vram": 80, "price": 5.00, "tflops": 312},
-            {"name": "NVIDIA H100 80GB", "vram": 80, "price": 8.50, "tflops": 990},
-            {"name": "NVIDIA H100 SXM", "vram": 80, "price": 12.00, "tflops": 1980},
+            {"name": "NVIDIA T4", "slug": "t4", "vram": 16, "price": 0.35},
+            {"name": "NVIDIA A10G", "slug": "a10g", "vram": 24, "price": 1.00},
+            {"name": "NVIDIA L4", "slug": "l4", "vram": 24, "price": 0.80},
+            {"name": "NVIDIA A100 40GB", "slug": "a100-40", "vram": 40, "price": 3.50},
+            {"name": "NVIDIA A100 80GB", "slug": "a100-80", "vram": 80, "price": 5.00},
+            {"name": "NVIDIA H100 80GB", "slug": "h100", "vram": 80, "price": 8.50},
+            {"name": "NVIDIA H100 SXM", "slug": "h100-sxm", "vram": 80, "price": 12.00},
         ]
 
-        estimates = []
+        def normalize(value: str) -> str:
+            return value.replace(" ", "").replace("-", "").lower()
+
+        matched_gpu = None
+        gpu_type_norm = normalize(gpu_type)
         for gpu in gpu_pricing:
-            if model_mem_gb > gpu["vram"] * 0.85:
-                num_gpus = int(model_mem_gb / (gpu["vram"] * 0.7)) + 1
-                if num_gpus > 8:
-                    continue
-            else:
-                num_gpus = 1
+            if gpu_type_norm in (normalize(gpu["slug"]), normalize(gpu["name"])):
+                matched_gpu = gpu
+                break
+            if normalize(gpu["name"]) in gpu_type_norm:
+                matched_gpu = gpu
+                break
+        if matched_gpu is None:
+            matched_gpu = gpu_pricing[0]
 
-            base_tokens_per_sec = (gpu["tflops"] / model_params * 1e9) * 50
-            tokens_per_sec = base_tokens_per_sec * batch_size * 0.7
-
-            total_tokens = requests_per_day * tokens_per_request
-            hours_needed = (total_tokens / tokens_per_sec) / 3600 if tokens_per_sec else 0
-
+        def cost_for(gpu: dict) -> dict:
             hourly_cost = gpu["price"] * num_gpus
-            daily_cost = hourly_cost * max(hours_needed, 1)
+            daily_cost = hourly_cost * max(hours_per_day, 0.0)
             monthly_cost = daily_cost * 30
             monthly_24_7 = hourly_cost * 24 * 30
-
-            estimates.append({
+            return {
                 "gpu": gpu["name"],
                 "num_gpus": num_gpus,
                 "vram_total": gpu["vram"] * num_gpus,
                 "hourly_cost": round(hourly_cost, 2),
-                "estimated_tokens_per_sec": round(tokens_per_sec, 0),
-                "hours_for_daily_load": round(hours_needed, 2),
                 "daily_cost": round(daily_cost, 2),
                 "monthly_cost": round(monthly_cost, 2),
                 "monthly_24_7_cost": round(monthly_24_7, 2),
-            })
+            }
+
+        comparison = [cost_for(gpu) for gpu in gpu_pricing]
+        comparison.sort(key=lambda entry: entry["hourly_cost"])
+        recommendation = min(comparison, key=lambda entry: entry["hourly_cost"], default=None)
+        matched = cost_for(matched_gpu)
+
+        warnings = []
+        if matched_gpu["slug"] not in gpu_type_norm:
+            warnings.append(f"Unrecognized gpu_type '{gpu_type}', using {matched_gpu['name']} pricing.")
 
         return {
-            "model_params": self._format_params(int(model_params)),
-            "precision": precision.upper(),
-            "batch_size": batch_size,
-            "tokens_per_request": tokens_per_request,
-            "requests_per_day": requests_per_day,
-            "estimates": estimates,
+            "success": True,
+            "gpu_type": gpu_type,
+            "num_gpus": num_gpus,
+            "hours_per_day": hours_per_day,
+            "selection": matched,
+            "cloud_comparison": comparison,
+            "recommendation": recommendation,
+            "warnings": warnings,
         }
 
     def get_energy_analysis(self) -> dict:
@@ -1437,19 +1566,112 @@ class PerformanceCoreBase:
             "comparison": comparison,
         }
 
-    def get_vllm_config(self, model: str, target: str, compare: bool) -> dict:
-        """Generate vLLM configuration or compare inference engines."""
+    def get_vllm_config(
+        self,
+        model: str,
+        model_params_b: Optional[float] = None,
+        num_gpus: int = 1,
+        gpu_memory_gb: float = 80,
+        target: str = "throughput",
+        max_seq_length: int = 8192,
+        quantization: Optional[str] = None,
+        compare: bool = False,
+    ) -> dict:
+        """Generate vLLM config or compare inference engines (explicit model size required)."""
+        if model_params_b is None:
+            return {
+                "success": False,
+                "error": "model_params_b is required for vLLM config generation; pass --model-params-b/--model-size.",
+            }
         try:
             from core.optimization.parallelism_planner.distributed_training import VLLMConfigGenerator
 
             generator = VLLMConfigGenerator()
             if compare:
-                result = generator.compare_engines(model)
+                result = generator.compare_engines(model, model_params_b, num_gpus)
                 return {"success": True, "engine_comparison": result}
-            result = generator.generate(model, target=target)
-            return {"success": True, "vllm_config": result}
+            config = generator.generate(
+                model=model,
+                model_params_b=model_params_b,
+                num_gpus=num_gpus,
+                gpu_memory_gb=gpu_memory_gb,
+                target=target,
+                max_seq_length=max_seq_length,
+                quantization=quantization,
+            )
+            return {"success": True, "vllm_config": config.to_dict() if hasattr(config, "to_dict") else config}
         except Exception as exc:
             return {"success": False, "error": str(exc)}
+
+    def generate_deploy_config(self, params: dict) -> dict:
+        """Generate inference deployment config using explicit model size."""
+        try:
+            from core.optimization.parallelism_planner.inference_optimization import get_inference_optimization_report
+        except Exception as exc:
+            return {"success": False, "error": f"inference_optimization import failed: {exc}"}
+
+        model = params.get("model")
+        model_params_b = params.get("model_params_b") or params.get("model_size")
+        if model_params_b is None:
+            return {"success": False, "error": "model_params_b/model_size is required for deploy config."}
+        try:
+            model_params_b = float(model_params_b)
+        except (TypeError, ValueError):
+            return {"success": False, "error": "model_params_b must be a number (billions of parameters)."}
+
+        gpu_info = self.get_gpu_info()
+        gpu_memory_gb = params.get("gpu_memory_gb")
+        if gpu_memory_gb is None:
+            total_mb = gpu_info.get("memory_total")
+            gpu_memory_gb = round((float(total_mb) / 1024) if total_mb else 80.0, 1)
+        num_gpus = int(params.get("num_gpus") or params.get("gpus") or 1)
+        goal = params.get("goal") or params.get("target") or "throughput"
+
+        model_config = {
+            "name": model or "model",
+            "parameters_billions": model_params_b,
+            "max_sequence_length": int(params.get("max_seq_length") or params.get("max_sequence_length") or 8192),
+        }
+        hardware_config = {
+            "gpu_arch": gpu_info.get("name", "unknown"),
+            "gpu_memory_gb": float(gpu_memory_gb),
+            "num_gpus": num_gpus,
+        }
+
+        report = get_inference_optimization_report(
+            model_config=model_config,
+            hardware_config=hardware_config,
+            optimization_goal=str(goal),
+        )
+        engine = report.get("engine", {})
+        return {
+            "success": True,
+            "model": model_config,
+            "hardware": hardware_config,
+            "goal": goal,
+            "engine": engine,
+            "launch_command": engine.get("launch_command"),
+            "report": report,
+        }
+
+    def get_inference_estimate(self, params: dict) -> dict:
+        """Estimate inference throughput/latency with explicit model size."""
+        deploy = self.generate_deploy_config(params)
+        if not deploy.get("success"):
+            return deploy
+        engine = deploy.get("engine", {})
+        return {
+            "success": True,
+            "model": deploy.get("model"),
+            "hardware": deploy.get("hardware"),
+            "goal": deploy.get("goal"),
+            "estimate": {
+                "throughput_tps": engine.get("expected_throughput_tps"),
+                "latency_ms": engine.get("expected_latency_ms"),
+                "memory_gb": engine.get("expected_memory_gb"),
+            },
+            "engine": engine.get("engine"),
+        }
 
     def get_optimization_roi(self) -> dict:
         """Compute ROI for optimization techniques based on real benchmark data."""

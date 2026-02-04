@@ -33,7 +33,6 @@ class BaselineAddBenchmark(VerificationPayloadMixin, BaseBenchmark):
         self.A = torch.arange(self.N, dtype=torch.float32, device=self.device)
         self.B = 2 * self.A
         self.C = torch.empty_like(self.A)
-        self._synchronize()
     
     def benchmark_fn(self) -> None:
         """Sequential loop launches N tiny kernels."""
@@ -41,7 +40,6 @@ class BaselineAddBenchmark(VerificationPayloadMixin, BaseBenchmark):
         with self._nvtx_range("baseline_add_sequential"):
             for i in range(self.N):
                 self.C[i] = self.A[i] + self.B[i]
-            self._synchronize()
 
     def capture_verification_payload(self) -> None:
         self._set_verification_payload(

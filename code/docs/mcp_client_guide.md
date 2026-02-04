@@ -54,7 +54,10 @@ client.start()
 tools = client.list_tools()
 
 # Call a tool
-result = client.call_tool("aisp_status", {})
+result = client.call_tool("status", {})
+
+# Optimize shortcut (path or target)
+opt_result = client.call_tool("optimize", {"target": "ch10:atomic_reduction"})
 
 # Stop client
 client.stop()
@@ -65,7 +68,7 @@ client.stop()
 ```python
 # Automatic cleanup
 with create_client() as client:
-    result = client.call_tool("aisp_gpu_info", {})
+    result = client.call_tool("gpu_info", {})
     # Client automatically stops on exit
 ```
 
@@ -274,7 +277,6 @@ The client handles all the edge cases that Cursor's built-in client might encoun
 from mcp.mcp_client import create_client
 
 with create_client(debug=True) as client:
-    result = client.call_tool("aisp_status", {})
+    result = client.call_tool("status", {})
     print(result)
 ```
-

@@ -85,7 +85,6 @@ class BaselineMoERoutingSimpleBenchmark(VerificationPayloadMixin, BaseBenchmark)
         for _ in range(3):
             with torch.no_grad():
                 _ = self.expert(self.inputs.view(-1, self.hidden_size))
-        self._synchronize()
 
     def benchmark_fn(self) -> None:
         if self.expert is None or self.inputs is None or self.expert_ids is None or self._out_flat is None:
@@ -104,7 +103,6 @@ class BaselineMoERoutingSimpleBenchmark(VerificationPayloadMixin, BaseBenchmark)
                     out=self._out_flat,
                 )
                 self.output = self._out_flat.view(self.batch, self.seq, self.hidden_size)
-        self._synchronize()
 
     def capture_verification_payload(self) -> None:
         if self.output is None or self._verify_probe is None or self._verify_meta is None:

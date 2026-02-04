@@ -77,7 +77,6 @@ class OptimizedAllTechniquesBenchmark(VerificationPayloadMixin, BaseBenchmark):
             with torch.no_grad():
                 x = self.x.to(dtype=next(self.model.parameters()).dtype)
                 _ = self.model(x)
-        self._synchronize()
 
     def benchmark_fn(self) -> None:
         assert self.model is not None and self.x is not None
@@ -87,7 +86,6 @@ class OptimizedAllTechniquesBenchmark(VerificationPayloadMixin, BaseBenchmark):
                 x = self.x.to(dtype=next(self.model.parameters()).dtype)
                 self.output = self.model(x)
                 _ = self.output.sum()  # Force materialization
-            self._synchronize()
 
     def capture_verification_payload(self) -> None:
         assert self.model is not None and self.x is not None and self.output is not None

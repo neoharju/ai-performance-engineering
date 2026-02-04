@@ -501,7 +501,7 @@ export function AIAssistantTab() {
                         )}
                       >
                         <div className="text-sm font-mono text-accent-primary truncate">
-                          {tool.name.replace('aisp_', '')}
+                          {tool.name}
                         </div>
                         <div className="text-xs text-white/50 truncate mt-0.5">
                           {tool.description.slice(0, 80)}...
@@ -667,10 +667,10 @@ export function AIAssistantTab() {
         <div className="card-body">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             {[
-              { name: 'aisp_gpu_info', label: 'GPU Info', icon: Cpu, color: 'accent-success' },
-              { name: 'aisp_recommend', label: 'Get Recommendations', icon: Sparkles, color: 'accent-primary' },
-              { name: 'aisp_analyze_bottlenecks', label: 'Find Bottlenecks', icon: Activity, color: 'accent-warning' },
-              { name: 'aisp_system_context', label: 'System Context', icon: Server, color: 'accent-info' },
+              { name: 'gpu_info', label: 'GPU Info', icon: Cpu, color: 'accent-success' },
+              { name: 'recommend', label: 'Get Recommendations', icon: Sparkles, color: 'accent-primary' },
+              { name: 'analyze_bottlenecks', label: 'Find Bottlenecks', icon: Activity, color: 'accent-warning' },
+              { name: 'system_context', label: 'System Context', icon: Server, color: 'accent-info' },
             ].map((action) => {
               const tool = tools.find(t => t.name === action.name);
               const Icon = action.icon;

@@ -303,7 +303,6 @@ class BaselineFP4WeightQuantizationBenchmark(VerificationPayloadMixin, BaseBench
             for _ in range(5):
                 _ = self.model(self.input)
         
-        torch.cuda.synchronize(self.device)
     
     def benchmark_fn(self) -> None:
         """Benchmark naive MLP."""
@@ -311,7 +310,6 @@ class BaselineFP4WeightQuantizationBenchmark(VerificationPayloadMixin, BaseBench
             with torch.no_grad():
                 output = self.model(self.input)
                 self.output = output.detach()
-        self._synchronize()
         if self.output is None or self.input is None or self.model is None:
             raise RuntimeError("benchmark_fn() must produce output")
         dtype = self.output.dtype

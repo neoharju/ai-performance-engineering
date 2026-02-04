@@ -286,13 +286,11 @@ class StaticFP8Benchmark(VerificationPayloadMixin, BaseBenchmark):
         for _ in range(3):
             with torch.no_grad():
                 _ = self.static_linear(self.x)
-        torch.cuda.synchronize(self.device)
 
     def benchmark_fn(self) -> None:
         """Benchmark: Static FP8 forward pass."""
         with torch.no_grad():
             self.output = self.static_linear(self.x)
-            self._synchronize()
         if self._verify_input is None or self.output is None:
             raise RuntimeError("Verification input/output not initialized")
 

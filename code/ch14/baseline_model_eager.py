@@ -94,7 +94,6 @@ class BaselineModelEagerBenchmark(VerificationPayloadMixin, BaseBenchmark):
         for _ in range(10):
             with torch.no_grad():
                 _ = self.model(self.input_ids)
-        torch.cuda.synchronize(self.device)
     
     def benchmark_fn(self) -> None:
         """Function to benchmark."""
@@ -108,7 +107,6 @@ class BaselineModelEagerBenchmark(VerificationPayloadMixin, BaseBenchmark):
         with nvtx_range("model_eager", enable=enable_nvtx):
             with torch.no_grad():
                 self.output = self.model(self.input_ids)
-        self._synchronize()
         if self.output is None or self.input_ids is None:
             raise RuntimeError("benchmark_fn() must produce output")
 

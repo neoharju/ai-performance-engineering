@@ -201,14 +201,12 @@ class BaselineFlashAttention3Benchmark(VerificationPayloadMixin, BaseBenchmark):
             for _ in range(3):
                 _ = self.model(self.input, is_causal=self.use_causal)
         
-        torch.cuda.synchronize(self.device)
     
     def benchmark_fn(self) -> None:
         """Benchmark baseline attention."""
         with self._nvtx_range("baseline_fa3_attention"):
             with torch.no_grad():
                 self.output = self.model(self.input, is_causal=self.use_causal).detach()
-        self._synchronize()
         if self._verify_input is None:
             raise RuntimeError("Verification input not initialized")
         dtype = self._verify_input.dtype

@@ -28,7 +28,7 @@ class OptimizedCutlassGemmBenchmark(CudaBinaryBenchmark):
         super().__init__(
             chapter_dir=chapter_dir,
             binary_name="optimized_cutlass_gemm",
-            friendly_name="Optimized CUTLASS GEMM",
+            friendly_name="Optimized Cutlass Gemm",
             iterations=3,
             warmup=5,
             timeout_seconds=120,

@@ -102,7 +102,6 @@ class BaselineMXFP8MoEBenchmark(VerificationPayloadMixin, BaseBenchmark):
         )
         tokens_per_iteration = float(self.num_tokens)
         self.register_workload_metadata(tokens_per_iteration=tokens_per_iteration)
-        torch.cuda.synchronize(self.device)
 
     def _run_naive(self) -> torch.Tensor:
         assert (
@@ -127,7 +126,6 @@ class BaselineMXFP8MoEBenchmark(VerificationPayloadMixin, BaseBenchmark):
         enable_nvtx = get_nvtx_enabled(self.get_config())
         with nvtx_range("mxfp8_moe_baseline", enable=enable_nvtx):
             self.output = self._run_naive()
-        self._synchronize()
         if self.output is None or self.inputs is None or self.weights is None:
             raise RuntimeError("benchmark_fn() must produce output")
 

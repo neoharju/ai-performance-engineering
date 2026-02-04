@@ -23,7 +23,7 @@ class BaselineMicroTilingMatmulBenchmark(CudaBinaryBenchmark):
         super().__init__(
             chapter_dir=chapter_dir,
             binary_name="baseline_micro_tiling_matmul",
-            friendly_name="Baseline Micro-tiling Matmul",
+            friendly_name="Baseline Micro Tiling Matmul",
             iterations=3,
             warmup=5,
             timeout_seconds=120,

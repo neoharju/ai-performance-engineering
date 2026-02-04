@@ -161,7 +161,6 @@ class OptimizedRegionalCompileBenchmark(VerificationPayloadMixin, BaseBenchmark)
             for _ in range(5):  # Multiple rounds to warm up for all sequence lengths
                 for seq in self.sequence_schedule:
                     _ = self.model(self.inputs[seq])
-        self._synchronize()
 
         self.register_workload_metadata(
             requests_per_iteration=self._workload.requests_per_iteration,
@@ -183,7 +182,6 @@ class OptimizedRegionalCompileBenchmark(VerificationPayloadMixin, BaseBenchmark)
 
         with torch.no_grad(), self._nvtx_range("optimized_regional_compile"):
             self.output = self.model(x).detach().float().clone()
-        self._synchronize()
         if self.output is None:
             raise RuntimeError("benchmark_fn() must produce output for verification")
         if self._verify_x is None:

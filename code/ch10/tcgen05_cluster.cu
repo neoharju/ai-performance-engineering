@@ -55,11 +55,11 @@ using MmaTag =
                          UMMA::Major::K, UMMA::Major::K>;
 
 template <class SharedStorageT,
-          class ATensor, class BTensor, class CTensor, class DTensor,
+          class ATensor, class BTensor, class DTensor,
           class MmaTiler_MNK, class TiledMMA,
           class TmaAtomA, class TmaAtomB>
 __global__ void __cluster_dims__(2, 1, 1) __launch_bounds__(128, 1)
-gemm_cluster(ATensor mA, BTensor mB, CTensor mC, DTensor mD,
+gemm_cluster(ATensor mA, BTensor mB, DTensor mD,
              MmaTiler_MNK mma_tiler, TiledMMA tiled_mma,
              int grid_m, int grid_n,
              CUTE_GRID_CONSTANT TmaAtomA const tma_atom_A,
@@ -80,7 +80,6 @@ gemm_cluster(ATensor mA, BTensor mB, CTensor mC, DTensor mD,
 
   Tensor gA = local_tile(mA, mma_tiler, mma_coord, Step<_1, X, _1>{});
   Tensor gB = local_tile(mB, mma_tiler, mma_coord, Step<X, _1, _1>{});
-  Tensor gC = local_tile(mC, mma_tiler, mma_coord, Step<_1, _1, X>{});
   Tensor gD = local_tile(mD, mma_tiler, mma_coord, Step<_1, _1, X>{});
 
   extern __shared__ char shared_memory[];
@@ -89,7 +88,6 @@ gemm_cluster(ATensor mA, BTensor mB, CTensor mC, DTensor mD,
   auto cta_mma = tiled_mma.get_slice(Int<0>{});
   Tensor tCgA = cta_mma.partition_A(gA);
   Tensor tCgB = cta_mma.partition_B(gB);
-  Tensor tCgC = cta_mma.partition_C(gC);
   Tensor tCgD = cta_mma.partition_C(gD);
 
   cute::TMEM::Allocator1Sm tmem_allocator{};
@@ -101,7 +99,7 @@ gemm_cluster(ATensor mA, BTensor mB, CTensor mC, DTensor mD,
   __syncthreads();
   uint32_t tmem_base = storage.tmem_base_ptr;
 
-  Tensor tCtAcc = cta_mma.make_fragment_C(tCgC);
+  Tensor tCtAcc = cta_mma.make_fragment_C(tCgD);
   tCtAcc.data() = tmem_base;
 
   // TMA setup
@@ -239,17 +237,11 @@ gemm_cluster(ATensor mA, BTensor mB, CTensor mC, DTensor mD,
   auto tiled_t2r_copy = make_tmem_copy(SM100_TMEM_LOAD_32dp32b1x{}, tCtAcc);
   auto thr_t2r_copy = tiled_t2r_copy.get_slice(threadIdx.x);
 
-  Tensor tDgC = thr_t2r_copy.partition_D(tCgC);
-  Tensor tDrC = make_fragment_like(tDgC);
-  copy(tDgC, tDrC);
-
   Tensor tDtAcc = thr_t2r_copy.partition_S(tCtAcc);
   Tensor tDgD = thr_t2r_copy.partition_D(tCgD);
   Tensor tDrAcc = make_tensor<Accumulator>(shape(tDgD));
   copy(tiled_t2r_copy, tDtAcc, tDrAcc);
-
-  axpby(1.0f, tDrAcc, 0.0f, tDrC);
-  copy(tDrC, tDgD);
+  copy(tDrAcc, tDgD);
 
   __syncthreads();
   if (elect_one_warp) {
@@ -274,8 +266,7 @@ torch::Tensor run_cluster_matmul(torch::Tensor a, torch::Tensor b) {
               "Size must be divisible by tcgen05 tile");
 
   auto options = a.options().dtype(torch::kFloat32);
-  auto c_buffer = torch::zeros({m, n}, options);
-  auto d_buffer = torch::empty_like(c_buffer);
+  auto d_buffer = torch::empty({m, n}, options);
 
   auto tiled_mma = make_tiled_mma(MmaTag{});
   auto bM = tile_size<0>(tiled_mma);
@@ -295,8 +286,6 @@ torch::Tensor run_cluster_matmul(torch::Tensor a, torch::Tensor b) {
       make_layout(make_shape(m, k), make_stride(k, Int<1>{})));
   Tensor mB = make_tensor(make_gmem_ptr(reinterpret_cast<TypeB const*>(b_contig.data_ptr<at::Half>())),
       make_layout(make_shape(n, k), make_stride(k, Int<1>{})));
-  Tensor mC = make_tensor(make_gmem_ptr(c_buffer.data_ptr<TypeC>()),
-      make_layout(make_shape(m, n), make_stride(n, Int<1>{})));
   Tensor mD = make_tensor(make_gmem_ptr(d_buffer.data_ptr<TypeD>()),
       make_layout(make_shape(m, n), make_stride(n, Int<1>{})));
 
@@ -331,14 +320,14 @@ torch::Tensor run_cluster_matmul(torch::Tensor a, torch::Tensor b) {
   launch_config.attrs = attrs;
 
   auto* kernel_ptr = &gemm_cluster<
-      SharedStorageT, decltype(mA), decltype(mB), decltype(mC), decltype(mD),
+      SharedStorageT, decltype(mA), decltype(mB), decltype(mD),
       decltype(mma_tiler), decltype(tiled_mma), decltype(tma_atom_A), decltype(tma_atom_B)>;
 
   AT_CUDA_CHECK(cudaFuncSetAttribute(kernel_ptr, cudaFuncAttributeMaxDynamicSharedMemorySize, smem_bytes));
   AT_CUDA_CHECK(cudaFuncSetAttribute(kernel_ptr, cudaFuncAttributeNonPortableClusterSizeAllowed, 1));
 
   void* args[] = {
-    (void*)&mA, (void*)&mB, (void*)&mC, (void*)&mD,
+    (void*)&mA, (void*)&mB, (void*)&mD,
     (void*)&mma_tiler, (void*)&tiled_mma,
     (void*)&grid_m, (void*)&grid_n,
     (void*)&tma_atom_A, (void*)&tma_atom_B

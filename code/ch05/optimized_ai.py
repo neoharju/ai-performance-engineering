@@ -54,7 +54,6 @@ class OptimizedAIBenchmark(VerificationPayloadMixin, BaseBenchmark):
             out = self.static_input
             for block in self.blocks:
                 out = block(out)
-        self._synchronize()
 
     def benchmark_fn(self) -> None:
         assert self.blocks is not None and self.static_input is not None
@@ -64,7 +63,6 @@ class OptimizedAIBenchmark(VerificationPayloadMixin, BaseBenchmark):
                 out = self.static_input
                 for block in self.blocks:
                     out = block(out)
-            self._synchronize()
         self.output = out.detach()
         if self.output is None:
             raise RuntimeError("benchmark_fn() must produce output")

@@ -18,7 +18,7 @@ class BaselineFlashAttnTmaMicroPipelineBenchmark(CudaBinaryBenchmark):
         super().__init__(
             chapter_dir=chapter_dir,
             binary_name="baseline_flash_attn_tma_micro_pipeline",
-            friendly_name="FlashAttn Micro-Pipeline Baseline (blocking copies)",
+            friendly_name="Baseline Flash Attn Tma Micro Pipeline",
             iterations=1,
             warmup=5,
             timeout_seconds=120,

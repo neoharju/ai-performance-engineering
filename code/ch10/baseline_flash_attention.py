@@ -90,7 +90,6 @@ class BaselineFlashAttentionBenchmark(VerificationPayloadMixin, BaseBenchmark):
         with torch.no_grad():
             for _ in range(3):
                 self._manual_attention(self.input, is_causal=self.use_causal)
-        torch.cuda.synchronize(self.device)
     
     def _manual_attention(self, x: torch.Tensor, *, is_causal: bool) -> torch.Tensor:
         """Manual attention that materializes full attention matrix."""
@@ -127,7 +126,6 @@ class BaselineFlashAttentionBenchmark(VerificationPayloadMixin, BaseBenchmark):
         with self._nvtx_range("baseline_flash_attention"):
             with torch.no_grad():
                 self.output = self._manual_attention(self.input, is_causal=self.use_causal)
-            self._synchronize()
         if self.output is None or self.input is None:
             raise RuntimeError("benchmark_fn() must produce output for verification")
 

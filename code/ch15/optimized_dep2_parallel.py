@@ -1,0 +1,86 @@
+"""Optimized DEP2 analogue: vectorized DP + batched expert execution."""
+
+from __future__ import annotations
+
+from typing import Optional, Callable
+
+import torch
+
+from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata
+from ch15.verification_payload_mixin import VerificationPayloadMixin
+from ch15.dep2_parallel_common import Dep2Config, Dep2Workload
+
+
+class OptimizedDep2ParallelBenchmark(VerificationPayloadMixin, BaseBenchmark):
+    """Optimized: single batched pass over DP replicas + vectorized MoE."""
+
+    def __init__(self, cfg: Optional[Dep2Config] = None) -> None:
+        super().__init__()
+        self.cfg = cfg or Dep2Config()
+        self.workload: Optional[Dep2Workload] = None
+        self.output: Optional[torch.Tensor] = None
+        self._compiled_fn: Optional[Callable[[], torch.Tensor]] = None
+        self._workload = WorkloadMetadata(
+            requests_per_iteration=float(self.cfg.batch_size),
+            tokens_per_iteration=float(self.cfg.tokens_per_iter),
+        )
+        self.register_workload_metadata(
+            requests_per_iteration=float(self.cfg.batch_size),
+            tokens_per_iteration=float(self.cfg.tokens_per_iter),
+        )
+
+    def setup(self) -> None:
+        if not torch.cuda.is_available():
+            raise RuntimeError("SKIPPED: CUDA required for DEP2 parallelism")
+        torch.manual_seed(42)
+        torch.cuda.manual_seed_all(42)
+        self.workload = Dep2Workload(self.cfg, self.device)
+
+        def _run() -> torch.Tensor:
+            if self.workload is None:
+                raise RuntimeError("Workload not initialized")
+            return self.workload.forward_vectorized()
+
+        try:
+            self._compiled_fn = torch.compile(_run, mode="max-autotune")
+        except Exception:
+            self._compiled_fn = _run
+
+        with torch.inference_mode():
+            _ = self._compiled_fn()
+        torch.cuda.synchronize(self.device)
+
+    def benchmark_fn(self) -> None:
+        if self._compiled_fn is None:
+            raise RuntimeError("Benchmark not initialized")
+        with torch.inference_mode():
+            self.output = self._compiled_fn()
+        if self.output is None:
+            raise RuntimeError("benchmark_fn() did not produce output")
+
+    def capture_verification_payload(self) -> None:
+        if self.workload is None or self.output is None:
+            raise RuntimeError("benchmark_fn() must run before capture_verification_payload()")
+        self._set_verification_payload(
+            inputs={"x": self.workload.x.detach()},
+            output=self.output.detach(),
+            batch_size=self.cfg.batch_size,
+            parameter_count=0,
+            precision_flags={
+                "fp16": False,
+                "bf16": self.cfg.dtype == torch.bfloat16,
+                "fp8": False,
+                "tf32": torch.backends.cuda.matmul.allow_tf32,
+            },
+            output_tolerance=(5e-2, 5e-1),
+        )
+
+    def get_workload_metadata(self) -> Optional[WorkloadMetadata]:
+        return self._workload
+
+    def get_config(self) -> BenchmarkConfig:
+        return BenchmarkConfig(iterations=5, warmup=5)
+
+
+def get_benchmark() -> BaseBenchmark:
+    return OptimizedDep2ParallelBenchmark()

@@ -388,7 +388,6 @@ class OptimizedFP4WeightQuantizationBenchmark(VerificationPayloadMixin, BaseBenc
             for _ in range(10):
                 _ = self.model(self.input)
         
-        torch.cuda.synchronize(self.device)
     
     def benchmark_fn(self) -> None:
         """Benchmark optimized inference."""
@@ -396,7 +395,6 @@ class OptimizedFP4WeightQuantizationBenchmark(VerificationPayloadMixin, BaseBenc
             with torch.no_grad():
                 output = self.model(self.input)
                 self.output = output.detach()
-        self._synchronize()
         if self.output is None or self.input is None or self.model is None:
             raise RuntimeError("benchmark_fn() must produce output")
         dtype = self.output.dtype

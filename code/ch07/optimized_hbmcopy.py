@@ -23,7 +23,7 @@ class OptimizedHBMCopyBenchmark(CudaBinaryBenchmark):
         super().__init__(
             chapter_dir=chapter_dir,
             binary_name="optimized_hbm_copy",
-            friendly_name="Optimized HBM Copy",
+            friendly_name="Optimized Hbm Copy",
             iterations=3,
             warmup=5,
             timeout_seconds=90,

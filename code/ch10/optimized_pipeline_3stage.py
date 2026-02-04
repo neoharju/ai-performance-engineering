@@ -20,7 +20,7 @@ class OptimizedPipeline3StageBenchmark(CudaBinaryBenchmark):
         super().__init__(
             chapter_dir=chapter_dir,
             binary_name="optimized_pipeline_3stage",
-            friendly_name="3-Stage Pipeline GEMV",
+            friendly_name="Optimized Pipeline 3Stage",
             iterations=10,
             warmup=5,  # Minimum warmup for CUDA binary
             timeout_seconds=120,

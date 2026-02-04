@@ -128,7 +128,6 @@ class OptimizedRegionalTritonBenchmark(VerificationPayloadMixin, BaseBenchmark):
             requests_per_iteration=self._workload.requests_per_iteration,
             tokens_per_iteration=self._workload.tokens_per_iteration,
         )
-        self._synchronize()
 
     def _next_sequence_length(self) -> int:
         seq = self.sequence_schedule[self._step % len(self.sequence_schedule)]
@@ -143,7 +142,6 @@ class OptimizedRegionalTritonBenchmark(VerificationPayloadMixin, BaseBenchmark):
         with torch.no_grad(), self._nvtx_range("optimized_regional_triton"):
             self._last_input = x
             self.output = self.model(x)
-        self._synchronize()
         if self.output is None or self._last_input is None:
             raise RuntimeError("benchmark_fn() must produce output")
         self._payload_dtype = self._last_input.dtype

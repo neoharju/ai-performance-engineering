@@ -50,16 +50,13 @@ class OptimizedCudaGraphsBenchmark(VerificationPayloadMixin, BaseBenchmark):
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(42)
         self.data = torch.linspace(0.0, 1.0, self.N, dtype=torch.float32, device=self.device)
-        torch.cuda.synchronize(self.device)
         # Warm up graph replay so capture/instantiation happens before measurement.
         self._extension.graph_replay(self.data, self.iterations)
-        torch.cuda.synchronize()
         torch.manual_seed(42)
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(42)
         self.data = torch.linspace(0.0, 1.0, self.N, dtype=torch.float32, device=self.device)
         self._verify_input = self.data.detach().clone()
-        torch.cuda.synchronize()
     
     def benchmark_fn(self) -> None:
         """Benchmark: CUDA graph replay."""
@@ -72,7 +69,6 @@ class OptimizedCudaGraphsBenchmark(VerificationPayloadMixin, BaseBenchmark):
 
         with nvtx_range("cuda_graphs", enable=enable_nvtx):
             self._extension.graph_replay(self.data, self.iterations)
-            self._synchronize()
         if self.data is None or self._verify_input is None:
             raise RuntimeError("Data or verification input not initialized")
 

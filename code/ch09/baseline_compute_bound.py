@@ -49,7 +49,6 @@ class BaselineComputeBoundBenchmark(VerificationPayloadMixin, BaseBenchmark):
             nn.Linear(self.N * 2, self.N),
         ).to(self.device, dtype=torch.float16).eval()
         self.input = torch.randn(self.N, device=self.device, dtype=torch.float16)
-        torch.cuda.synchronize(self.device)
 
     def benchmark_fn(self) -> None:
         config = self.get_config()
@@ -59,7 +58,6 @@ class BaselineComputeBoundBenchmark(VerificationPayloadMixin, BaseBenchmark):
             for _ in range(self.repeats):
                 out = self.model(out)
             self.output = out
-            torch.cuda.synchronize(self.device)
         if self.output is None:
             raise RuntimeError("benchmark_fn() must produce output for verification")
 

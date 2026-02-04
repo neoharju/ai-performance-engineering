@@ -127,14 +127,12 @@ class BaselineSlidingWindowBenchmark(VerificationPayloadMixin, BaseBenchmark):
         for _ in range(5):
             with torch.no_grad():
                 _ = self.model(self.x)
-        torch.cuda.synchronize(self.device)
 
     def benchmark_fn(self) -> None:
         """Benchmark: Naive attention."""
         with torch.no_grad():
             self.output = self.model(self.x)
             self._last = float(self.output.sum())
-            self._synchronize()
         if self.output is None or self.x is None:
             raise RuntimeError("benchmark_fn() must produce output")
 

@@ -27,7 +27,7 @@ class OptimizedTMABulkTensor2D(CudaBinaryBenchmark):
         super().__init__(
             chapter_dir=chapter_dir,
             binary_name="optimized_tma_bulk_tensor_2d",
-            friendly_name="Optimized 2D tensor copy (TMA bulk)",
+            friendly_name="Optimized Tma Bulk Tensor 2D",
             iterations=3,
             warmup=5,
             timeout_seconds=120,

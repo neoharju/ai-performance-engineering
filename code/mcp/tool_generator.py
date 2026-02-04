@@ -352,7 +352,7 @@ def generate_tools_from_engine() -> List[Tuple[str, str, Dict[str, Any], str, st
             if not callable(method):
                 continue
             
-            tool_name = f"aisp_{domain_name}_{method_name}"
+            tool_name = f"{domain_name}_{method_name}"
             docstring = method.__doc__ or ""
             description = get_tool_description(domain_name, method_name, docstring)
             schema = generate_tool_schema(method)
@@ -365,25 +365,25 @@ def generate_tools_from_engine() -> List[Tuple[str, str, Dict[str, Any], str, st
 # Consolidated tool definitions - manually curated for best UX
 CONSOLIDATED_TOOLS = {
     # === Core Status Tools (4) ===
-    "aisp_status": {
+    "status": {
         "description": "Tags: status, health, overview, quick-check. "
             "Get quick system status: GPU availability, software versions, AI ready state. "
             "⚡ FAST (<1s). USE FIRST for any investigation. "
             "Returns: {gpus_available, cuda_version, pytorch_version, ai_enabled}. "
-            "WORKFLOW: aisp_status → aisp_triage → domain-specific tools.",
+            "WORKFLOW: status → triage → domain-specific tools.",
         "schema": {"type": "object", "properties": {}},
         "handler": "engine.status",
     },
-    "aisp_triage": {
+    "triage": {
         "description": "Tags: triage, diagnosis, full-check, snapshot. "
             "Comprehensive system triage: hardware, software, bottlenecks, recommendations. "
             "⚡ FAST (~3s). USE WHEN: Starting performance investigation. "
             "Returns: {hardware, software, bottlenecks, top_recommendations}. "
-            "WORKFLOW: aisp_status → aisp_triage → aisp_recommend → specific fixes.",
+            "WORKFLOW: status → triage → recommend → specific fixes.",
         "schema": {"type": "object", "properties": {}},
         "handler": "engine.triage",
     },
-    "aisp_job_status": {
+    "job_status": {
         "description": "Tags: async, job, status, poll. "
             "Check status of async profiling job. "
             "⚡ FAST (<1s). USE WHEN: Waiting for profile to complete. "
@@ -395,7 +395,7 @@ CONSOLIDATED_TOOLS = {
         },
         "handler": "job_status",
     },
-    "aisp_suggest_tools": {
+    "suggest_tools": {
         "description": "Tags: help, tools, discover, guide. "
             "Get tool suggestions for your task. "
             "⚡ FAST (<1s). USE WHEN: Not sure which tool to use. "
@@ -408,25 +408,25 @@ CONSOLIDATED_TOOLS = {
     },
     
     # === GPU Domain (4) ===
-    "aisp_gpu_info": {
+    "gpu_info": {
         "description": "Tags: gpu, info, nvidia-smi, memory, temperature. "
             "Get GPU hardware info: name, VRAM, temp, power, utilization. "
             "⚡ FAST (~1s). USE FIRST when investigating GPU issues. "
             "Examples: \"What GPUs do I have?\" | \"Check VRAM usage\". "
-            "NOT FOR: topology (aisp_gpu_topology), power limits (aisp_gpu_power).",
+            "NOT FOR: topology (gpu_topology), power limits (gpu_power).",
         "schema": {"type": "object", "properties": {}},
         "handler": "engine.gpu.info",
     },
-    "aisp_gpu_bandwidth": {
+    "gpu_bandwidth": {
         "description": "Tags: gpu, bandwidth, memory, throughput, benchmark. "
             "Run GPU memory bandwidth test. "
             "🕐 MEDIUM (~10s). USE WHEN: Diagnosing memory-bound kernels. "
             "Examples: \"Test GPU memory speed\" | \"Is bandwidth limiting me?\". "
-            "NOT FOR: quick checks (aisp_gpu_info).",
+            "NOT FOR: quick checks (gpu_info).",
         "schema": {"type": "object", "properties": {}},
         "handler": "engine.gpu.bandwidth",
     },
-    "aisp_gpu_topology": {
+    "gpu_topology": {
         "description": "Tags: gpu, topology, nvlink, pcie, p2p, multi-gpu. "
             "Get multi-GPU topology: NVLink, PCIe, NUMA, P2P matrix. "
             "⚡ FAST (~2s). USE WHEN: Planning multi-GPU training. "
@@ -438,7 +438,7 @@ CONSOLIDATED_TOOLS = {
         },
         "handler": "engine.gpu.topology",
     },
-    "aisp_gpu_power": {
+    "gpu_power": {
         "description": "Tags: gpu, power, thermal, throttling, watts, temperature. "
             "Get GPU power/thermal status: draw, limit, temp, throttling. "
             "⚡ FAST (~1s). USE WHEN: Diagnosing thermal throttling. "
@@ -448,7 +448,7 @@ CONSOLIDATED_TOOLS = {
     },
     
     # === System Domain (3) ===
-    "aisp_system_software": {
+    "system_software": {
         "description": "Tags: system, software, cuda, pytorch, versions. "
             "Get software stack versions: Python, CUDA, PyTorch, etc. "
             "⚡ FAST (~1s). USE WHEN: Checking compatibility. "
@@ -456,14 +456,14 @@ CONSOLIDATED_TOOLS = {
         "schema": {"type": "object", "properties": {}},
         "handler": "engine.system.software",
     },
-    "aisp_system_dependencies": {
+    "system_dependencies": {
         "description": "Tags: system, dependencies, packages, pip. "
             "Check installed packages and versions. "
             "⚡ FAST (~2s). USE WHEN: Checking package versions.",
         "schema": {"type": "object", "properties": {}},
         "handler": "engine.system.dependencies",
     },
-    "aisp_system_context": {
+    "system_context": {
         "description": "Tags: system, context, environment, full-info. "
             "Get comprehensive system context. "
             "Params: level='summary'|'full' for detail control. "
@@ -478,11 +478,11 @@ CONSOLIDATED_TOOLS = {
     },
     
     # === Profile Domain (5) ===
-    "aisp_profile_nsys": {
+    "profile_nsys": {
         "description": "Tags: profile, nsys, nsight-systems, trace, timeline. "
             "Run nsys profiling on a script. Returns async job_id. "
             "🕐 SLOW (varies). USE WHEN: Need CUDA timeline analysis. "
-            "WORKFLOW: aisp_profile_nsys → aisp_job_status → analyze results. "
+            "WORKFLOW: profile_nsys → job_status → analyze results. "
             "Params: script, args, duration, summary=true for quick stats.",
         "schema": {
             "type": "object",
@@ -496,7 +496,7 @@ CONSOLIDATED_TOOLS = {
         },
         "handler": "engine.profile.nsys",
     },
-    "aisp_profile_ncu": {
+    "profile_ncu": {
         "description": "Tags: profile, ncu, nsight-compute, kernel, occupancy. "
             "Run ncu kernel profiling. Returns async job_id. "
             "🕐 SLOW (varies). USE WHEN: Need kernel-level analysis. "
@@ -512,7 +512,7 @@ CONSOLIDATED_TOOLS = {
         },
         "handler": "engine.profile.ncu",
     },
-    "aisp_profile_torch": {
+    "profile_torch": {
         "description": "Tags: profile, pytorch, torch-profiler, tensorboard. "
             "Run PyTorch profiler. Returns async job_id. "
             "🕐 MEDIUM (~30s). USE WHEN: Need PyTorch operator breakdown.",
@@ -528,7 +528,7 @@ CONSOLIDATED_TOOLS = {
         },
         "handler": "engine.profile.torch",
     },
-    "aisp_profile_flame": {
+    "profile_flame": {
         "description": "Tags: profile, flame, flamegraph, visualization. "
             "Generate flame graph from profile data. "
             "⚡ FAST (~2s). USE WHEN: Visualizing hotspots.",
@@ -540,7 +540,7 @@ CONSOLIDATED_TOOLS = {
         },
         "handler": "engine.profile.flame",
     },
-    "aisp_profile_compare": {
+    "profile_compare": {
         "description": "Tags: profile, compare, diff, regression. "
             "Compare two profile runs. "
             "⚡ FAST (~2s). USE WHEN: Finding regressions, before/after analysis. "
@@ -558,7 +558,7 @@ CONSOLIDATED_TOOLS = {
     },
     
     # === Analyze Domain (5) ===
-    "aisp_analyze_bottlenecks": {
+    "analyze_bottlenecks": {
         "description": "Tags: analyze, bottleneck, diagnosis, slow. "
             "Identify performance bottlenecks. "
             "⚡ FAST (~3s). USE FIRST for performance issues. "
@@ -571,14 +571,14 @@ CONSOLIDATED_TOOLS = {
         },
         "handler": "engine.analyze.bottlenecks",
     },
-    "aisp_analyze_pareto": {
+    "analyze_pareto": {
         "description": "Tags: analyze, pareto, priority, impact. "
             "Pareto analysis: highest-impact optimizations. "
             "⚡ FAST (~2s). USE WHEN: Prioritizing optimization work.",
         "schema": {"type": "object", "properties": {}},
         "handler": "engine.analyze.pareto",
     },
-    "aisp_analyze_scaling": {
+    "analyze_scaling": {
         "description": "Tags: analyze, scaling, multi-gpu, efficiency. "
             "Predict multi-GPU scaling efficiency. "
             "⚡ FAST (~2s). USE WHEN: Planning distributed training. "
@@ -592,7 +592,7 @@ CONSOLIDATED_TOOLS = {
         },
         "handler": "engine.analyze.scaling",
     },
-    "aisp_analyze_whatif": {
+    "analyze_whatif": {
         "description": "Tags: analyze, whatif, simulation, prediction. "
             "What-if analysis: predict impact of changes. "
             "⚡ FAST (~1s). USE WHEN: Planning upgrades/changes. "
@@ -605,7 +605,7 @@ CONSOLIDATED_TOOLS = {
         },
         "handler": "engine.analyze.whatif",
     },
-    "aisp_analyze_memory": {
+    "analyze_memory": {
         "description": "Tags: analyze, memory, warp, bank, coalescing. "
             "Memory access pattern analysis: warp divergence, bank conflicts, coalescing. "
             "⚡ FAST (~2s). USE WHEN: Debugging memory-bound kernels. "
@@ -621,10 +621,10 @@ CONSOLIDATED_TOOLS = {
     },
     
     # === Optimize Domain (3) ===
-    "aisp_recommend": {
+    "recommend": {
         "description": "Tags: optimize, recommend, suggestions, improve. "
             "Get optimization recommendations for your workload. "
-            "⚡ FAST (~2s). USE AFTER: aisp_triage or aisp_analyze_bottlenecks. "
+            "⚡ FAST (~2s). USE AFTER: triage or analyze_bottlenecks. "
             "Examples: \"How to speed up training?\" | \"Optimization suggestions\".",
         "schema": {
             "type": "object",
@@ -635,7 +635,7 @@ CONSOLIDATED_TOOLS = {
         },
         "handler": "engine.optimize.recommend",
     },
-    "aisp_optimize_roi": {
+    "optimize_roi": {
         "description": "Tags: optimize, roi, cost-benefit, value. "
             "Calculate ROI of optimization techniques. "
             "⚡ FAST (~1s). USE WHEN: Prioritizing optimization work.",
@@ -647,7 +647,7 @@ CONSOLIDATED_TOOLS = {
         },
         "handler": "engine.optimize.roi",
     },
-    "aisp_optimize_techniques": {
+    "optimize_techniques": {
         "description": "Tags: optimize, techniques, catalog, options. "
             "List available optimization techniques. "
             "⚡ FAST (~1s). USE WHEN: Exploring optimization options.",
@@ -656,7 +656,7 @@ CONSOLIDATED_TOOLS = {
     },
     
     # === Distributed Domain (3) ===
-    "aisp_distributed_plan": {
+    "distributed_plan": {
         "description": "Tags: distributed, plan, strategy, ddp, fsdp, parallelism. "
             "Plan distributed training strategy with cost estimates. "
             "⚡ FAST (~2s). USE WHEN: Planning multi-GPU/node training. "
@@ -671,14 +671,14 @@ CONSOLIDATED_TOOLS = {
         },
         "handler": "engine.distributed.plan",
     },
-    "aisp_distributed_nccl": {
+    "distributed_nccl": {
         "description": "Tags: distributed, nccl, allreduce, communication. "
             "NCCL tuning recommendations. "
             "⚡ FAST (~1s). USE WHEN: Optimizing multi-GPU communication.",
         "schema": {"type": "object", "properties": {}},
         "handler": "engine.distributed.nccl",
     },
-    "aisp_cluster_slurm": {
+    "cluster_slurm": {
         "description": "Tags: cluster, slurm, hpc, job, submit. "
             "Generate SLURM job scripts. "
             "⚡ FAST (~1s). USE WHEN: Submitting to HPC cluster.",
@@ -694,7 +694,7 @@ CONSOLIDATED_TOOLS = {
     },
     
     # === Inference Domain (2) ===
-    "aisp_inference_vllm": {
+    "inference_vllm": {
         "description": "Tags: inference, vllm, serving, throughput. "
             "vLLM configuration recommendations. "
             "⚡ FAST (~2s). USE WHEN: Setting up LLM inference serving.",
@@ -707,7 +707,7 @@ CONSOLIDATED_TOOLS = {
         },
         "handler": "engine.inference.vllm",
     },
-    "aisp_inference_quantization": {
+    "inference_quantization": {
         "description": "Tags: inference, quantization, int8, int4, awq, gptq. "
             "Quantization strategy recommendations. "
             "⚡ FAST (~1s). USE WHEN: Reducing model memory footprint. "
@@ -723,7 +723,7 @@ CONSOLIDATED_TOOLS = {
     },
     
     # === Benchmark Domain (4) ===
-    "aisp_benchmark_run": {
+    "benchmark_run": {
         "description": "Tags: benchmark, run, test, measure. "
             "Run performance benchmarks. Returns async job_id for long tests. "
             "🕐 VARIES. USE WHEN: Measuring baseline performance.",
@@ -736,7 +736,7 @@ CONSOLIDATED_TOOLS = {
         },
         "handler": "engine.benchmark.run",
     },
-    "aisp_benchmark_targets": {
+    "benchmark_targets": {
         "description": "Tags: benchmark, targets, expected, comparison. "
             "Get expected performance targets for hardware. "
             "⚡ FAST (~1s). USE WHEN: Comparing actual vs expected.",
@@ -748,14 +748,14 @@ CONSOLIDATED_TOOLS = {
         },
         "handler": "engine.benchmark.targets",
     },
-    "aisp_benchmark_report": {
+    "benchmark_report": {
         "description": "Tags: benchmark, report, summary, results. "
             "Generate benchmark report. "
             "⚡ FAST (~2s). USE AFTER: Running benchmarks.",
         "schema": {"type": "object", "properties": {}},
         "handler": "engine.benchmark.report",
     },
-    "aisp_benchmark_history": {
+    "benchmark_history": {
         "description": "Tags: benchmark, history, compare, regression. "
             "View and compare benchmark history. "
             "⚡ FAST (~1s). USE WHEN: Tracking performance over time.",
@@ -769,7 +769,7 @@ CONSOLIDATED_TOOLS = {
     },
     
     # === AI Domain (3) ===
-    "aisp_ask": {
+    "ask": {
         "description": "Tags: ai, llm, question, natural-language. "
             "Ask any performance question in natural language. "
             "🕐 MEDIUM (~5s). USE WHEN: Need human-friendly explanation. "
@@ -783,7 +783,7 @@ CONSOLIDATED_TOOLS = {
         },
         "handler": "engine.ai.ask",
     },
-    "aisp_explain": {
+    "explain": {
         "description": "Tags: ai, llm, explain, interpret. "
             "Get AI explanation of performance data. "
             "🕐 MEDIUM (~5s). USE WHEN: Need help interpreting results.",
@@ -796,7 +796,7 @@ CONSOLIDATED_TOOLS = {
         },
         "handler": "engine.ai.explain",
     },
-    "aisp_ai_status": {
+    "ai_status": {
         "description": "Tags: ai, status, llm, available. "
             "Check AI/LLM availability and status. "
             "⚡ FAST (<1s). USE WHEN: Checking if AI features work.",
@@ -805,7 +805,7 @@ CONSOLIDATED_TOOLS = {
     },
     
     # === Export Domain (3) ===
-    "aisp_export_csv": {
+    "export_csv": {
         "description": "Tags: export, csv, data, spreadsheet. "
             "Export data to CSV format. "
             "⚡ FAST (~1s).",
@@ -818,7 +818,7 @@ CONSOLIDATED_TOOLS = {
         },
         "handler": "engine.export.csv",
     },
-    "aisp_export_html": {
+    "export_html": {
         "description": "Tags: export, html, report, web. "
             "Export data to HTML report. "
             "⚡ FAST (~2s).",
@@ -831,7 +831,7 @@ CONSOLIDATED_TOOLS = {
         },
         "handler": "engine.export.html",
     },
-    "aisp_export_pdf": {
+    "export_pdf": {
         "description": "Tags: export, pdf, report, document. "
             "Export data to PDF report. "
             "🕐 MEDIUM (~5s).",
@@ -846,63 +846,63 @@ CONSOLIDATED_TOOLS = {
     },
     
     # === Hardware Microbenchmarks (10) ===
-    "aisp_hw_speed": {
+    "hw_speed": {
         "description": "Tags: hw, benchmark, compute, tflops. "
             "GPU compute speed benchmark. "
             "🕐 MEDIUM (~15s). Returns TFLOPS for various dtypes.",
         "schema": {"type": "object", "properties": {}},
         "handler": "hw.speed",
     },
-    "aisp_hw_roofline": {
+    "hw_roofline": {
         "description": "Tags: hw, roofline, compute-bound, memory-bound. "
             "Generate roofline model for GPU. "
             "🕐 MEDIUM (~20s). Shows compute vs memory bounds.",
         "schema": {"type": "object", "properties": {}},
         "handler": "hw.roofline",
     },
-    "aisp_hw_disk": {
+    "hw_disk": {
         "description": "Tags: hw, disk, io, storage. "
             "Disk I/O benchmark. "
             "🕐 MEDIUM (~10s). Tests read/write throughput.",
         "schema": {"type": "object", "properties": {}},
         "handler": "hw.disk",
     },
-    "aisp_hw_pcie": {
+    "hw_pcie": {
         "description": "Tags: hw, pcie, bandwidth, host-device. "
             "PCIe bandwidth benchmark. "
             "🕐 MEDIUM (~10s). Tests CPU-GPU transfer speed.",
         "schema": {"type": "object", "properties": {}},
         "handler": "hw.pcie",
     },
-    "aisp_hw_cache": {
+    "hw_cache": {
         "description": "Tags: hw, cache, l2, memory-hierarchy. "
             "GPU cache benchmark. "
             "🕐 MEDIUM (~15s). Tests L2 cache performance.",
         "schema": {"type": "object", "properties": {}},
         "handler": "hw.cache",
     },
-    "aisp_hw_tc": {
+    "hw_tc": {
         "description": "Tags: hw, tensor-core, tc, matmul. "
             "Tensor Core benchmark. "
             "🕐 MEDIUM (~15s). Tests TC throughput.",
         "schema": {"type": "object", "properties": {}},
         "handler": "hw.tc",
     },
-    "aisp_hw_nccl": {
+    "hw_nccl": {
         "description": "Tags: hw, nccl, collective, allreduce. "
             "NCCL collective benchmark. "
             "🕐 MEDIUM (~30s). Tests multi-GPU communication.",
         "schema": {"type": "object", "properties": {}},
         "handler": "hw.nccl",
     },
-    "aisp_hw_ib": {
+    "hw_ib": {
         "description": "Tags: hw, infiniband, rdma, network. "
             "InfiniBand benchmark. "
             "🕐 MEDIUM (~20s). Tests IB throughput/latency.",
         "schema": {"type": "object", "properties": {}},
         "handler": "hw.ib",
     },
-    "aisp_hw_network": {
+    "hw_network": {
         "description": "Tags: hw, network, tcp, bandwidth. "
             "Network benchmark (TCP/IB). "
             "🕐 MEDIUM (~15s). Tests network throughput.",
@@ -914,7 +914,7 @@ CONSOLIDATED_TOOLS = {
         },
         "handler": "hw.network",
     },
-    "aisp_hw_p2p": {
+    "hw_p2p": {
         "description": "Tags: hw, p2p, peer-to-peer, gpu-gpu. "
             "GPU peer-to-peer bandwidth benchmark. "
             "🕐 MEDIUM (~20s). Tests direct GPU-GPU transfer.",
@@ -923,7 +923,7 @@ CONSOLIDATED_TOOLS = {
     },
     
     # === HuggingFace (1 consolidated) ===
-    "aisp_hf": {
+    "hf": {
         "description": "Tags: huggingface, models, download, search. "
             "HuggingFace Hub operations: search, trending, download. "
             "⚡ FAST (~2s). Params: action='search'|'trending'|'download'.",

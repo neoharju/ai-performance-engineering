@@ -40,7 +40,7 @@ class OptimizedDSMEMWarpSpecializedBenchmark(CudaBinaryBenchmark):
         super().__init__(
             chapter_dir=chapter_dir,
             binary_name="optimized_dsmem_reduction_warp_specialized",
-            friendly_name="DSMEM Reduction (Warp Specialized + Vectorized)",
+            friendly_name="Optimized Dsmem Reduction Warp Specialized",
             iterations=3,
             warmup=5,
             timeout_seconds=120,

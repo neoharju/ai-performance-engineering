@@ -25,7 +25,6 @@ class OptimizedTcgen05TilingVsCublasBenchmark(Tcgen05TilingVsCublasBase):
         with self._nvtx_range(self.nvtx_label):
             with torch.no_grad():
                 self.output = torch.matmul(self.matrix_a, self.matrix_b)
-        self._synchronize()
 
 
 def get_benchmark() -> BaseBenchmark:

@@ -61,7 +61,6 @@ class BaselineArithmeticIntensityBenchmark(VerificationPayloadMixin, BaseBenchma
 
         # Warm up chunked kernel launches.
         self._chunked_matmul()
-        self._synchronize()
         self.register_workload_metadata(
             requests_per_iteration=self._workload.requests_per_iteration,
             tokens_per_iteration=self._workload.tokens_per_iteration,
@@ -84,7 +83,6 @@ class BaselineArithmeticIntensityBenchmark(VerificationPayloadMixin, BaseBenchma
             if self.A is None or self.B is None or self.C is None:
                 raise RuntimeError("Benchmark not initialized")
             self._chunked_matmul()
-            self._synchronize()
         if self.A is None or self.B is None or self.C is None:
             raise RuntimeError("benchmark_fn() must produce output for verification")
 

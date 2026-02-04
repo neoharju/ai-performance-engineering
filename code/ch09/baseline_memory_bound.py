@@ -41,7 +41,6 @@ class BaselineMemoryBoundBenchmark(VerificationPayloadMixin, BaseBenchmark):
     def setup(self) -> None:
         torch.manual_seed(42)
         self.tensor = torch.randn(self.N, device=self.device, dtype=torch.float32)
-        torch.cuda.synchronize(self.device)
 
     def benchmark_fn(self) -> None:
         config = self.get_config()
@@ -51,7 +50,6 @@ class BaselineMemoryBoundBenchmark(VerificationPayloadMixin, BaseBenchmark):
             for _ in range(self.repeats):
                 t = t * 1.0001 + 0.0001
             self.output = t
-            torch.cuda.synchronize(self.device)
         if self.output is None:
             raise RuntimeError("benchmark_fn() must produce output for verification")
 

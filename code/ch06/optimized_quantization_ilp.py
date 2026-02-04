@@ -48,7 +48,6 @@ class OptimizedQuantizationILPBenchmark(VerificationPayloadMixin, BaseBenchmark)
         self.input_fp16 = self.input.to(dtype=torch.float16)
         self.output = None
         self.output_fp16 = None
-        self._synchronize()
     
     def benchmark_fn(self) -> None:
         """Benchmark: FP16 element-wise operations (2x less memory traffic)."""
@@ -57,7 +56,6 @@ class OptimizedQuantizationILPBenchmark(VerificationPayloadMixin, BaseBenchmark)
             # Simple multiply-add in FP16 - half the memory bandwidth
             self.output_fp16 = self.input_fp16 * 2.0 + 1.0
             self.output = self.output_fp16
-            self._synchronize()
 
     def capture_verification_payload(self) -> None:
         if self.output_fp16 is None or self.input is None:

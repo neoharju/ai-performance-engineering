@@ -4,7 +4,7 @@ This directory contains both the MCP server implementation and a robust client l
 
 ## Files
 
-- `mcp_server.py` - MCP server with 80+ tools for AI performance engineering
+- `mcp_server.py` - MCP server tool catalog for AI performance engineering (see `--list` for count)
 - `mcp_client.py` - Robust client implementation with proper message ID tracking
 - `tool_generator.py` - Tool generation utilities
 
@@ -26,7 +26,7 @@ This is the standard "run → deep_dive profile → compare baseline vs optimize
 
 ### One-shot (recommended)
 
-Call the single MCP tool `aisp_benchmark_deep_dive_compare`:
+Call the single MCP tool `benchmark_deep_dive_compare`:
 
 ```json
 {
@@ -36,23 +36,23 @@ Call the single MCP tool `aisp_benchmark_deep_dive_compare`:
 }
 ```
 
-Then poll `aisp_job_status` until complete and read:
+Then poll `job_status` until complete and read:
 - `run_dir`, `results_json`, `analysis_json`
 - `benchmarks[]` entries, each with `profiles_dir` and `followup_tool_calls` (ready-to-run chaining inputs)
 
 ### Manual chaining (explicit steps)
 
-1. Discover targets: `aisp_benchmark_targets`
-2. Run: `aisp_run_benchmarks` with `profile=\"deep_dive\"` and an `artifacts_dir`
-3. If async: poll with `aisp_job_status`
-4. Analyze benchmark results: `aisp_benchmark_triage` using the returned `results_json`
-5. Compare profiles: `aisp_profile_compare`, `aisp_compare_nsys`, `aisp_compare_ncu`
+1. Discover targets: `benchmark_targets`
+2. Run: `run_benchmarks` with `profile=\"deep_dive\"` and an `artifacts_dir`
+3. If async: poll with `job_status`
+4. Analyze benchmark results: `benchmark_triage` using the returned `results_json`
+5. Compare profiles: `profile_compare`, `compare_nsys`, `compare_ncu`
 
 Profiling tools return JSON metrics in their result payloads:
-- `aisp_profile_nsys` -> `nsys_metrics`
-- `aisp_profile_ncu` -> `ncu_metrics`
-- `aisp_profile_torch` -> `torch_metrics` (plus `report` alias)
-- `aisp_profile_hta` -> `nsys_metrics`
+- `profile_nsys` -> `nsys_metrics`
+- `profile_ncu` -> `ncu_metrics`
+- `profile_torch` -> `torch_metrics` (plus `report` alias)
+- `profile_hta` -> `nsys_metrics`
 
 Compare tools always attach `nsys_comparison` and `ncu_comparison` when profiles are captured; use these metrics to explain regressions and speedups.
 
@@ -68,7 +68,7 @@ with create_client(debug=True) as client:
     print(f"Found {len(tools)} tools")
     
     # Call a tool
-    result = client.call_tool("aisp_status", {})
+    result = client.call_tool("status", {})
     print(result)
 ```
 
@@ -142,7 +142,7 @@ client = RobustMCPClient(
          ↓
 ┌─────────────────┐
 │ PerformanceEngine│  ← Core functionality
-│  (80+ tools)    │
+│  (see --list)   │
 └─────────────────┘
 ```
 

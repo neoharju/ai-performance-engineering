@@ -38,7 +38,6 @@ class BaselineMemoryStandardBenchmark(VerificationPayloadMixin, BaseBenchmark):
         torch.cuda.manual_seed_all(42)
         self.data = torch.randn(self.num_elements, device=self.device, dtype=torch.float32)
         self.result = torch.zeros_like(self.data)
-        self._synchronize()
     
     def benchmark_fn(self) -> None:
         assert self.data is not None
@@ -46,7 +45,6 @@ class BaselineMemoryStandardBenchmark(VerificationPayloadMixin, BaseBenchmark):
             self.result = self.data * 2.0 + 1.0
             if self.result is not None:
                 self.result += 0.1
-            self._synchronize()
         self.output = self.result
 
     def capture_verification_payload(self) -> None:

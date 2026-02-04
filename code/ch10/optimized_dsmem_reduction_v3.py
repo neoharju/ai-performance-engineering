@@ -24,7 +24,7 @@ class OptimizedDSMEMReductionV3Benchmark(CudaBinaryBenchmark):
         super().__init__(
             chapter_dir=chapter_dir,
             binary_name="optimized_dsmem_reduction_v3",
-            friendly_name="DSMEM Cluster Reduction v3 (B200 Working)",
+            friendly_name="Optimized Dsmem Reduction V3",
             iterations=3,
             warmup=5,
             timeout_seconds=60,

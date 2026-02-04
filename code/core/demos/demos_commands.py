@@ -56,6 +56,12 @@ DEMOS: Dict[str, DemoSpec] = {
         description="Chapter 10 TMEM triple-overlap demo (non-benchmark).",
         launch_via=LaunchVia.PYTHON,
     ),
+    "ch10-warpgroup-specialization": DemoSpec(
+        name="ch10-warpgroup-specialization",
+        script_path=REPO_ROOT / "ch10" / "warpgroup_specialization_demo.py",
+        description="Chapter 10 tcgen05 warpgroup specialization demo (non-benchmark).",
+        launch_via=LaunchVia.PYTHON,
+    ),
     "ch11-stream-overlap": DemoSpec(
         name="ch11-stream-overlap",
         script_path=REPO_ROOT / "ch11" / "stream_overlap_demo.py",

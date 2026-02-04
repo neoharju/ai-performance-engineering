@@ -27,7 +27,7 @@ _ROUTES: List[ApiRoute] = [
         "gpu.info",
         handlers.gpu_info,
         engine_op="gpu.info",
-        mcp_tool="aisp_gpu_info",
+        mcp_tool="gpu_info",
     ),
     ApiRoute(
         "GET",
@@ -35,7 +35,7 @@ _ROUTES: List[ApiRoute] = [
         "gpu.topology",
         handlers.gpu_topology,
         engine_op="gpu.topology",
-        mcp_tool="aisp_gpu_topology",
+        mcp_tool="gpu_topology",
     ),
     ApiRoute(
         "GET",
@@ -43,7 +43,7 @@ _ROUTES: List[ApiRoute] = [
         "gpu.power",
         handlers.gpu_power,
         engine_op="gpu.power",
-        mcp_tool="aisp_gpu_power",
+        mcp_tool="gpu_power",
     ),
     ApiRoute(
         "GET",
@@ -51,7 +51,7 @@ _ROUTES: List[ApiRoute] = [
         "gpu.bandwidth",
         handlers.gpu_bandwidth,
         engine_op="gpu.bandwidth",
-        mcp_tool="aisp_gpu_bandwidth",
+        mcp_tool="gpu_bandwidth",
     ),
     ApiRoute(
         "GET",
@@ -59,7 +59,7 @@ _ROUTES: List[ApiRoute] = [
         "system.software",
         handlers.system_software,
         engine_op="system.software",
-        mcp_tool="aisp_system_software",
+        mcp_tool="system_software",
     ),
     ApiRoute(
         "GET",
@@ -67,7 +67,7 @@ _ROUTES: List[ApiRoute] = [
         "system.dependencies",
         handlers.system_dependencies,
         engine_op="system.dependencies",
-        mcp_tool="aisp_system_dependencies",
+        mcp_tool="system_dependencies",
     ),
     ApiRoute(
         "GET",
@@ -75,7 +75,7 @@ _ROUTES: List[ApiRoute] = [
         "system.context",
         handlers.system_context,
         engine_op="system.context",
-        mcp_tool="aisp_system_context",
+        mcp_tool="system_context",
     ),
     ApiRoute(
         "GET",
@@ -83,7 +83,7 @@ _ROUTES: List[ApiRoute] = [
         "system.capabilities",
         handlers.system_capabilities,
         engine_op="system.capabilities",
-        mcp_tool="aisp_system_capabilities",
+        mcp_tool="system_capabilities",
     ),
     ApiRoute(
         "GET",
@@ -91,6 +91,7 @@ _ROUTES: List[ApiRoute] = [
         "benchmark.data",
         handlers.benchmark_data,
         engine_op="benchmark.data",
+        mcp_tool="benchmark_data",
     ),
     ApiRoute(
         "GET",
@@ -98,6 +99,7 @@ _ROUTES: List[ApiRoute] = [
         "benchmark.overview",
         handlers.benchmark_overview,
         engine_op="benchmark.overview",
+        mcp_tool="benchmark_overview",
     ),
     ApiRoute(
         "GET",
@@ -105,6 +107,7 @@ _ROUTES: List[ApiRoute] = [
         "benchmark.history",
         handlers.benchmark_history,
         engine_op="benchmark.history",
+        mcp_tool="benchmark_history",
     ),
     ApiRoute(
         "GET",
@@ -112,6 +115,7 @@ _ROUTES: List[ApiRoute] = [
         "benchmark.trends",
         handlers.benchmark_trends,
         engine_op="benchmark.trends",
+        mcp_tool="benchmark_trends",
     ),
     ApiRoute(
         "GET",
@@ -119,6 +123,7 @@ _ROUTES: List[ApiRoute] = [
         "benchmark.compare",
         handlers.benchmark_compare,
         engine_op="benchmark.compare",
+        mcp_tool="benchmark_compare",
     ),
     ApiRoute(
         "GET",
@@ -126,7 +131,7 @@ _ROUTES: List[ApiRoute] = [
         "benchmark.targets",
         handlers.benchmark_targets,
         engine_op="benchmark.targets",
-        mcp_tool="aisp_benchmark_targets",
+        mcp_tool="benchmark_targets",
     ),
     ApiRoute(
         "GET",
@@ -134,7 +139,7 @@ _ROUTES: List[ApiRoute] = [
         "profile.flame_graph",
         handlers.profile_flame,
         engine_op="profile.flame_graph",
-        mcp_tool="aisp_profile_flame",
+        mcp_tool="profile_flame",
     ),
     ApiRoute(
         "GET",
@@ -142,7 +147,7 @@ _ROUTES: List[ApiRoute] = [
         "profile.kernels",
         handlers.profile_kernels,
         engine_op="profile.kernels",
-        mcp_tool="aisp_profile_kernels",
+        mcp_tool="profile_kernels",
     ),
     ApiRoute(
         "GET",
@@ -150,7 +155,7 @@ _ROUTES: List[ApiRoute] = [
         "profile.memory_timeline",
         handlers.profile_memory,
         engine_op="profile.memory_timeline",
-        mcp_tool="aisp_profile_memory",
+        mcp_tool="profile_memory",
     ),
     ApiRoute(
         "GET",
@@ -158,7 +163,7 @@ _ROUTES: List[ApiRoute] = [
         "profile.hta",
         handlers.profile_hta,
         engine_op="profile.hta",
-        mcp_tool="aisp_profile_hta",
+        mcp_tool="profile_hta",
     ),
     ApiRoute(
         "GET",
@@ -173,7 +178,7 @@ _ROUTES: List[ApiRoute] = [
         "profile.roofline",
         handlers.profile_roofline,
         engine_op="profile.roofline",
-        mcp_tool="aisp_profile_roofline",
+        mcp_tool="profile_roofline",
     ),
     ApiRoute(
         "GET",
@@ -188,7 +193,7 @@ _ROUTES: List[ApiRoute] = [
         "profile.compare",
         handlers.profile_compare,
         engine_op="profile.compare",
-        mcp_tool="aisp_profile_compare",
+        mcp_tool="profile_compare",
     ),
     ApiRoute(
         "GET",
@@ -203,7 +208,7 @@ _ROUTES: List[ApiRoute] = [
         "ai.status",
         handlers.ai_status,
         engine_op="ai.status",
-        mcp_tool="aisp_ai_status",
+        mcp_tool="ai_status",
     ),
     ApiRoute(
         "POST",
@@ -211,7 +216,7 @@ _ROUTES: List[ApiRoute] = [
         "ai.ask",
         handlers.ai_ask,
         engine_op="ai.ask",
-        mcp_tool="aisp_ask",
+        mcp_tool="ask",
     ),
     ApiRoute(
         "POST",
@@ -219,7 +224,7 @@ _ROUTES: List[ApiRoute] = [
         "ai.explain",
         handlers.ai_explain,
         engine_op="ai.explain",
-        mcp_tool="aisp_explain",
+        mcp_tool="explain",
     ),
     ApiRoute(
         "GET",
@@ -240,7 +245,7 @@ _ROUTES: List[ApiRoute] = [
         "/api/jobs/status",
         "jobs.status",
         handlers.job_status,
-        mcp_tool="aisp_job_status",
+        mcp_tool="job_status",
         meta=True,
     ),
 ]

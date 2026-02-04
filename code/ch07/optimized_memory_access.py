@@ -23,7 +23,7 @@ class OptimizedMemoryAccessBenchmark(CudaBinaryBenchmark):
         super().__init__(
             chapter_dir=chapter_dir,
             binary_name="optimized_memory_access",
-            friendly_name="Ch7 Optimized Memory Access",
+            friendly_name="Optimized Memory Access",
             iterations=3,
             warmup=5,
             timeout_seconds=90,

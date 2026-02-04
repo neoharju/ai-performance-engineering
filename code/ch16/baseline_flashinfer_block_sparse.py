@@ -67,7 +67,6 @@ class BaselineFlashInferBlockSparseBenchmark(VerificationPayloadMixin, BaseBench
             dtype=torch.float16,
         )
         _, _, self.sparsity_ratio = build_bsr_from_block_mask(block_mask, device=self.device)
-        self._synchronize()
 
     def benchmark_fn(self) -> None:
         if self.q is None or self.k is None or self.v is None or self.attn_mask is None:
@@ -84,7 +83,6 @@ class BaselineFlashInferBlockSparseBenchmark(VerificationPayloadMixin, BaseBench
                 is_causal=False,
             )
             self.output = out.squeeze(0).transpose(0, 1)
-        self._synchronize()
         if self.output is None:
             raise RuntimeError("benchmark_fn() must produce output for verification")
 

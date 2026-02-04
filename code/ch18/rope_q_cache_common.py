@@ -1,0 +1,52 @@
+"""Shared helpers for RoPE + Q + KV cache fusion benchmarks."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Tuple
+
+import torch
+
+
+@dataclass(frozen=True)
+class RopeQCacheConfig:
+    batch_size: int = 8
+    heads: int = 32
+    head_dim: int = 128
+    max_seq_len: int = 256
+    steps: int = 64
+    dtype: torch.dtype = torch.bfloat16
+
+    @property
+    def hidden_size(self) -> int:
+        return self.heads * self.head_dim
+
+    @property
+    def tokens_per_iter(self) -> int:
+        return self.batch_size * self.steps
+
+
+def build_rope_tables(
+    max_seq_len: int,
+    head_dim: int,
+    device: torch.device,
+    dtype: torch.dtype,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    if head_dim % 2 != 0:
+        raise ValueError("head_dim must be even for RoPE")
+    inv_freq = 1.0 / (10000 ** (torch.arange(0, head_dim, 2, device=device, dtype=dtype) / head_dim))
+    positions = torch.arange(max_seq_len, device=device, dtype=dtype)
+    freqs = torch.einsum("i,j->ij", positions, inv_freq)
+    emb = torch.cat([freqs, freqs], dim=-1)
+    cos = torch.cos(emb)
+    sin = torch.sin(emb)
+    return cos, sin
+
+
+def rotate_half(x: torch.Tensor) -> torch.Tensor:
+    half = x.shape[-1] // 2
+    return torch.cat([-x[..., half:], x[..., :half]], dim=-1)
+
+
+def apply_rope(q: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
+    return (q * cos) + (rotate_half(q) * sin)

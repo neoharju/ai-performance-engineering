@@ -99,12 +99,10 @@ class OptimizedPagedAttentionBenchmark(VerificationPayloadMixin, BaseBenchmark):
         for _ in range(5):
             with torch.no_grad():
                 self._forward_flash()
-        self._synchronize()
         self.register_workload_metadata(
             tokens_per_iteration=float(self.batch_size * self.max_seq_len),
             requests_per_iteration=float(self.batch_size),
         )
-        torch.cuda.synchronize()
 
     def _forward_flash(self):
         """Flash Attention via SDPA - O(n) memory, fused kernel."""

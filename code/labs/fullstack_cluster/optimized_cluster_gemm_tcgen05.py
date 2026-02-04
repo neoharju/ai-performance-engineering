@@ -1,4 +1,4 @@
-"""Inline tcgen05-optimized benchmark for SM100-class hardware."""
+"""Inline tcgen05 CTA-group::2 benchmark for SM100-class hardware."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ repo_root = Path(__file__).resolve().parent.parent
 if str(repo_root) not in sys.path:
     sys.path.insert(0, str(repo_root))
 
-from labs.fullstack_cluster import optimized_matmul_tcgen05
+from labs.fullstack_cluster import optimized_matmul_tcgen05_cta2
 from labs.fullstack_cluster.capstone_benchmarks import CapstoneMatmulBenchmark
 from labs.fullstack_cluster.gpu_requirements import ensure_tcgen05_supported
 
@@ -17,8 +17,8 @@ from labs.fullstack_cluster.gpu_requirements import ensure_tcgen05_supported
 class OptimizedCapstoneGemmTCGen05Benchmark(CapstoneMatmulBenchmark):
     def __init__(self) -> None:
         super().__init__(
-            runner=optimized_matmul_tcgen05,
-            label="capstone_optimized_tcgen05_inline",
+            runner=optimized_matmul_tcgen05_cta2,
+            label="capstone_optimized_tcgen05_cta2",
             iterations=3,
             warmup=5,
             timeout_seconds=300,

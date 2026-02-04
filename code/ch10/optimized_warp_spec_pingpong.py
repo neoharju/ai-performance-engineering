@@ -20,7 +20,7 @@ class OptimizedWarpSpecPingPongBenchmark(CudaBinaryBenchmark):
         super().__init__(
             chapter_dir=chapter_dir,
             binary_name="optimized_warp_spec_pingpong",
-            friendly_name="Ping-Pong Warp Specialization",
+            friendly_name="Optimized Warp Spec Pingpong",
             iterations=3,
             warmup=5,
             timeout_seconds=120,

@@ -29,7 +29,7 @@ class BaselineAtomicReductionBenchmark(CudaBinaryBenchmark):
         super().__init__(
             chapter_dir=chapter_dir,
             binary_name="baseline_atomic_reduction",
-            friendly_name="Two-Pass Block Reduction (DSMEM-Free)",
+            friendly_name="Baseline Atomic Reduction",
             iterations=3,
             warmup=5,
             timeout_seconds=120,

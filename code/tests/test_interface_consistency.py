@@ -61,7 +61,17 @@ class TestEngineDomains:
         
         system = get_engine().system
         
-        required_methods = ["software", "dependencies", "context", "capabilities"]
+        required_methods = [
+            "software",
+            "dependencies",
+            "context",
+            "capabilities",
+            "parameters",
+            "container",
+            "cpu_memory",
+            "env",
+            "network",
+        ]
         for method in required_methods:
             assert hasattr(system, method), f"System domain missing method: {method}"
     
@@ -111,7 +121,7 @@ class TestEngineDomains:
         
         inference = get_engine().inference
         
-        required_methods = ["vllm_config", "quantization"]
+        required_methods = ["vllm_config", "quantization", "deploy", "estimate"]
         for method in required_methods:
             assert hasattr(inference, method), f"Inference domain missing method: {method}"
 
@@ -124,33 +134,34 @@ class TestMCPToolsConsistency:
     """Verify MCP tools align with Engine domains."""
     
     def test_mcp_tool_count(self):
-        """MCP should have ~70-80 consolidated tools."""
+        """MCP should have ~90-100 consolidated tools."""
         from mcp.mcp_server import TOOLS
         
         tool_count = len(TOOLS)
-        assert 65 <= tool_count <= 85, f"Expected 65-85 tools, got {tool_count}"
+        assert 90 <= tool_count <= 105, f"Expected 90-105 tools, got {tool_count}"
     
-    def test_mcp_tools_have_aisp_prefix(self):
-        """All MCP tools should have aisp_ prefix."""
+    def test_mcp_tools_have_no_prefix(self):
+        """All MCP tools should be unprefixed."""
         from mcp.mcp_server import TOOLS
         
         for name in TOOLS:
-            assert name.startswith("aisp_"), f"Tool {name} missing aisp_ prefix"
+            assert not name.startswith("aisp_"), f"Tool {name} still uses aisp_ prefix"
     
     def test_core_tools_exist(self):
         """Core tools should exist."""
         from mcp.mcp_server import TOOLS
         
         required_tools = [
-            "aisp_status",
-            "aisp_triage", 
-            "aisp_suggest_tools",
-            "aisp_job_status",
-            "aisp_gpu_info",
-            "aisp_system_software",
-            "aisp_analyze_bottlenecks",
-            "aisp_recommend",
-            "aisp_ask",
+            "status",
+            "triage", 
+            "suggest_tools",
+            "job_status",
+            "gpu_info",
+            "system_software",
+            "analyze_bottlenecks",
+            "optimize",
+            "recommend",
+            "ask",
         ]
         
         for tool in required_tools:
@@ -162,11 +173,11 @@ class TestMCPToolsConsistency:
         
         # These were truly merged into other tools
         merged_tools = [
-            "aisp_help",           # Merged into aisp_suggest_tools
-            "aisp_hf_search",      # Merged into aisp_hf
-            "aisp_hf_trending",    # Merged into aisp_hf
-            "aisp_hf_download",    # Merged into aisp_hf
-            "aisp_available_benchmarks",  # Merged into aisp_benchmark_targets
+            "help",           # Merged into suggest_tools
+            "hf_search",      # Merged into hf
+            "hf_trending",    # Merged into hf
+            "hf_download",    # Merged into hf
+            "available_benchmarks",  # Merged into benchmark_targets
         ]
         
         for tool in merged_tools:
@@ -177,14 +188,14 @@ class TestMCPToolsConsistency:
         from mcp.mcp_server import TOOLS
         from core.profiling.nsight_automation import NsightAutomation
 
-        schema = TOOLS["aisp_profile_ncu"].input_schema
+        schema = TOOLS["profile_ncu"].input_schema
         workload_schema = schema.get("properties", {}).get("workload_type", {})
         enum_values = set(workload_schema.get("enum", []) or [])
         allowed = set(NsightAutomation.METRIC_SETS.keys())
 
-        assert enum_values, "aisp_profile_ncu.workload_type enum is empty"
+        assert enum_values, "profile_ncu.workload_type enum is empty"
         assert enum_values.issubset(allowed), (
-            "aisp_profile_ncu workload_type enum has unsupported values"
+            "profile_ncu workload_type enum has unsupported values"
         )
         default_value = workload_schema.get("default")
         if default_value is not None:
@@ -293,7 +304,7 @@ class TestResultConsistency:
         from mcp.mcp_server import HANDLERS
         
         # Test a few handlers
-        for tool_name in ["aisp_status", "aisp_triage"]:
+        for tool_name in ["status", "triage"]:
             if tool_name in HANDLERS:
                 result = HANDLERS[tool_name]({})
                 assert isinstance(result, dict), f"{tool_name} should return dict"
@@ -316,12 +327,12 @@ class TestNamingConsistency:
         assert list(DOMAINS) == expected
     
     def test_mcp_naming_convention(self):
-        """MCP tools should follow aisp_{domain}_{operation} pattern."""
+        """MCP tools should follow {domain}_{operation} pattern."""
         from mcp.mcp_server import TOOLS
         from core.engine import DOMAINS
         
         # Check that domain tools follow the pattern
-        domain_tools = [t for t in TOOLS if any(f"aisp_{d}_" in t for d in DOMAINS)]
+        domain_tools = [t for t in TOOLS if any(f"{d}_" in t for d in DOMAINS)]
         
         # Should have multiple domain-prefixed tools
         assert len(domain_tools) >= 20, "Not enough domain-prefixed tools"
@@ -393,16 +404,16 @@ class TestAsyncJobHandling:
     """Verify async job handling works across interfaces."""
     
     def test_job_status_tool_exists(self):
-        """aisp_job_status should exist."""
+        """job_status should exist."""
         from mcp.mcp_server import TOOLS
         
-        assert "aisp_job_status" in TOOLS
+        assert "job_status" in TOOLS
     
     def test_job_status_requires_job_id(self):
-        """aisp_job_status should require job_id parameter."""
+        """job_status should require job_id parameter."""
         from mcp.mcp_server import TOOLS
         
-        schema = TOOLS["aisp_job_status"].input_schema
+        schema = TOOLS["job_status"].input_schema
         required = schema.get("required", [])
         
         assert "job_id" in required, "job_id should be required"

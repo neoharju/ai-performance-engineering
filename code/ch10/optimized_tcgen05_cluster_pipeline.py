@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Callable, Optional
 
 import torch
 
@@ -24,6 +24,7 @@ class OptimizedTcgen05ClusterPipelineBenchmark(Tcgen05MatmulBenchmarkBase):
     def __init__(self) -> None:
         super().__init__()
         self.extension: Optional[object] = None
+        self._matmul: Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None
 
     def setup(self) -> None:
         ensure_dsmem_supported(description="tcgen05 cluster pipeline")
@@ -34,14 +35,14 @@ class OptimizedTcgen05ClusterPipelineBenchmark(Tcgen05MatmulBenchmarkBase):
         super().setup()
         if self.extension is None:
             self.extension = load_tcgen05_cluster_module()
+        self._matmul = self.extension.matmul_tcgen05_cluster
 
     def benchmark_fn(self) -> None:
-        if self.extension is None or self.matrix_a is None or self.matrix_b is None:
+        if self._matmul is None or self.matrix_a is None or self.matrix_b is None:
             raise RuntimeError("Inputs or extension not initialized")
         with self._nvtx_range(self.nvtx_label):
-            with torch.no_grad():
-                self.output = self.extension.matmul_tcgen05_cluster(self.matrix_a, self.matrix_b)
-        self._synchronize()
+            with torch.inference_mode():
+                self.output = self._matmul(self.matrix_a, self.matrix_b)
 
     def get_config(self) -> BenchmarkConfig:
         return BenchmarkConfig(iterations=10, warmup=5)

@@ -29,7 +29,6 @@ class BaselineVectorizationBenchmark(VerificationPayloadMixin, BaseBenchmark):
         """Setup: Initialize data."""
         torch.manual_seed(42)
         self.data = torch.randn(self.N, device=self.device)
-        self._synchronize()
     
     def benchmark_fn(self) -> None:
         """Benchmark: Chunked reductions to simulate scalar-style overhead."""
@@ -39,7 +38,6 @@ class BaselineVectorizationBenchmark(VerificationPayloadMixin, BaseBenchmark):
             chunk = 4096
             for start in range(0, self.N, chunk):
                 result += self.data[start:start + chunk].sum()
-            self._synchronize()
         self.output = result
 
     def capture_verification_payload(self) -> None:

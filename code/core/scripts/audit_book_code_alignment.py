@@ -18,7 +18,7 @@ WHAT IT CHECKS:
 EXAMPLE OUTPUT:
     Chapter 9: 12 code snippets found
       ✅ fusedL2Norm kernel → ch09/baseline_fused_l2norm.cu
-      ✅ CUTLASS GEMM → ch09/optimized_cutlass_gemm.py
+      ✅ cuBLASLt GEMM → ch09/optimized_cublaslt_gemm.py
       ⚠️ No match: flashAttentionKernel
 """
 
@@ -195,6 +195,8 @@ def audit_chapter(chapter: int, base_dir: Path) -> AlignmentResult:
     """Audit book-code alignment for a single chapter."""
     ch_pad = f"{chapter:02d}"
     book_path = base_dir / "book" / f"ch{ch_pad}.md"
+    if not book_path.exists():
+        book_path = base_dir / "book" / f"ch{chapter}.md"
     code_dir = base_dir / f"ch{chapter}"
     
     result = AlignmentResult(
@@ -345,6 +347,5 @@ def main():
 
 if __name__ == "__main__":
     main()
-
 
 

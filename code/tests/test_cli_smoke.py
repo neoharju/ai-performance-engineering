@@ -2,7 +2,7 @@ import subprocess
 import sys
 
 
-def test_aisp_help_exits_cleanly():
+def test_help_exits_cleanly():
     result = subprocess.run(
         [sys.executable, "-m", "cli.aisp", "help"],
         stdout=subprocess.PIPE,
@@ -19,7 +19,7 @@ def test_mcp_server_import():
 
     assert isinstance(mcp_server.TOOLS, dict)
     # ensure harness tools are registered
-    assert "aisp_run_benchmarks" in mcp_server.TOOLS
+    assert "run_benchmarks" in mcp_server.TOOLS
 
 
 def test_bench_list_targets_help():

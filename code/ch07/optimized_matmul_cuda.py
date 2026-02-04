@@ -25,7 +25,7 @@ class OptimizedMatmulCudaBenchmark(CudaBinaryBenchmark):
         super().__init__(
             chapter_dir=chapter_dir,
             binary_name="optimized_matmul_tiled",
-            friendly_name="Ch7 Optimized Matmul CUDA",
+            friendly_name="Optimized Matmul Tiled",
             iterations=3,
             warmup=5,
             timeout_seconds=180,
