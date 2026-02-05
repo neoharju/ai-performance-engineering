@@ -33,7 +33,6 @@ class OptimizedCublasGemmFp4PerchannelBenchmark(CudaBinaryBenchmark):
                 "kK": 4096,
                 "kIterations": 10,
                 "kBatchCount": 1,
-                "kWorkspaceBytes": 64,
                 "dtype": 'fp4',
             },
         )
