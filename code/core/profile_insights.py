@@ -12,10 +12,40 @@ import io
 import json
 import math
 import re
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
+
+_BASELINE_ROLE_TOKENS = {"baseline", "base", "before", "reference", "ref"}
+_OPTIMIZED_ROLE_TOKENS = {"optimized", "opt", "after", "tuned", "candidate"}
+_ROLE_TOKENS = _BASELINE_ROLE_TOKENS | _OPTIMIZED_ROLE_TOKENS
+
+
+def _materialize_profile_if_needed(path: Path, *, root: Optional[Path] = None) -> Path:
+    """Copy symlinked profile artifacts to real files for stable downstream tooling."""
+    try:
+        if not path.is_symlink():
+            return path
+        resolved = path.resolve(strict=True)
+    except Exception:
+        return path
+
+    materialized_root = (root or path.parent) / ".materialized_profiles"
+    try:
+        materialized_root.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        return path
+
+    dst = materialized_root / path.name
+    try:
+        if not dst.exists() or resolved.stat().st_mtime > dst.stat().st_mtime:
+            shutil.copy2(resolved, dst)
+        return dst
+    except Exception:
+        return path
 
 
 def _extract_ncu_sources(ncu_path: Path, limit: int = 12) -> List[Dict[str, str]]:
@@ -449,12 +479,7 @@ def compare_nsys_files(
     pair_key: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """Extract and compare nsys metrics between baseline and optimized."""
-    baseline_nsys = list(profiles_dir.glob("*baseline*.nsys-rep"))
-    optimized_nsys = list(profiles_dir.glob("*optimized*.nsys-rep"))
-
-    if not baseline_nsys or not optimized_nsys:
-        baseline_nsys = list(profiles_dir.rglob("*baseline*.nsys-rep"))
-        optimized_nsys = list(profiles_dir.rglob("*optimized*.nsys-rep"))
+    baseline_nsys, optimized_nsys = _collect_profile_role_files(profiles_dir, ".nsys-rep")
 
     if not baseline_nsys or not optimized_nsys:
         pair_dir, error = _select_pair_dir(profiles_dir, pair_key, label="nsys")
@@ -462,12 +487,11 @@ def compare_nsys_files(
             return error
         if not pair_dir:
             return None
-        baseline_nsys = list(pair_dir.glob("*baseline*.nsys-rep"))
-        optimized_nsys = list(pair_dir.glob("*optimized*.nsys-rep"))
+        baseline_nsys, optimized_nsys = _collect_profile_role_files(pair_dir, ".nsys-rep")
         if not baseline_nsys or not optimized_nsys:
             return None
 
-    pair, _, error = _select_profile_pair(
+    pair, selected_pair_key, error = _select_profile_pair(
         baseline_nsys,
         optimized_nsys,
         pair_key=pair_key,
@@ -479,6 +503,8 @@ def compare_nsys_files(
         return None
 
     baseline_path, optimized_path = pair
+    baseline_path = _materialize_profile_if_needed(baseline_path, root=profiles_dir)
+    optimized_path = _materialize_profile_if_needed(optimized_path, root=profiles_dir)
 
     try:
         from core.profiling.extract_nsys_summary import harvest
@@ -489,6 +515,7 @@ def compare_nsys_files(
         comparison = {
             "baseline_file": baseline_path.name,
             "optimized_file": optimized_path.name,
+            "pair_key": pair_key or selected_pair_key,
             "metrics": [],
             "baseline_sources": _extract_nsys_sources(baseline_path),
             "optimized_sources": _extract_nsys_sources(optimized_path),
@@ -532,29 +559,24 @@ def compare_ncu_files(
     include_ncu_details: bool = False,
 ) -> Optional[Dict[str, Any]]:
     """Extract and compare ncu metrics between baseline and optimized."""
-    baseline_ncu = list(profiles_dir.glob("*baseline*.ncu-rep"))
-    optimized_ncu = list(profiles_dir.glob("*optimized*.ncu-rep"))
-
-    baseline_csv = list(profiles_dir.glob("*baseline*ncu*.csv"))
-    optimized_csv = list(profiles_dir.glob("*optimized*ncu*.csv"))
-
-    if not baseline_ncu or not optimized_ncu:
-        baseline_ncu = list(profiles_dir.rglob("*baseline*.ncu-rep"))
-        optimized_ncu = list(profiles_dir.rglob("*optimized*.ncu-rep"))
-
-    if not baseline_csv or not optimized_csv:
-        baseline_csv = list(profiles_dir.rglob("*baseline*ncu*.csv"))
-        optimized_csv = list(profiles_dir.rglob("*optimized*ncu*.csv"))
+    baseline_ncu, optimized_ncu = _collect_profile_role_files(profiles_dir, ".ncu-rep")
+    baseline_csv, optimized_csv = _collect_profile_role_files(
+        profiles_dir,
+        ".csv",
+        name_predicate=lambda p: "ncu" in p.name.lower(),
+    )
 
     if (not baseline_ncu or not optimized_ncu) and (not baseline_csv or not optimized_csv):
         pair_dir, error = _select_pair_dir(profiles_dir, pair_key, label="ncu")
         if error:
             return error
         if pair_dir:
-            baseline_ncu = list(pair_dir.glob("*baseline*.ncu-rep"))
-            optimized_ncu = list(pair_dir.glob("*optimized*.ncu-rep"))
-            baseline_csv = list(pair_dir.glob("*baseline*ncu*.csv"))
-            optimized_csv = list(pair_dir.glob("*optimized*ncu*.csv"))
+            baseline_ncu, optimized_ncu = _collect_profile_role_files(pair_dir, ".ncu-rep")
+            baseline_csv, optimized_csv = _collect_profile_role_files(
+                pair_dir,
+                ".csv",
+                name_predicate=lambda p: "ncu" in p.name.lower(),
+            )
 
     if baseline_csv and optimized_csv:
         pair, selected_key, error = _select_profile_pair(
@@ -665,32 +687,57 @@ def compare_ncu_files(
             "lts__throughput.avg.pct_of_peak_sustained_elapsed",
             "sm__warps_active.avg.pct_of_peak_sustained_active",
         ]
-        result = subprocess.run(
+        per_kernel: Dict[str, Dict[str, float]] = {}
+
+        details = subprocess.run(
             ["ncu", "--import", str(ncu_path), "--csv", "--page", "details", "--metrics", ",".join(metrics)],
             capture_output=True,
             text=True,
             timeout=45,
         )
-        if result.returncode != 0 or not result.stdout.strip():
+        if details.returncode == 0 and details.stdout.strip():
+            reader = csv.DictReader(io.StringIO(details.stdout))
+            for row in reader:
+                kernel = (row.get("Kernel Name") or "").strip() or "kernel"
+                metric = (row.get("Metric Name") or "").strip()
+                value_raw = (row.get("Metric Value") or "").strip()
+                if not metric or not value_raw:
+                    continue
+                value = _parse_float(value_raw)
+                if value is None:
+                    continue
+                unit = (row.get("Metric Unit") or "").strip()
+                if metric.startswith("gpu__time_duration"):
+                    value = _time_to_ms(value, unit)
+                per_kernel.setdefault(kernel, {})[metric] = value
+            if per_kernel:
+                return per_kernel
+
+        # Some NCU captures do not populate the "details" page. Fallback to "raw".
+        raw = subprocess.run(
+            ["ncu", "--import", str(ncu_path), "--csv", "--page", "raw"],
+            capture_output=True,
+            text=True,
+            timeout=45,
+        )
+        if raw.returncode != 0 or not raw.stdout.strip():
             return {}
-        reader = csv.DictReader(io.StringIO(result.stdout))
-        per_kernel: Dict[str, Dict[str, float]] = {}
+        reader = csv.DictReader(io.StringIO(raw.stdout))
         for row in reader:
-            kernel = (row.get("Kernel Name") or "").strip() or "kernel"
-            metric = (row.get("Metric Name") or "").strip()
-            value_raw = (row.get("Metric Value") or "").strip()
-            if not metric or not value_raw:
+            kernel = (row.get("Kernel Name") or "").strip()
+            if not kernel:
                 continue
-            value = _parse_float(value_raw)
-            if value is None:
-                continue
-            unit = (row.get("Metric Unit") or "").strip()
-            if metric.startswith("gpu__time_duration"):
-                value = _time_to_ms(value, unit)
-            per_kernel.setdefault(kernel, {})[metric] = value
+            for metric in metrics:
+                value_raw = (row.get(metric) or "").strip()
+                if not value_raw:
+                    continue
+                value = _parse_float(value_raw)
+                if value is None:
+                    continue
+                per_kernel.setdefault(kernel, {})[metric] = value
         return per_kernel
 
-    pair, _, error = _select_profile_pair(
+    pair, selected_pair_key, error = _select_profile_pair(
         baseline_ncu,
         optimized_ncu,
         pair_key=pair_key,
@@ -702,6 +749,8 @@ def compare_ncu_files(
         return None
 
     baseline_path, optimized_path = pair
+    baseline_path = _materialize_profile_if_needed(baseline_path, root=profiles_dir)
+    optimized_path = _materialize_profile_if_needed(optimized_path, root=profiles_dir)
 
     try:
         baseline_per_kernel = _load_metrics(baseline_path)
@@ -710,22 +759,22 @@ def compare_ncu_files(
         return {"error": f"NCU extraction failed: {exc}"}
 
     if not baseline_per_kernel and not optimized_per_kernel:
-        return None
+        return {
+            "error": (
+                "No extractable NCU metrics found in either report "
+                "(the capture may not include the requested metric pages)."
+            ),
+            "baseline_file": baseline_path.name,
+            "optimized_file": optimized_path.name,
+        }
 
-    # Rank kernels by baseline time if available.
-    def _kernel_time(per_kernel: Dict[str, Dict[str, float]], name: str) -> float:
-        try:
-            return float(per_kernel.get(name, {}).get("gpu__time_duration.avg", 0.0) or 0.0)
-        except Exception:
-            return 0.0
+    paired_kernels = _pair_kernel_metrics(baseline_per_kernel, optimized_per_kernel, limit=12)
 
-    all_kernels = set(baseline_per_kernel.keys()) | set(optimized_per_kernel.keys())
-    ranked = sorted(all_kernels, key=lambda k: _kernel_time(baseline_per_kernel, k), reverse=True)
-    ranked = ranked[:12]
-
-    def _kernel_payload(name: str) -> Dict[str, Any]:
-        b = baseline_per_kernel.get(name, {})
-        o = optimized_per_kernel.get(name, {})
+    def _kernel_payload(pair: Dict[str, Any]) -> Dict[str, Any]:
+        baseline_name = pair.get("baseline_kernel")
+        optimized_name = pair.get("optimized_kernel")
+        b = baseline_per_kernel.get(baseline_name, {}) if baseline_name else {}
+        o = optimized_per_kernel.get(optimized_name, {}) if optimized_name else {}
         keys = set(b.keys()) | set(o.keys())
         diffs: Dict[str, Any] = {}
         for key in sorted(keys):
@@ -737,12 +786,77 @@ def compare_ncu_files(
                 delta = ov - bv
                 ratio = (ov / bv) if bv != 0 else None
             diffs[key] = {"baseline": bv, "optimized": ov, "delta": delta, "ratio": ratio}
-        return {"kernel": name, "metrics": diffs}
+
+        display_kernel = baseline_name or optimized_name or "kernel"
+        if baseline_name and optimized_name and baseline_name != optimized_name:
+            display_kernel = f"{baseline_name} => {optimized_name}"
+        return {
+            "kernel": display_kernel,
+            "baseline_kernel": baseline_name,
+            "optimized_kernel": optimized_name,
+            "match_type": pair.get("match_type"),
+            "match_score": pair.get("match_score"),
+            "metrics": diffs,
+        }
+
+    exact_count = sum(1 for pair in paired_kernels if pair.get("match_type") == "exact")
+    fuzzy_count = sum(1 for pair in paired_kernels if pair.get("match_type") == "fuzzy")
+    rank_count = sum(1 for pair in paired_kernels if pair.get("match_type") == "rank")
+    unmatched_count = sum(1 for pair in paired_kernels if pair.get("match_type") == "unmatched")
 
     comparison = {
         "baseline_file": baseline_path.name,
         "optimized_file": optimized_path.name,
-        "kernel_comparison": [_kernel_payload(k) for k in ranked],
+        "pair_key": pair_key or selected_pair_key,
+        "kernel_pairing": {
+            "paired_count": len(paired_kernels),
+            "exact_count": exact_count,
+            "fuzzy_count": fuzzy_count,
+            "rank_count": rank_count,
+            "unmatched_count": unmatched_count,
+        },
+        "kernel_comparison": [_kernel_payload(pair) for pair in paired_kernels],
+    }
+    if exact_count == 0 and fuzzy_count == 0 and paired_kernels:
+        comparison["pairing_warning"] = (
+            "Kernel symbols did not align exactly; rely on aggregate metrics and dominant kernels for tuning."
+        )
+
+    baseline_agg = _aggregate_ncu_metrics(baseline_per_kernel)
+    optimized_agg = _aggregate_ncu_metrics(optimized_per_kernel)
+    metric_keys = set(baseline_agg.get("weighted_metrics", {}).keys()) | set(
+        optimized_agg.get("weighted_metrics", {}).keys()
+    )
+    aggregate_delta: Dict[str, Any] = {}
+    for key in sorted(metric_keys):
+        b_val = baseline_agg.get("weighted_metrics", {}).get(key)
+        o_val = optimized_agg.get("weighted_metrics", {}).get(key)
+        delta = None
+        ratio = None
+        if isinstance(b_val, (int, float)) and isinstance(o_val, (int, float)):
+            delta = o_val - b_val
+            ratio = (o_val / b_val) if b_val != 0 else None
+        aggregate_delta[key] = {"baseline": b_val, "optimized": o_val, "delta": delta, "ratio": ratio}
+
+    base_total = baseline_agg.get("total_gpu_time_ms")
+    opt_total = optimized_agg.get("total_gpu_time_ms")
+    time_speedup = None
+    time_delta_ms = None
+    if isinstance(base_total, (int, float)) and isinstance(opt_total, (int, float)):
+        time_delta_ms = opt_total - base_total
+        if opt_total > 0:
+            time_speedup = base_total / opt_total
+
+    comparison["aggregate"] = {
+        "baseline": baseline_agg,
+        "optimized": optimized_agg,
+        "delta": aggregate_delta,
+        "total_gpu_time_ms": {
+            "baseline": base_total,
+            "optimized": opt_total,
+            "delta": time_delta_ms,
+            "speedup": time_speedup,
+        },
     }
     if include_ncu_details:
         comparison["baseline_sources"] = _extract_ncu_sources(baseline_path)
@@ -751,7 +865,220 @@ def compare_ncu_files(
         comparison["optimized_disassembly"] = _extract_ncu_disassembly(optimized_path)
     return comparison
 
-    return None
+
+def _kernel_time_ms(per_kernel: Dict[str, Dict[str, float]], kernel_name: str) -> float:
+    try:
+        return float(per_kernel.get(kernel_name, {}).get("gpu__time_duration.avg", 0.0) or 0.0)
+    except Exception:
+        return 0.0
+
+
+def _normalize_kernel_symbol(name: str) -> str:
+    text = str(name or "")
+    text = re.sub(r"<[^>]*>", " ", text)
+    text = re.sub(r"\([^)]*\)", " ", text)
+    text = text.replace("::", "_")
+    text = re.sub(r"[^A-Za-z0-9]+", "_", text).lower()
+    text = re.sub(r"_+", "_", text).strip("_")
+    return text
+
+
+def _kernel_tokens(name: str) -> set[str]:
+    stopwords = {
+        "kernel",
+        "void",
+        "const",
+        "unsigned",
+        "int",
+        "float",
+        "double",
+        "half",
+        "device",
+        "global",
+    }
+    return {
+        token
+        for token in _normalize_kernel_symbol(name).split("_")
+        if token and token not in stopwords
+    }
+
+
+def _kernel_similarity(left: str, right: str) -> float:
+    left_norm = _normalize_kernel_symbol(left)
+    right_norm = _normalize_kernel_symbol(right)
+    if not left_norm or not right_norm:
+        return 0.0
+    if left_norm == right_norm:
+        return 2.0
+
+    left_tokens = _kernel_tokens(left)
+    right_tokens = _kernel_tokens(right)
+    if not left_tokens or not right_tokens:
+        return 0.0
+
+    intersection = len(left_tokens & right_tokens)
+    union = len(left_tokens | right_tokens)
+    jaccard = (intersection / union) if union else 0.0
+    if left_norm in right_norm or right_norm in left_norm:
+        jaccard += 0.15
+    return jaccard
+
+
+def _pair_kernel_metrics(
+    baseline_per_kernel: Dict[str, Dict[str, float]],
+    optimized_per_kernel: Dict[str, Dict[str, float]],
+    limit: int = 12,
+) -> List[Dict[str, Any]]:
+    baseline_ranked = sorted(
+        baseline_per_kernel.keys(),
+        key=lambda name: _kernel_time_ms(baseline_per_kernel, name),
+        reverse=True,
+    )
+    optimized_ranked = sorted(
+        optimized_per_kernel.keys(),
+        key=lambda name: _kernel_time_ms(optimized_per_kernel, name),
+        reverse=True,
+    )
+
+    if not baseline_ranked and not optimized_ranked:
+        return []
+
+    pairs: List[Dict[str, Any]] = []
+    used_optimized: set[str] = set()
+
+    # Step 1: exact symbol matches.
+    for baseline_name in baseline_ranked:
+        if baseline_name in optimized_per_kernel and baseline_name not in used_optimized:
+            used_optimized.add(baseline_name)
+            pairs.append(
+                {
+                    "baseline_kernel": baseline_name,
+                    "optimized_kernel": baseline_name,
+                    "match_type": "exact",
+                    "match_score": 2.0,
+                }
+            )
+
+    # Step 2: fuzzy symbol matches.
+    for baseline_name in baseline_ranked:
+        if any(pair["baseline_kernel"] == baseline_name for pair in pairs):
+            continue
+        best_name: Optional[str] = None
+        best_score = 0.0
+        for optimized_name in optimized_ranked:
+            if optimized_name in used_optimized:
+                continue
+            score = _kernel_similarity(baseline_name, optimized_name)
+            if score > best_score:
+                best_score = score
+                best_name = optimized_name
+        if best_name is not None and best_score >= 0.35:
+            used_optimized.add(best_name)
+            pairs.append(
+                {
+                    "baseline_kernel": baseline_name,
+                    "optimized_kernel": best_name,
+                    "match_type": "fuzzy",
+                    "match_score": round(best_score, 4),
+                }
+            )
+
+    # Step 3: rank fallback if we still have no useful pairs (symbol mismatch).
+    if not pairs and baseline_ranked and optimized_ranked:
+        pair_count = min(len(baseline_ranked), len(optimized_ranked))
+        for idx in range(pair_count):
+            optimized_name = optimized_ranked[idx]
+            used_optimized.add(optimized_name)
+            pairs.append(
+                {
+                    "baseline_kernel": baseline_ranked[idx],
+                    "optimized_kernel": optimized_name,
+                    "match_type": "rank",
+                    "match_score": 0.0,
+                }
+            )
+
+    # Step 4: include remaining baseline kernels for visibility.
+    for baseline_name in baseline_ranked:
+        if any(pair["baseline_kernel"] == baseline_name for pair in pairs):
+            continue
+        pairs.append(
+            {
+                "baseline_kernel": baseline_name,
+                "optimized_kernel": None,
+                "match_type": "unmatched",
+                "match_score": 0.0,
+            }
+        )
+
+    # Step 5: include remaining optimized kernels for visibility.
+    for optimized_name in optimized_ranked:
+        if optimized_name in used_optimized:
+            continue
+        pairs.append(
+            {
+                "baseline_kernel": None,
+                "optimized_kernel": optimized_name,
+                "match_type": "unmatched",
+                "match_score": 0.0,
+            }
+        )
+
+    pairs.sort(
+        key=lambda pair: _kernel_time_ms(baseline_per_kernel, pair.get("baseline_kernel") or ""),
+        reverse=True,
+    )
+    return pairs[:limit]
+
+
+def _aggregate_ncu_metrics(per_kernel: Dict[str, Dict[str, float]]) -> Dict[str, Any]:
+    """Summarize per-kernel NCU metrics into weighted aggregate guidance."""
+    kernel_rows = []
+    for name, metrics in per_kernel.items():
+        time_ms = _kernel_time_ms(per_kernel, name)
+        kernel_rows.append((name, time_ms, metrics))
+
+    kernel_rows.sort(key=lambda row: row[1], reverse=True)
+    total_time_ms = sum(row[1] for row in kernel_rows)
+
+    weighted_metrics: Dict[str, float] = {}
+    metric_keys = {
+        "sm__throughput.avg.pct_of_peak_sustained_elapsed",
+        "gpu__dram_throughput.avg.pct_of_peak_sustained_elapsed",
+        "lts__throughput.avg.pct_of_peak_sustained_elapsed",
+        "sm__warps_active.avg.pct_of_peak_sustained_active",
+    }
+    if total_time_ms > 0:
+        for key in metric_keys:
+            weighted_sum = 0.0
+            covered_time = 0.0
+            for _, time_ms, metrics in kernel_rows:
+                value = metrics.get(key)
+                if isinstance(value, (int, float)):
+                    weighted_sum += float(value) * time_ms
+                    covered_time += time_ms
+            if covered_time > 0:
+                weighted_metrics[key] = weighted_sum / covered_time
+
+    dominant = kernel_rows[0] if kernel_rows else None
+    dominant_payload = None
+    if dominant is not None:
+        dominant_payload = {
+            "kernel": dominant[0],
+            "gpu__time_duration.avg_ms": dominant[1],
+            "metrics": {
+                key: value
+                for key, value in dominant[2].items()
+                if key in metric_keys or key.startswith("gpu__time_duration")
+            },
+        }
+
+    return {
+        "kernel_count": len(kernel_rows),
+        "total_gpu_time_ms": total_time_ms,
+        "dominant_kernel": dominant_payload,
+        "weighted_metrics": weighted_metrics,
+    }
 
 
 def _extract_nsys_cuda_api_stats(nsys_path: Path) -> Dict[str, Any]:
@@ -849,20 +1176,14 @@ def _select_profile_pair_paths(
     suffix: str,
     label: str,
 ) -> tuple[Optional[Path], Optional[Path], Optional[str], Optional[Dict[str, Any]]]:
-    baseline_files = list(profiles_dir.glob(f"*baseline*{suffix}"))
-    optimized_files = list(profiles_dir.glob(f"*optimized*{suffix}"))
-
-    if not baseline_files or not optimized_files:
-        baseline_files = list(profiles_dir.rglob(f"*baseline*{suffix}"))
-        optimized_files = list(profiles_dir.rglob(f"*optimized*{suffix}"))
+    baseline_files, optimized_files = _collect_profile_role_files(profiles_dir, suffix)
 
     if not baseline_files or not optimized_files:
         pair_dir, error = _select_pair_dir(profiles_dir, pair_key, label=label)
         if error:
             return None, None, None, error
         if pair_dir:
-            baseline_files = list(pair_dir.glob(f"*baseline*{suffix}"))
-            optimized_files = list(pair_dir.glob(f"*optimized*{suffix}"))
+            baseline_files, optimized_files = _collect_profile_role_files(pair_dir, suffix)
 
     if not baseline_files or not optimized_files:
         return None, None, None, None
@@ -1191,13 +1512,20 @@ def _normalize_profile_name(name: str) -> str:
     name = _strip_profile_suffix(name)
     if name.startswith("nsys_"):
         name = name[5:]
-    name = re.sub(r"^(baseline|optimized)_", "", name, flags=re.IGNORECASE)
-    name = re.sub(r"(baseline|optimized)$", "", name, flags=re.IGNORECASE)
-    name = name.replace("Baseline", "").replace("Optimized", "").replace("Benchmark", "")
     name = _snake_case(name)
-    name = re.sub(r"baseline|optimized", "", name, flags=re.IGNORECASE)
-    name = re.sub(r"[_]+", "_", name)
-    normalized = name.strip("_").lower()
+    raw_tokens = re.split(r"[^A-Za-z0-9]+", name)
+    tokens = []
+    for token in raw_tokens:
+        lowered = token.lower()
+        if not lowered:
+            continue
+        if lowered in _ROLE_TOKENS:
+            continue
+        if lowered == "benchmark":
+            continue
+        tokens.append(lowered)
+
+    normalized = "_".join(tokens)
     tokens = [token for token in normalized.split("_") if token]
     if tokens and len(tokens) % 2 == 0:
         half = len(tokens) // 2
@@ -1212,6 +1540,95 @@ def _tokenize_profile_name(name: str) -> List[str]:
     return tokens
 
 
+def _tokenize_raw_profile_name(name: str) -> List[str]:
+    raw = _snake_case(_strip_profile_suffix(name))
+    raw = re.sub(r"[^A-Za-z0-9]+", "_", raw)
+    return [token.lower() for token in raw.split("_") if token]
+
+
+def _path_name_candidates(path: Path) -> List[str]:
+    names = [path.name]
+    # Include nearby directory names so role detection still works when
+    # filenames are generic but parent folders encode baseline/optimized.
+    if path.parent:
+        names.append(path.parent.name)
+    if path.parent and path.parent.parent:
+        names.append(path.parent.parent.name)
+    try:
+        if path.is_symlink():
+            resolved = path.resolve()
+            names.append(resolved.name)
+            if resolved.parent:
+                names.append(resolved.parent.name)
+            if resolved.parent and resolved.parent.parent:
+                names.append(resolved.parent.parent.name)
+    except Exception:
+        pass
+    return names
+
+
+def _classify_profile_role(path: Path) -> Optional[str]:
+    # Prefer explicit role markers in the filename itself. Parent directories
+    # can contain "pair__optimized" while still holding both baseline and optimized files.
+    filename_tokens = set(_tokenize_raw_profile_name(path.name))
+    file_has_baseline = bool(filename_tokens & _BASELINE_ROLE_TOKENS)
+    file_has_optimized = bool(filename_tokens & _OPTIMIZED_ROLE_TOKENS)
+    if file_has_baseline and not file_has_optimized:
+        return "baseline"
+    if file_has_optimized and not file_has_baseline:
+        return "optimized"
+
+    baseline_hits = 0
+    optimized_hits = 0
+    for name in _path_name_candidates(path)[1:]:
+        tokens = set(_tokenize_raw_profile_name(name))
+        if tokens & _BASELINE_ROLE_TOKENS:
+            baseline_hits += 1
+        if tokens & _OPTIMIZED_ROLE_TOKENS:
+            optimized_hits += 1
+    if baseline_hits and not optimized_hits:
+        return "baseline"
+    if optimized_hits and not baseline_hits:
+        return "optimized"
+    return None
+
+
+def _collect_profile_role_files(
+    profiles_dir: Path,
+    suffix: str,
+    name_predicate: Optional[Callable[[Path], bool]] = None,
+) -> Tuple[List[Path], List[Path]]:
+    files = list(profiles_dir.glob(f"*{suffix}"))
+    files.extend(list(profiles_dir.rglob(f"*{suffix}")))
+    deduped: Dict[str, Path] = {}
+    for path in files:
+        deduped[str(path)] = path
+    files = list(deduped.values())
+    if name_predicate is not None:
+        files = [path for path in files if name_predicate(path)]
+
+    baseline_files: List[Path] = []
+    optimized_files: List[Path] = []
+    unclassified: List[Path] = []
+    for path in files:
+        role = _classify_profile_role(path)
+        if role == "baseline":
+            baseline_files.append(path)
+        elif role == "optimized":
+            optimized_files.append(path)
+        else:
+            unclassified.append(path)
+
+    # Standalone-capture fallback: when exactly two files exist and role tokens
+    # are absent, infer baseline/optimized from capture time to keep compare
+    # tools usable without symlink-based layouts.
+    if not baseline_files and not optimized_files and len(unclassified) == 2:
+        ordered = sorted(unclassified, key=lambda p: p.stat().st_mtime)
+        baseline_files = [ordered[0]]
+        optimized_files = [ordered[1]]
+    return baseline_files, optimized_files
+
+
 def _group_profile_pairs(
     baseline_files: List[Path],
     optimized_files: List[Path],
@@ -1221,7 +1638,14 @@ def _group_profile_pairs(
     def _key_from_path(path: Path) -> str:
         key = _normalize_profile_name(path.name)
         if not key:
-            key = _strip_profile_suffix(path.name).lower()
+            raw_tokens = [
+                token
+                for token in _tokenize_raw_profile_name(path.name)
+                if token not in _ROLE_TOKENS and token not in {"benchmark", "nsys", "ncu"}
+            ]
+            key = "_".join(raw_tokens)
+        if not key:
+            key = "default"
         return key
 
     for path in baseline_files:
@@ -1247,6 +1671,10 @@ def _select_profile_pair(
         return None, None, None
 
     candidates = _group_profile_pairs(baseline_files, optimized_files)
+    # Fallback: if role classification found a single baseline and optimized
+    # capture but normalized names don't align, pair newest files directly.
+    if not candidates and len(baseline_files) == 1 and len(optimized_files) == 1:
+        return (baseline_files[0], optimized_files[0]), "single_role_pair", None
     if not candidates:
         return None, None, None
 
@@ -1379,9 +1807,7 @@ def _select_flamegraph_pair(
     profiles_dir: Path,
     pair_key: Optional[str] = None,
 ) -> tuple[Optional[tuple[Path, Path]], Optional[Dict[str, Any]]]:
-    nsys_files = sorted(profiles_dir.glob("*.nsys-rep"))
-    baseline_nsys = [path for path in nsys_files if "baseline" in path.name.lower()]
-    optimized_nsys = [path for path in nsys_files if "optimized" in path.name.lower()]
+    baseline_nsys, optimized_nsys = _collect_profile_role_files(profiles_dir, ".nsys-rep")
 
     if not baseline_nsys or not optimized_nsys:
         pair_dir, error = _select_pair_dir(profiles_dir, pair_key, label="nsys")
@@ -1389,9 +1815,7 @@ def _select_flamegraph_pair(
             return None, error
         if not pair_dir:
             return None, None
-        nsys_files = sorted(pair_dir.glob("*.nsys-rep"))
-        baseline_nsys = [path for path in nsys_files if "baseline" in path.name.lower()]
-        optimized_nsys = [path for path in nsys_files if "optimized" in path.name.lower()]
+        baseline_nsys, optimized_nsys = _collect_profile_role_files(pair_dir, ".nsys-rep")
         if not baseline_nsys or not optimized_nsys:
             return None, None
 

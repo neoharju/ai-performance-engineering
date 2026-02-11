@@ -11,6 +11,7 @@
 - If you notice unexpected local file modifications, always call them out and ask for guidance; default to keeping them as-is and including them in the changes unless I explicitly say otherwise.
 - When you detect modified or untracked files, please treat them as part of this task.
 - If a file is already modified or open in the editor, keep its current contents as-is and include it in the final change list; you may continue editing without asking.
+- Avoid symlink-based benchmark/profile artifact workflows when possible; prefer real files (copy/materialize artifacts) so pairing/comparison tools operate on concrete paths.
 - The Amazon book link in `README.md` is expected to fail automated link checks due to bot protection; treat it as an allowlisted exception.
 
 ## Deprecations (CRITICAL)
@@ -40,7 +41,7 @@
 - Queue scripts must log start/end timestamps and exit codes to a dedicated log file in `artifacts/parallel_runs/`.
 - Failure recovery: a failed run must not abort the queue; log the failure and continue. Only re-run on overlap or explicit user request.
 - Monitoring: watch the queue log and report when a run starts, completes, or fails.
-- Partial-result mining: while long sweeps are still running, continuously mine partial outputs/log checkpoints for per-case wins and promote those winners into the next queued pass immediately.
+- Partial-result mining: mine partial results during execution (while long sweeps are still running) to catch any new per-case wins immediately, and promote those winners into the next queued pass ASAP.
 
 ## Explicitness (CRITICAL)
 - Prefer explicit flags/parameters over changing global defaults; if a default must change, ask first and document why.

@@ -1271,10 +1271,30 @@ _QUEUE_SCRIPT_PATH = _QUEUE_DIR / "bench_queue.sh"
 _QUEUE_LOG_PATH = _QUEUE_DIR / "queue.log"
 _QUEUE_LOCK = threading.Lock()
 _QUEUE_LOG_LOCK = threading.Lock()
+_QUEUE_MAX_OVERLAP_RETRIES_ENV = "AISP_MCP_QUEUE_MAX_OVERLAP_RETRIES"
+_QUEUE_IDLE_TIMEOUT_ENV = "AISP_MCP_QUEUE_IDLE_TIMEOUT_SEC"
 
 
 def _queue_timestamp() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def _queue_max_overlap_retries() -> int:
+    raw = os.environ.get(_QUEUE_MAX_OVERLAP_RETRIES_ENV, "2")
+    try:
+        value = int(raw)
+    except Exception:
+        value = 2
+    return max(0, value)
+
+
+def _queue_idle_timeout_seconds() -> int:
+    raw = os.environ.get(_QUEUE_IDLE_TIMEOUT_ENV, "600")
+    try:
+        value = int(raw)
+    except Exception:
+        value = 600
+    return max(0, value)
 
 
 def _ensure_queue_artifacts() -> bool:
@@ -1400,8 +1420,10 @@ def _active_run_processes(records: List[Dict[str, Any]], ignore_pids: set[int]) 
     return active
 
 
-def _wait_for_idle(poll_seconds: int = 5) -> None:
+def _wait_for_idle(poll_seconds: int = 5, timeout_seconds: Optional[int] = None) -> bool:
     logged = False
+    timeout = _queue_idle_timeout_seconds() if timeout_seconds is None else max(0, int(timeout_seconds))
+    start = time.monotonic()
     while True:
         records = _snapshot_processes()
         ignore_pids = _descendant_pids(os.getpid(), records)
@@ -1409,10 +1431,15 @@ def _wait_for_idle(poll_seconds: int = 5) -> None:
         if not active:
             if logged:
                 _log_queue_event("System idle: no active bench/profiling processes.")
-            return
+            return True
         if not logged:
             _log_queue_event(f"Waiting for idle; active processes={len(active)}")
             logged = True
+        if timeout > 0 and (time.monotonic() - start) >= timeout:
+            _log_queue_event(
+                f"WAIT_IDLE_TIMEOUT timeout_s={timeout} active_processes={len(active)} proceeding_anyway=true"
+            )
+            return False
         time.sleep(poll_seconds)
 
 
@@ -1438,7 +1465,12 @@ def _extract_exit_code(result: Any) -> Optional[int]:
     return None
 
 
-def _attach_queue_metadata(result: Any, retries: int, overlap_detected: bool) -> Any:
+def _attach_queue_metadata(
+    result: Any,
+    retries: int,
+    overlap_detected: bool,
+    idle_wait_timed_out: bool = False,
+) -> Any:
     if not isinstance(result, dict):
         return result
     queue_info = {
@@ -1446,6 +1478,7 @@ def _attach_queue_metadata(result: Any, retries: int, overlap_detected: bool) ->
         "queue_script": str(_QUEUE_SCRIPT_PATH),
         "queue_retries": retries,
         "overlap_detected": overlap_detected,
+        "idle_wait_timed_out": idle_wait_timed_out,
     }
     result.setdefault("queue", {}).update(queue_info)
     return result
@@ -1476,8 +1509,15 @@ def _run_with_queue(
             JOB_STORE.update_job(job_id, status="running", note="Running via MCP queue runner.")
         retries = 0
         overlap_detected = False
+        idle_wait_timed_out = False
+        max_overlap_retries = _queue_max_overlap_retries()
         while True:
-            _wait_for_idle()
+            idle_now = _wait_for_idle()
+            if not idle_now:
+                idle_wait_timed_out = True
+                _log_queue_event(
+                    f"WAIT_IDLE_BYPASS id={queue_id} tool={tool_name} label={queue_label} proceeding_with_overlap_guard=true"
+                )
             _log_queue_event(f"RUN_START id={queue_id} tool={tool_name} label={queue_label} attempt={retries + 1}")
             start_ts = time.time()
             stop_event = threading.Event()
@@ -1509,10 +1549,38 @@ def _run_with_queue(
                 f"exit_code={exit_code} overlap={overlap} duration_s={duration:.2f}"
             )
             if overlap:
+                # Avoid endless requeue loops on persistent overlap/noise.
+                if exit_code not in (0, None):
+                    _log_queue_event(
+                        f"OVERLAP_NOT_REQUEUED id={queue_id} tool={tool_name} "
+                        f"label={queue_label} reason=nonzero_exit exit_code={exit_code}"
+                    )
+                    result = _attach_queue_metadata(result, retries, overlap_detected, idle_wait_timed_out)
+                    if isinstance(result, dict):
+                        result.setdefault("queue", {})
+                        result["queue"]["overlap_retry_limit"] = max_overlap_retries
+                        result["queue"]["overlap_retry_exhausted"] = False
+                    return result
                 retries += 1
+                if retries > max_overlap_retries:
+                    _log_queue_event(
+                        f"OVERLAP_RETRY_EXHAUSTED id={queue_id} tool={tool_name} "
+                        f"label={queue_label} retries={retries - 1} limit={max_overlap_retries}"
+                    )
+                    result = _attach_queue_metadata(result, retries - 1, overlap_detected, idle_wait_timed_out)
+                    if isinstance(result, dict):
+                        result.setdefault("queue", {})
+                        result["queue"]["overlap_retry_limit"] = max_overlap_retries
+                        result["queue"]["overlap_retry_exhausted"] = True
+                    return result
                 _log_queue_event(f"REQUEUE id={queue_id} tool={tool_name} label={queue_label} reason=overlap")
                 continue
-            return _attach_queue_metadata(result, retries, overlap_detected)
+            result = _attach_queue_metadata(result, retries, overlap_detected, idle_wait_timed_out)
+            if isinstance(result, dict):
+                result.setdefault("queue", {})
+                result["queue"]["overlap_retry_limit"] = max_overlap_retries
+                result["queue"]["overlap_retry_exhausted"] = False
+            return result
 
 
 def _context_snapshot() -> Dict[str, Any]:
@@ -5845,6 +5913,22 @@ def tool_profile_nsys(params: Dict[str, Any]) -> Dict[str, Any]:
             "type": "string",
             "description": "Optional kernel name filter (regex)"
         },
+        "kernel_name_base": {
+            "type": "string",
+            "description": "Optional NCU kernel name base for filter matching (e.g., function, demangled)."
+        },
+        "nvtx_include": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Optional NVTX include filters (repeatable); useful with profile_from_start='off'.",
+            "default": []
+        },
+        "profile_from_start": {
+            "type": "string",
+            "description": "NCU profiling gate: on/off. Use off to gate capture until cudaProfilerStart.",
+            "enum": ["on", "off"],
+            "default": None
+        },
         "force_lineinfo": {
             "type": "boolean",
             "description": "Force -lineinfo via NVCC/TORCH_NVCC_FLAGS to improve source mapping",
@@ -5919,6 +6003,21 @@ def tool_profile_ncu(params: Dict[str, Any]) -> Dict[str, Any]:
     progress_path = _progress_path_in_dir(run_dir, run_id)
     workload_type = normalize_param("workload_type", params.get("workload_type"), "memory_bound")
     kernel_filter = params.get("kernel_filter")
+    kernel_name_base = params.get("kernel_name_base")
+    nvtx_include_raw = params.get("nvtx_include") or []
+    if isinstance(nvtx_include_raw, str):
+        nvtx_includes = [part.strip() for part in nvtx_include_raw.split(",") if part.strip()]
+    else:
+        nvtx_includes = [str(part).strip() for part in nvtx_include_raw if str(part).strip()]
+    profile_from_start = params.get("profile_from_start")
+    if profile_from_start is not None:
+        profile_from_start = str(profile_from_start).strip().lower()
+        if profile_from_start not in {"on", "off"}:
+            return make_error(
+                "profile_from_start must be 'on' or 'off'",
+                include_context,
+                context_level,
+            )
     force_lineinfo = bool(params.get("force_lineinfo", True))
     precheck_only = bool(params.get("precheck_only", False))
     dry_run = bool(params.get("dry_run") or params.get("estimate_only"))
@@ -5974,6 +6073,9 @@ def tool_profile_ncu(params: Dict[str, Any]) -> Dict[str, Any]:
             **precheck,
             "workload_type": workload_type,
             "kernel_filter": kernel_filter,
+            "kernel_name_base": kernel_name_base,
+            "nvtx_include": nvtx_includes,
+            "profile_from_start": profile_from_start,
             "force_lineinfo": force_lineinfo,
             "timeout_seconds": timeout_seconds if timeout_seconds and timeout_seconds > 0 else None,
             "pm_sampling_interval": sampling_interval,
@@ -6008,6 +6110,9 @@ def tool_profile_ncu(params: Dict[str, Any]) -> Dict[str, Any]:
             output_name=output_name,
             workload_type=workload_type,
             kernel_filter=kernel_filter,
+            kernel_name_base=kernel_name_base,
+            nvtx_includes=nvtx_includes,
+            profile_from_start=profile_from_start,
             force_lineinfo=force_lineinfo,
             timeout_seconds=timeout_seconds if timeout_seconds and timeout_seconds > 0 else None,
             sampling_interval=sampling_interval,
@@ -6049,6 +6154,9 @@ def tool_profile_ncu(params: Dict[str, Any]) -> Dict[str, Any]:
             "launch_count": launch_count_used,
             "replay_mode": replay_mode_used,
             "kernel_filter": kernel_filter,
+            "kernel_name_base": kernel_name_base,
+            "nvtx_include": nvtx_includes,
+            "profile_from_start": profile_from_start,
             "timeout_hit": bool(auto.last_run.get("timeout_hit")) if hasattr(auto, "last_run") else False,  # type: ignore[attr-defined]
             "error": auto.last_error if path is None else None,
             "run_details": run_details,

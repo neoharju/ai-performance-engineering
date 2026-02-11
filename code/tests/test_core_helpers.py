@@ -259,6 +259,118 @@ def test_profile_insights_ncu_pair_key_selects_csv(tmp_path: Path):
     assert "baseline_sources" not in comparison
 
 
+def test_ncu_command_supports_nvtx_filters_and_profile_gate(tmp_path: Path):
+    from core.profiling.nsight_automation import NsightAutomation
+
+    automation = NsightAutomation(tmp_path)
+    cmd = automation.build_ncu_command(
+        command=[sys.executable, "-c", "print('ok')"],
+        output_path=tmp_path / "demo.ncu-rep",
+        workload_type="memory_bound",
+        kernel_filter="kernel_cutlass",
+        kernel_name_base="demangled",
+        nvtx_includes=["cutlass_range"],
+        profile_from_start="off",
+        metric_set="minimal",
+        launch_skip=5,
+        launch_count=1,
+        replay_mode="kernel",
+    )
+
+    assert "--kernel-name-base" in cmd
+    assert "demangled" in cmd
+    assert "--kernel-name" in cmd
+    assert "kernel_cutlass" in cmd
+    assert "--nvtx" in cmd
+    assert "--nvtx-include" in cmd
+    assert "cutlass_range" in cmd
+    assert "--profile-from-start" in cmd
+    assert "off" in cmd
+
+
+def test_profile_artifact_materializes_symlink(tmp_path: Path):
+    target = tmp_path / "real_profile.nsys-rep"
+    target.write_text("profile-bytes", encoding="utf-8")
+    symlink_path = tmp_path / "baseline_profile.nsys-rep"
+    symlink_path.symlink_to(target)
+
+    materialized = profile_insights._materialize_profile_if_needed(symlink_path, root=tmp_path)
+    assert materialized != symlink_path
+    assert materialized.exists()
+    assert not materialized.is_symlink()
+    assert materialized.read_text(encoding="utf-8") == "profile-bytes"
+
+
+def test_profile_insights_ncu_role_aliases_base_opt(tmp_path: Path):
+    baseline_csv = tmp_path / "tiny_case_base_ncu.csv"
+    optimized_csv = tmp_path / "tiny_case_opt_ncu.csv"
+    baseline_csv.write_text("Metric Name,Metric Value\nsm__throughput,11\n")
+    optimized_csv.write_text("Metric Name,Metric Value\nsm__throughput,19\n")
+
+    comparison = profile_insights.compare_ncu_files(tmp_path)
+    assert comparison is not None
+    metrics = {m["name"]: m for m in comparison["metrics"]}
+    assert metrics["sm__throughput"]["baseline"] == "11"
+    assert metrics["sm__throughput"]["optimized"] == "19"
+
+
+def test_profile_insights_ncu_single_role_pair_fallback(tmp_path: Path):
+    baseline_csv = tmp_path / "alpha_baseline_ncu.csv"
+    optimized_csv = tmp_path / "beta_optimized_ncu.csv"
+    baseline_csv.write_text("Metric Name,Metric Value\nsm__throughput,37\n")
+    optimized_csv.write_text("Metric Name,Metric Value\nsm__throughput,53\n")
+
+    comparison = profile_insights.compare_ncu_files(tmp_path)
+    assert comparison is not None
+    metrics = {m["name"]: m for m in comparison["metrics"]}
+    assert metrics["sm__throughput"]["baseline"] == "37"
+    assert metrics["sm__throughput"]["optimized"] == "53"
+
+
+def test_profile_insights_ncu_parent_dir_role_detection(tmp_path: Path):
+    baseline_dir = tmp_path / "baseline"
+    optimized_dir = tmp_path / "optimized"
+    baseline_dir.mkdir(parents=True, exist_ok=True)
+    optimized_dir.mkdir(parents=True, exist_ok=True)
+
+    baseline_csv = baseline_dir / "capture_a_ncu.csv"
+    optimized_csv = optimized_dir / "capture_b_ncu.csv"
+    baseline_csv.write_text("Metric Name,Metric Value\nsm__throughput,21\n")
+    optimized_csv.write_text("Metric Name,Metric Value\nsm__throughput,29\n")
+
+    comparison = profile_insights.compare_ncu_files(tmp_path)
+    assert comparison is not None
+    metrics = {m["name"]: m for m in comparison["metrics"]}
+    assert metrics["sm__throughput"]["baseline"] == "21"
+    assert metrics["sm__throughput"]["optimized"] == "29"
+
+
+def test_profile_insights_ncu_two_file_mtime_fallback(tmp_path: Path):
+    first = tmp_path / "capture_a_ncu.csv"
+    second = tmp_path / "capture_b_ncu.csv"
+    first.write_text("Metric Name,Metric Value\nsm__throughput,17\n")
+    second.write_text("Metric Name,Metric Value\nsm__throughput,31\n")
+    # Ensure stable mtime ordering across fast filesystems.
+    second.touch()
+
+    comparison = profile_insights.compare_ncu_files(tmp_path)
+    assert comparison is not None
+    metrics = {m["name"]: m for m in comparison["metrics"]}
+    assert metrics["sm__throughput"]["baseline"] == "17"
+    assert metrics["sm__throughput"]["optimized"] == "31"
+
+
+def test_profile_insights_role_detection_ignores_pair_dir_bias(tmp_path: Path):
+    pair_dir = tmp_path / "pair__optimized_demo"
+    pair_dir.mkdir(parents=True, exist_ok=True)
+    (pair_dir / "example__baseline.ncu-rep").write_text("baseline", encoding="utf-8")
+    (pair_dir / "example__optimized.ncu-rep").write_text("optimized", encoding="utf-8")
+
+    baseline_files, optimized_files = profile_insights._collect_profile_role_files(pair_dir, ".ncu-rep")
+    assert len(baseline_files) == 1
+    assert len(optimized_files) == 1
+
+
 def test_mcp_compare_tools_include_metrics(tmp_path: Path):
     script = tmp_path / "compare_script.py"
     script.write_text(

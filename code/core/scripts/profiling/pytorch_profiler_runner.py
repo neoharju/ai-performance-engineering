@@ -269,12 +269,9 @@ def run_profiler(
                 alias_path = output_dir / "trace.json"
                 if not alias_path.exists():
                     try:
-                        alias_path.symlink_to(trace_path.name)
+                        alias_path.write_bytes(trace_path.read_bytes())
                     except Exception:
-                        try:
-                            alias_path.write_bytes(trace_path.read_bytes())
-                        except Exception:
-                            pass
+                        pass
 
                 summary_path = output_dir / f"summary_{mode}.txt"
                 parts: List[str] = []

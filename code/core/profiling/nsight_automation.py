@@ -13,7 +13,7 @@ import os
 import subprocess
 import json
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Sequence
 import sys
 
 # Add common to path
@@ -259,6 +259,9 @@ class NsightAutomation:
         output_path: Path,
         workload_type: str = 'memory_bound',
         kernel_filter: Optional[str] = None,
+        kernel_name_base: Optional[str] = None,
+        nvtx_includes: Optional[Sequence[str]] = None,
+        profile_from_start: Optional[str] = None,
         sampling_interval: Optional[int] = None,
         metric_set: str = 'full',
         launch_skip: Optional[int] = None,
@@ -292,7 +295,19 @@ class NsightAutomation:
         if metrics and ncu_set == 'full':
             ncu_cmd.extend(['--metrics', ",".join(metrics)])
         if kernel_filter:
+            if kernel_name_base:
+                ncu_cmd.extend(['--kernel-name-base', str(kernel_name_base)])
             ncu_cmd.extend(['--kernel-name', kernel_filter])
+        nvtx_filters = [str(tag).strip() for tag in (nvtx_includes or []) if str(tag).strip()]
+        if nvtx_filters:
+            ncu_cmd.append('--nvtx')
+            for tag in nvtx_filters:
+                ncu_cmd.extend(['--nvtx-include', tag])
+        if profile_from_start:
+            normalized = str(profile_from_start).strip().lower()
+            if normalized not in {'on', 'off'}:
+                raise ValueError("profile_from_start must be 'on' or 'off'")
+            ncu_cmd.extend(['--profile-from-start', normalized])
         if launch_skip is not None:
             ncu_cmd.extend(['--launch-skip', str(launch_skip)])
         if launch_count is not None:
@@ -308,6 +323,9 @@ class NsightAutomation:
         output_name: str,
         workload_type: str = 'memory_bound',
         kernel_filter: Optional[str] = None,
+        kernel_name_base: Optional[str] = None,
+        nvtx_includes: Optional[Sequence[str]] = None,
+        profile_from_start: Optional[str] = None,
         force_lineinfo: bool = True,
         timeout_seconds: Optional[float] = None,
         sampling_interval: Optional[int] = None,
@@ -323,6 +341,9 @@ class NsightAutomation:
             output_name: Base name for output file
             workload_type: Type of workload for metric selection
             kernel_filter: Optional kernel name filter (auto-limits launches when set)
+            kernel_name_base: Optional kernel-name base mode for filter matching
+            nvtx_includes: Optional NVTX range include filters (requires NVTX ranges in target code)
+            profile_from_start: Optional NCU profiling gate ('on' or 'off')
             sampling_interval: pm-sampling-interval value (cycles between samples)
             metric_set: Metric set to use ('full', 'speed-of-light', 'roofline', 'minimal')
             launch_skip: Number of kernel launches to skip before profiling
@@ -350,6 +371,9 @@ class NsightAutomation:
             output_path=output_path,
             workload_type=workload_type,
             kernel_filter=kernel_filter,
+            kernel_name_base=kernel_name_base,
+            nvtx_includes=nvtx_includes,
+            profile_from_start=profile_from_start,
             sampling_interval=sampling_interval,
             metric_set=metric_set,
             launch_skip=launch_skip,
@@ -369,6 +393,9 @@ class NsightAutomation:
             "launch_count": launch_count,
             "replay_mode": replay_mode,
             "kernel_filter": kernel_filter,
+            "kernel_name_base": kernel_name_base,
+            "nvtx_includes": list(nvtx_includes or []),
+            "profile_from_start": profile_from_start,
         }
         
         try:

@@ -550,6 +550,13 @@ def ncu(args) -> None:
     script_path = Path(getattr(args, "script", "")) if getattr(args, "script", None) else None
     script_args: List[str] = getattr(args, "script_args", None) or []
     kernel_filter = getattr(args, "kernel_filter", None) or getattr(args, "kernel", None)
+    kernel_name_base = getattr(args, "kernel_name_base", None)
+    profile_from_start = getattr(args, "profile_from_start", None)
+    nvtx_include_arg = getattr(args, "nvtx_include", None) or []
+    if isinstance(nvtx_include_arg, str):
+        nvtx_includes: List[str] = [v.strip() for v in nvtx_include_arg.split(",") if v.strip()]
+    else:
+        nvtx_includes = [str(v).strip() for v in nvtx_include_arg if str(v).strip()]
 
     if not command_list:
         if not script_path:
@@ -581,6 +588,9 @@ def ncu(args) -> None:
             output_name=output_name,
             workload_type=workload_type,
             kernel_filter=kernel_filter,
+            kernel_name_base=kernel_name_base,
+            nvtx_includes=nvtx_includes,
+            profile_from_start=profile_from_start,
             force_lineinfo=force_lineinfo,
             timeout_seconds=timeout_seconds,
             sampling_interval=sampling_interval,
@@ -607,6 +617,9 @@ def ncu(args) -> None:
         f"Metric set: {metric_set}",
         f"Replay mode: {replay_mode_used}",
         f"Kernel filter: {kernel_filter or 'none'}",
+        f"Kernel name base: {kernel_name_base or 'default'}",
+        f"NVTX includes: {', '.join(nvtx_includes) if nvtx_includes else 'none'}",
+        f"Profile from start: {profile_from_start or 'default'}",
         f"Launch skip: {launch_skip_used if launch_skip_used is not None else 'none'}",
         f"Launch count: {launch_count_used if launch_count_used is not None else 'none'}",
         f"Force lineinfo: {force_lineinfo}",

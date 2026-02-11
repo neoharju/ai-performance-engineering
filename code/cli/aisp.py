@@ -618,6 +618,22 @@ if typer and profile_app is not None:
         script_args: List[str] = typer.Option([], "--arg", "-a", help="Arguments forwarded to the script", show_default=False),
         kernel: Optional[str] = typer.Option(None, "--kernel", help="Specific kernel filter (regex)"),
         kernel_filter: Optional[str] = typer.Option(None, "--kernel-filter", help="Specific kernel filter (regex)"),
+        kernel_name_base: Optional[str] = typer.Option(
+            None,
+            "--kernel-name-base",
+            help="NCU kernel name base for filter matching (e.g., function, demangled)",
+        ),
+        nvtx_include: List[str] = typer.Option(
+            [],
+            "--nvtx-include",
+            help="NCU NVTX include filter (repeatable); useful with --profile-from-start off",
+            show_default=False,
+        ),
+        profile_from_start: Optional[str] = typer.Option(
+            None,
+            "--profile-from-start",
+            help="NCU profiling gate: on/off (set off to capture only after cudaProfilerStart)",
+        ),
         output_name: Optional[str] = typer.Option(None, "--output-name", "-o", help="Output name"),
         output_dir: Optional[Path] = typer.Option(None, "--output-dir", help="Base artifacts directory (default: artifacts/runs)"),
         workload_type: str = typer.Option(
@@ -653,6 +669,9 @@ if typer and profile_app is not None:
             script_args=script_args,
             kernel=kernel,
             kernel_filter=kernel_filter,
+            kernel_name_base=kernel_name_base,
+            nvtx_include=nvtx_include,
+            profile_from_start=profile_from_start,
             output_name=output_name,
             output_dir=str(output_dir) if output_dir else None,
             workload_type=workload_type,
